@@ -772,6 +772,11 @@ def test_vended_log_groups_have_30_day_retention_under_the_shared_prefix(templat
         "/aws/vendedlogs/bedrock-agentcore/hr-super-agent-edge",
         "/aws/vendedlogs/bedrock-agentcore/hr-super-agent-tools",
         "/aws/vendedlogs/bedrock-agentcore/hr_super_agent",
+        "/aws/vendedlogs/bedrock-agentcore/hr_super_agent_tools",
+        "/aws/vendedlogs/bedrock-agentcore/hr-super-agent-agents",
+        "/aws/vendedlogs/bedrock-agentcore/hr_super_agent_profile",
+        "/aws/vendedlogs/bedrock-agentcore/hr_super_agent_pay",
+        "/aws/vendedlogs/bedrock-agentcore/hr_super_agent_travel",
     }
     for group in groups.values():
         assert group["Properties"]["RetentionInDays"] == 30
@@ -787,7 +792,7 @@ def test_vended_log_delivery_sources_cover_application_logs_and_traces(template)
 
     # Every resource gets APPLICATION_LOGS only: a CloudWatch Logs destination for the
     # gateways' TRACES log type was rejected by CloudFormation on 4 Sep 2026.
-    assert len(log_types_by_resource) == 3
+    assert len(log_types_by_resource) == 8
     assert all(v == {"APPLICATION_LOGS"} for v in log_types_by_resource.values())
 
     # Each delivery depends explicitly on its source and its destination, since the
@@ -891,12 +896,12 @@ def test_dynatrace_firehose_stream_targets_the_dynatrace_http_endpoint(template)
     assert config["S3BackupMode"] == "FailedDataOnly"
 
 
-def test_dynatrace_subscription_filters_target_the_three_vended_log_groups(template):
+def test_dynatrace_subscription_filters_target_every_vended_log_group(template):
     filters = template.find_resources("AWS::Logs::SubscriptionFilter")
     dynatrace_filters = {
         k: v for k, v in filters.items() if v.get("Condition") == "HasDynatraceLogs"
     }
-    assert len(dynatrace_filters) == 3
+    assert len(dynatrace_filters) == 8
     (stream_logical_id,) = template.find_resources("AWS::KinesisFirehose::DeliveryStream").keys()
     log_group_refs = set()
     for f in dynatrace_filters.values():
@@ -1232,3 +1237,18 @@ def test_sub_agent_roles_reach_only_their_model(template):
     assert "claude-haiku-4-5" in body
     assert "runtimes/hr_super_agent_travel-*" in body
     assert "dynamodb" not in body
+
+
+def test_every_new_runtime_and_the_agents_gateway_have_a_5xx_alarm(template):
+    descriptions = {
+        a["Properties"].get("AlarmDescription", "")
+        for a in template.find_resources("AWS::CloudWatch::Alarm").values()
+    }
+    for subject in (
+        "HR tools runtime",
+        "agents gateway",
+        "profile sub-agent runtime",
+        "pay sub-agent runtime",
+        "travel sub-agent runtime",
+    ):
+        assert any(subject in d and "5xx" in d for d in descriptions), subject

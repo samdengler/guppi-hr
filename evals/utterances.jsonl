@@ -1,0 +1,60 @@
+{"id": "u01", "text": "What address do you have on file for me?", "expect": "profile"}
+{"id": "u02", "text": "I moved. My new address is 12 Oak St, Macon GA 31201", "expect": "profile"}
+{"id": "u03", "text": "Update my home address to 300 Main St Apt 4B, Savannah GA 31401", "expect": "profile"}
+{"id": "u04", "text": "Who is listed as my emergency contact?", "expect": "profile"}
+{"id": "u05", "text": "Make my sister Ana Lopez my emergency contact, 912-555-0133", "expect": "profile"}
+{"id": "u06", "text": "Change my emergency contact phone number to 678-555-0100", "expect": "profile"}
+{"id": "u07", "text": "Is my home address still the Chicago one?", "expect": "profile"}
+{"id": "u08", "text": "I need to fix a typo in my street address", "expect": "profile"}
+{"id": "u09", "text": "What's my employee ID?", "expect": "profile"}
+{"id": "u10", "text": "What job title do you have for me?", "expect": "profile"}
+{"id": "u11", "text": "My wife should be my emergency contact now", "expect": "profile"}
+{"id": "u12", "text": "Please update where I live, I'm in Decatur now", "expect": "profile"}
+{"id": "u13", "text": "Does moving to another state change my tax withholding?", "expect": "profile"}
+{"id": "u14", "text": "Where does my paycheck get deposited?", "expect": "pay"}
+{"id": "u15", "text": "I want to switch my direct deposit to my new savings account", "expect": "pay"}
+{"id": "u16", "text": "Change my direct deposit, routing 061000104 account 000123456789 checking", "expect": "pay"}
+{"id": "u17", "text": "Show me my last three pay statements", "expect": "pay"}
+{"id": "u18", "text": "When is my next payday?", "expect": "pay"}
+{"id": "u19", "text": "How much was my net pay last time?", "expect": "pay"}
+{"id": "u20", "text": "My last paycheck looks short", "expect": "pay"}
+{"id": "u21", "text": "Can I split my pay between two accounts?", "expect": "pay"}
+{"id": "u22", "text": "What bank is my pay going to?", "expect": "pay"}
+{"id": "u23", "text": "I closed my checking account, where will my pay go?", "expect": "pay"}
+{"id": "u24", "text": "What's the cutoff for direct deposit changes?", "expect": "pay"}
+{"id": "u25", "text": "How often do we get paid?", "expect": "pay"}
+{"id": "u26", "text": "How many buddy passes do I get?", "expect": "travel"}
+{"id": "u27", "text": "Can my parents fly on my pass privileges?", "expect": "travel"}
+{"id": "u28", "text": "Is pass travel allowed over Thanksgiving weekend?", "expect": "travel"}
+{"id": "u29", "text": "What does a buddy pass cost for a long flight?", "expect": "travel"}
+{"id": "u30", "text": "Do unused buddy passes roll over to next year?", "expect": "travel"}
+{"id": "u31", "text": "Who boards first among standby employees?", "expect": "travel"}
+{"id": "u32", "text": "Can I wear shorts when I fly on a pass?", "expect": "travel"}
+{"id": "u33", "text": "I just started, when can I use pass travel?", "expect": "travel"}
+{"id": "u34", "text": "Can I add my partner as a pass rider?", "expect": "travel"}
+{"id": "u35", "text": "What are the embargo dates for pass travel?", "expect": "travel"}
+{"id": "u36", "text": "Hi there", "expect": "general"}
+{"id": "u37", "text": "How much PTO do I earn per year?", "expect": "general"}
+{"id": "u38", "text": "How do I enroll in medical benefits?", "expect": "general"}
+{"id": "u39", "text": "How much sick time do I get?", "expect": "general"}
+{"id": "u40", "text": "What can you help me with?", "expect": "general"}
+{"id": "u41", "text": "I got married, can I change my health plan?", "expect": "general"}
+{"id": "u42", "text": "How long does HR take to answer a ticket?", "expect": "general"}
+{"id": "u43", "text": "Thanks, that's all", "expect": "general"}
+{"id": "u44", "text": "I need to update my information", "expect": "clarify"}
+{"id": "u45", "text": "Something is wrong with my account", "expect": "clarify"}
+{"id": "u46", "text": "I want to change my details", "expect": "clarify"}
+{"id": "u47", "text": "Can you check my records?", "expect": "clarify"}
+{"id": "u48", "text": "I need to make a change", "expect": "clarify"}
+{"id": "u49", "text": "Update my info please", "expect": "clarify"}
+{"id": "u50", "text": "yes", "expect": "profile", "active": "profile", "history": [["user", "Change my home address to 419 Glendale Ave, Decatur GA 30030"], ["assistant", "I'm proposing to change your home address from 88 Lake Shore Dr, Chicago, IL 60611 to 419 Glendale Ave, Decatur, GA 30030. Is that correct?"]], "pending_domain": "profile"}
+{"id": "u51", "text": "no, make it 421 instead", "expect": "profile", "active": "profile", "history": [["user", "Change my home address to 419 Glendale Ave"], ["assistant", "I'm proposing to change your home address to 419 Glendale Ave, Decatur, GA 30030. Is that correct?"]], "pending_domain": "profile"}
+{"id": "u52", "text": "what about my emergency contact?", "expect": "profile", "active": "profile", "history": [["user", "Change my home address to 419 Glendale Ave"], ["assistant", "Done. Your home address has been updated."]]}
+{"id": "u53", "text": "yes, go ahead", "expect": "pay", "active": "pay", "history": [["user", "Switch my deposit to routing 061000104 account 555566667777 savings"], ["assistant", "I can change your direct deposit to the savings account ending 7777. Confirm?"]], "pending_domain": "pay"}
+{"id": "u54", "text": "and the one before that?", "expect": "pay", "active": "pay", "history": [["user", "Show my last pay statement"], ["assistant", "Your last pay statement is for September 25: net pay $1,934.00."]]}
+{"id": "u55", "text": "I need to talk to someone", "expect": "travel", "active": "travel", "history": [["user", "How many buddy passes do I get?"], ["assistant", "Each eligible employee receives 8 buddy passes per calendar year."]]}
+{"id": "u56", "text": "what about my parents?", "expect": "travel", "active": "travel", "history": [["user", "Can my partner fly on my passes?"], ["assistant", "Yes, one spouse or registered domestic partner can be enrolled as a pass rider."]]}
+{"id": "u57", "text": "How many buddy passes do I get?", "expect": "travel", "active": "profile", "history": [["user", "Change my home address to 419 Glendale Ave"], ["assistant", "Done. Your home address has been updated."]]}
+{"id": "u58", "text": "What's the open enrollment period?", "expect": "general"}
+{"id": "u59", "text": "Who do I contact about a harassment concern?", "expect": "general"}
+{"id": "u60", "text": "I want to update my bank and my address", "expect": "clarify"}

@@ -114,7 +114,7 @@ from constructs import Construct
 
 from hr_super_agent_infra.hr_tools import HR_TOOL_PREFIX, TOOLS_RUNTIME_NAME, HrTools
 from hr_super_agent_infra.runtime_role import runtime_execution_role
-from hr_super_agent_infra.sub_agents import SubAgents
+from hr_super_agent_infra.sub_agents import AGENTS_GATEWAY_NAME, SubAgents, sub_agent_runtime_name
 
 ZONE_NAME = "dengler.io"
 CHAT_HOST = f"hr.{ZONE_NAME}"
@@ -1761,7 +1761,7 @@ class HrSuperAgentStack(cdk.Stack):
         kb_target.node.add_dependency(data_source)
 
         # ---- HR tools (phase 2) ----------------------------------------------------------
-        HrTools(
+        hr_tools = HrTools(
             self,
             "HrTools",
             image_uri=image_uri,
@@ -1874,6 +1874,23 @@ class HrSuperAgentStack(cdk.Stack):
             "5xx (SystemErrors) on the HR Super Agent runtime crossed zero",
             runtime.attr_agent_runtime_arn,
         )
+        # The phase 2 and 3 resources get the same 5xx alarm (phase 6).
+        _resource_error_alarm(
+            "ToolsRuntime5xxAlarm",
+            "5xx (SystemErrors) on the HR tools runtime crossed zero",
+            hr_tools.runtime.attr_agent_runtime_arn,
+        )
+        _resource_error_alarm(
+            "AgentsGateway5xxAlarm",
+            "5xx (SystemErrors) on the HR Super Agent agents gateway crossed zero",
+            sub_agents.gateway.attr_gateway_arn,
+        )
+        for name, sub_agent_runtime in sub_agents.runtimes.items():
+            _resource_error_alarm(
+                f"{name.capitalize()}Runtime5xxAlarm",
+                f"5xx (SystemErrors) on the HR {name} sub-agent runtime crossed zero",
+                sub_agent_runtime.attr_agent_runtime_arn,
+            )
 
         # UserErrors as a share of Invocations: a math expression rather than a raw count,
         # since occasional 4xx (an expired token, a malformed request) is expected traffic
@@ -2017,6 +2034,27 @@ class HrSuperAgentStack(cdk.Stack):
             "Runtime": _vended_log_delivery(
                 "Runtime", RUNTIME_NAME, runtime.attr_agent_runtime_arn, ["APPLICATION_LOGS"]
             ),
+            "ToolsRuntime": _vended_log_delivery(
+                "ToolsRuntime",
+                TOOLS_RUNTIME_NAME,
+                hr_tools.runtime.attr_agent_runtime_arn,
+                ["APPLICATION_LOGS"],
+            ),
+            "AgentsGateway": _vended_log_delivery(
+                "AgentsGateway",
+                AGENTS_GATEWAY_NAME,
+                sub_agents.gateway.attr_gateway_arn,
+                ["APPLICATION_LOGS"],
+            ),
+            **{
+                f"{name.capitalize()}Runtime": _vended_log_delivery(
+                    f"{name.capitalize()}Runtime",
+                    sub_agent_runtime_name(name),
+                    sub_agent_runtime.attr_agent_runtime_arn,
+                    ["APPLICATION_LOGS"],
+                )
+                for name, sub_agent_runtime in sub_agents.runtimes.items()
+            },
         }
 
         # Recommended prefix policy (AWS-logs-infrastructure-V2-CloudWatchLogs.html) rather

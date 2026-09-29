@@ -36,7 +36,15 @@ def route(domain, confidence="high", alternatives=(), follow_up=False):
     ("r", "active", "pending", "expected"),
     [
         (route("pay"), None, None, Decision("delegate", "pay")),
-        (route("pay", "medium"), None, None, Decision("clarify")),
+        (route("pay", "medium", alternatives=["profile"]), None, None, Decision("clarify")),
+        # medium with no competing area delegates (D28): "What's my employee ID?"
+        (
+            route("profile", "medium", alternatives=["general"]),
+            None,
+            None,
+            Decision("delegate", "profile"),
+        ),
+        (route("pay", "medium"), None, None, Decision("delegate", "pay")),
         (route("pay", "medium"), "pay", None, Decision("delegate", "pay")),
         (route("pay", "low"), "pay", None, Decision("clarify")),
         (route("general"), "pay", None, Decision("answer")),

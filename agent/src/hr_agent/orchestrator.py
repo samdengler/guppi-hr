@@ -168,7 +168,11 @@ def decide(route: Route, active: str | None, pending_domain: str | None) -> Deci
         return Decision("answer")
     if route.confidence == "high":
         return Decision("delegate", route.domain)
-    if route.confidence == "medium" and route.domain == active:
+    # Medium delegates within the active domain, or when no other area is a candidate:
+    # a clarifying question needs two areas to choose between (D28, after the first
+    # evals/route.py run).
+    competing = [a for a in route.alternatives if a in DOMAINS]
+    if route.confidence == "medium" and (route.domain == active or not competing):
         return Decision("delegate", route.domain)
     return Decision("clarify")
 
