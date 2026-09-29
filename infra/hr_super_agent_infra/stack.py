@@ -1401,7 +1401,7 @@ class HrSuperAgentStack(cdk.Stack):
             self,
             "KnowledgeBase",
             name=KB_NAME,
-            description="MCP, Strands Agents, and AG-UI documentation",
+            description="Synthetic HR policy documents (D5)",
             role_arn=kb_role.role_arn,
             knowledge_base_configuration=bedrock.CfnKnowledgeBase.KnowledgeBaseConfigurationProperty(
                 type="MANAGED",
@@ -1695,7 +1695,7 @@ class HrSuperAgentStack(cdk.Stack):
             "KnowledgeBaseTarget",
             gateway_identifier=tools_gateway.attr_gateway_identifier,
             name=KB_TARGET_NAME,
-            description="HR Super Agent documentation knowledge base",
+            description="HR Super Agent HR policy knowledge base",
             target_configuration=agentcore.CfnGatewayTarget.TargetConfigurationProperty(
                 mcp=agentcore.CfnGatewayTarget.McpTargetConfigurationProperty(
                     connector=agentcore.CfnGatewayTarget.ConnectorTargetConfigurationProperty(
@@ -1706,7 +1706,8 @@ class HrSuperAgentStack(cdk.Stack):
                             agentcore.CfnGatewayTarget.ConnectorConfigurationProperty(
                                 name="Retrieve",
                                 description=(
-                                    "Search the MCP, Strands Agents, and AG-UI documentation "
+                                    "Search the HR policy documents (pass travel, pay, direct "
+                                    "deposit, profile changes, time off, benefits, contacting HR) "
                                     "and return the most relevant passages."
                                 ),
                                 # No retrievalConfiguration default: CloudFormation stores the
@@ -1721,7 +1722,7 @@ class HrSuperAgentStack(cdk.Stack):
                                 parameter_values={
                                     "retrievers": [
                                         {
-                                            "description": "MCP, Strands Agents, and AG-UI docs",
+                                            "description": "HR policy documents",
                                             "configuration": {
                                                 "knowledgeBase": {
                                                     "knowledgeBaseId": (
