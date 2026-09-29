@@ -1,4 +1,5 @@
-# AgentCore Runtime expects an arm64 image listening on 0.0.0.0:8080.
+# AgentCore Runtime expects an arm64 image. One image serves every runtime (D11):
+# AGENT_ROLE picks the orchestrator (AG-UI on 8080) or the tools server (MCP on 8000).
 # Build context is the repository root (see the CDK stack and .dockerignore) so the
 # workspace lockfile is visible: dependencies install from it in their own layer, which
 # Docker reuses until uv.lock or a pyproject changes, and the source lands in a small
@@ -26,12 +27,12 @@ COPY agent/src agent/src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --package hr-agent --no-dev --no-editable
 
-EXPOSE 8080
+EXPOSE 8080 8000
 # opentelemetry-instrument (from aws-opentelemetry-distro, a hr-agent dependency) is
 # the documented AgentCore entrypoint wrapper: it installs the ADOT tracer provider and
-# the FastAPI, httpx, MCP, and botocore instrumentation before uvicorn imports the app,
+# the FastAPI, httpx, MCP, and botocore instrumentation before the app is imported,
 # so one trace covers the request, the Strands run, the tools gateway call, and the
 # Bedrock call. The runtime supplies the exporter settings as environment variables
 # (AGENT_OBSERVABILITY_ENABLED and OTEL_*). Local development starts uvicorn directly
 # (AGENTS.md) and needs none of this. See docs/proposals/traceability.md.
-CMD ["opentelemetry-instrument", "uvicorn", "hr_agent.app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["opentelemetry-instrument", "python", "-m", "hr_agent"]

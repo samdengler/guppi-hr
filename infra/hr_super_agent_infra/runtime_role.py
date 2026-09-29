@@ -1,0 +1,94 @@
+"""The documented AgentCore Runtime execution role, shared by every runtime in the stack.
+
+Each runtime gets its own role, scoped by its runtime name; callers add what only their
+runtime needs (the orchestrator's model access, the tools server's tables).
+"""
+
+from __future__ import annotations
+
+from aws_cdk import Stack
+from aws_cdk import aws_iam as iam
+from constructs import Construct
+
+
+def runtime_execution_role(
+    scope: Construct, construct_id: str, runtime_name: str, description: str
+) -> iam.Role:
+    stack = Stack.of(scope)
+    region, account = stack.region, stack.account
+    role = iam.Role(
+        scope,
+        construct_id,
+        assumed_by=iam.ServicePrincipal(
+            "bedrock-agentcore.amazonaws.com",
+            conditions={
+                "StringEquals": {"aws:SourceAccount": account},
+                "ArnLike": {"aws:SourceArn": f"arn:aws:bedrock-agentcore:{region}:{account}:*"},
+            },
+        ),
+        description=description,
+    )
+    role.add_to_policy(iam.PolicyStatement(actions=["ecr:GetAuthorizationToken"], resources=["*"]))
+    role.add_to_policy(
+        iam.PolicyStatement(
+            actions=["logs:DescribeLogGroups"],
+            resources=[f"arn:aws:logs:{region}:{account}:log-group:*"],
+        )
+    )
+    role.add_to_policy(
+        iam.PolicyStatement(
+            actions=[
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:DescribeLogStreams",
+                "logs:PutLogEvents",
+            ],
+            resources=[
+                f"arn:aws:logs:{region}:{account}:log-group:/aws/bedrock-agentcore/runtimes/*"
+            ],
+        )
+    )
+    # The documented execution role adds this so the runtime can let X-Ray deliver
+    # spans into the agent's own log group (the unified span destination) instead of
+    # the shared aws/spans group; scoped to this runtime's log groups as the docs show.
+    role.add_to_policy(
+        iam.PolicyStatement(
+            actions=["logs:PutResourcePolicy"],
+            resources=[
+                f"arn:aws:logs:{region}:{account}:log-group:"
+                f"/aws/bedrock-agentcore/runtimes/{runtime_name}-*"
+            ],
+        )
+    )
+    role.add_to_policy(
+        iam.PolicyStatement(
+            actions=[
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+            ],
+            resources=["*"],
+        )
+    )
+    role.add_to_policy(
+        iam.PolicyStatement(
+            actions=["cloudwatch:PutMetricData"],
+            resources=["*"],
+            conditions={"StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}},
+        )
+    )
+    role.add_to_policy(
+        iam.PolicyStatement(
+            actions=[
+                "bedrock-agentcore:GetWorkloadAccessToken",
+                "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+                "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
+            ],
+            resources=[
+                f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default",
+                f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default/workload-identity/{runtime_name}-*",
+            ],
+        )
+    )
+    return role

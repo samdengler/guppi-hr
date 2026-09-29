@@ -1042,5 +1042,114 @@ def test_feedback_outputs_name_the_api_and_the_bus(template):
 
 
 def test_runtime_waits_for_the_runtime_role_policy(template):
-    (runtime,) = template.find_resources("AWS::BedrockAgentCore::Runtime").values()
+    (runtime,) = template.find_resources(
+        "AWS::BedrockAgentCore::Runtime", {"Properties": {"AgentRuntimeName": "hr_super_agent"}}
+    ).values()
     assert any(dep.startswith("RuntimeRoleDefaultPolicy") for dep in runtime.get("DependsOn", []))
+
+
+# ---- HR tools (phase 2) ---------------------------------------------------------------
+
+
+def _hr_tools_runtime(template):
+    runtimes = template.find_resources(
+        "AWS::BedrockAgentCore::Runtime", {"Properties": {"ProtocolConfiguration": "MCP"}}
+    )
+    (runtime,) = runtimes.values()
+    return runtime
+
+
+def test_forwarded_headers_match_the_tools_server():
+    from hr_agent.tools.identity import FORWARDED_HEADERS as SERVER_HEADERS
+    from hr_super_agent_infra.hr_tools import FORWARDED_HEADERS
+
+    assert [h.lower() for h in FORWARDED_HEADERS] == list(SERVER_HEADERS)
+
+
+def test_hr_tools_runtime_is_an_mcp_server_signed_with_iam(template):
+    runtime = _hr_tools_runtime(template)
+    props = runtime["Properties"]
+    assert props["AgentRuntimeName"] == "hr_super_agent_tools"
+    assert "AuthorizerConfiguration" not in props  # SigV4 inbound (D19)
+    assert props["RequestHeaderConfiguration"]["RequestHeaderAllowlist"] == [
+        "X-Hr-User-Token",
+        "X-Hr-Thread-Id",
+        "traceparent",
+    ]
+    env = props["EnvironmentVariables"]
+    assert env["AGENT_ROLE"] == "tools"
+    assert set(env) >= {
+        "EMPLOYEES_TABLE",
+        "PROPOSALS_TABLE",
+        "TICKETS_TABLE",
+        "AUDIT_TABLE",
+        "TOKEN_ISSUER",
+        "TOKEN_ALLOWED_CLIENTS",
+    }
+    assert any(dep.startswith("ToolsRuntimeRoleDefaultPolicy") for dep in runtime["DependsOn"])
+
+
+def test_hr_target_signs_with_the_gateway_role_and_forwards_the_headers(template):
+    targets = template.find_resources(
+        "AWS::BedrockAgentCore::GatewayTarget", {"Properties": {"Name": "hr"}}
+    )
+    (target,) = targets.values()
+    props = target["Properties"]
+    (credential,) = props["CredentialProviderConfigurations"]
+    assert credential["CredentialProviderType"] == "GATEWAY_IAM_ROLE"
+    assert credential["CredentialProvider"]["IamCredentialProvider"]["Service"] == (
+        "bedrock-agentcore"
+    )
+    assert props["MetadataConfiguration"]["AllowedRequestHeaders"] == [
+        "X-Hr-User-Token",
+        "X-Hr-Thread-Id",
+        "traceparent",
+    ]
+    assert props["Description"].startswith("HR self-service tools, source ")
+    endpoint = json.dumps(props["TargetConfiguration"]["Mcp"]["McpServer"]["Endpoint"])
+    assert "runtime%2F" in endpoint and "invocations?qualifier=DEFAULT" in endpoint
+    deps = target["DependsOn"]
+    assert any(d.startswith("HrToolsRuntime") for d in deps)
+    assert any(d.startswith("ToolsGatewayRoleDefaultPolicy") for d in deps)
+
+
+def test_tools_gateway_role_may_invoke_the_hr_tools_runtime(template):
+    policies = [
+        p
+        for name, p in template.find_resources("AWS::IAM::Policy").items()
+        if name.startswith("ToolsGatewayRoleDefaultPolicy")
+    ]
+    (policy,) = policies
+    statements = policy["Properties"]["PolicyDocument"]["Statement"]
+    assert any(s["Action"] == "bedrock-agentcore:InvokeAgentRuntime" for s in statements)
+
+
+def test_hr_tables_are_on_demand_and_proposals_expire(template):
+    tables = template.find_resources("AWS::DynamoDB::Table")
+    assert len(tables) == 4
+    for table in tables.values():
+        assert table["Properties"]["BillingMode"] == "PAY_PER_REQUEST"
+        assert "TableName" not in table["Properties"]  # generated names (D18)
+    ttl = [t["Properties"].get("TimeToLiveSpecification") for t in tables.values()]
+    assert {"AttributeName": "expires_at", "Enabled": True} in ttl
+
+
+def test_orchestrator_sees_the_hr_tools_in_phase_two(template):
+    runtimes = template.find_resources(
+        "AWS::BedrockAgentCore::Runtime", {"Properties": {"AgentRuntimeName": "hr_super_agent"}}
+    )
+    (runtime,) = runtimes.values()
+    assert runtime["Properties"]["EnvironmentVariables"]["HR_TOOL_PREFIX"] == "hr___"
+
+
+def test_tools_role_scopes_its_logs_to_its_own_runtime(template):
+    policies = [
+        p
+        for name, p in template.find_resources("AWS::IAM::Policy").items()
+        if name.startswith("ToolsRuntimeRoleDefaultPolicy")
+    ]
+    (policy,) = policies
+    body = json.dumps(policy)
+    assert "runtimes/hr_super_agent_tools-*" in body
+    assert "bedrock:InvokeModel" not in body
+    assert "dynamodb:PutItem" in body

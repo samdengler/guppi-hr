@@ -30,16 +30,15 @@ LOGGED_MEMORY_SENTENCE = (
     "and you cannot recall earlier sessions."
 )
 
-SYSTEM_PROMPT_TEMPLATE = """You are the HR Assistant.
+SYSTEM_PROMPT_TEMPLATE = """You are the HR Assistant, helping one signed-in employee.
 
 You have no memory beyond the conversation on the current page. {memory}
 
-You have one tool, a search over the documentation of the Model Context Protocol (MCP),
-Strands Agents, and the AG-UI protocol. When a question concerns any of those subjects,
-search first and answer once from what the search returns, saying so when the passages do
-not settle the question. Do not narrate the search or revise an earlier draft. Answer from
-general knowledge otherwise, without searching.
-
+You have a search over the HR policy documents. When a question concerns HR policy (pay,
+benefits, travel privileges, leave, profile changes), search first and answer once from
+what the search returns, saying so when the passages do not settle the question. Do not
+narrate the search or revise an earlier draft.
+{hr_tools}
 Reply in concise plain text. The page renders no Markdown, so write no headings, bullet
 markers, bold, code fences, or links; use short paragraphs and plain sentences instead, and
 indent code by four spaces. In examples write server addresses as <server-url>, never as
@@ -47,12 +46,25 @@ localhost or a loopback address: the gateway in front of this page rejects any m
 that contains one, which would end the conversation.
 """
 
+HR_TOOLS_PARAGRAPH = """
+You also have HR tools that act on this employee's own records: their profile and
+emergency contact, direct deposit, pay statements, and tickets for the HR team. A change
+always takes two turns. First call the matching propose tool, then tell the employee the
+exact change it returned and ask them to confirm. Call commit_change with that
+proposal_id only when their next message clearly says yes; if they decline or change the
+details, do not commit. Never say a change is done unless commit_change succeeded. When
+the employee asks for a person, or nothing you have answers the request, open a ticket
+and give them its id.
+"""
 
-def system_prompt() -> str:
-    """The prompt for one run. The claim about saving follows the logging switch."""
+
+def system_prompt(hr_tools: bool = False) -> str:
+    """The prompt for one run. The claim about saving follows the logging switch, and the
+    HR tools paragraph appears only when the gateway offered those tools."""
     logged = conversation_log.enabled()
     return SYSTEM_PROMPT_TEMPLATE.format(
-        memory=LOGGED_MEMORY_SENTENCE if logged else MEMORY_SENTENCE
+        memory=LOGGED_MEMORY_SENTENCE if logged else MEMORY_SENTENCE,
+        hr_tools=HR_TOOLS_PARAGRAPH if hr_tools else "",
     )
 
 
@@ -63,6 +75,9 @@ class Settings:
         self.tools_gateway_url = os.environ.get("TOOLS_GATEWAY_URL", "")
         self.model_id = os.environ.get("MODEL_ID", DEFAULT_MODEL_ID)
         self.retrieve_tool = os.environ.get("RETRIEVE_TOOL", DEFAULT_RETRIEVE_TOOL)
+        # Phase 2 hands the hr___ tools to this agent so they can be checked in the
+        # browser (D22); phase 4 moves them to the sub-agents. Empty means none.
+        self.hr_tool_prefix = os.environ.get("HR_TOOL_PREFIX", "")
         self.region = os.environ.get("AWS_REGION", DEFAULT_REGION)
 
 
@@ -83,22 +98,37 @@ class StrandsRun:
         from strands.tools.mcp import MCPClient
 
         settings = self._settings
+        # The tools gateway checks Authorization; it cannot forward that header to the HR
+        # tools server, so the same token rides again in X-Hr-User-Token, which the server
+        # verifies itself (D19). The thread id binds a proposal to its conversation.
         client = MCPClient(
             url=settings.tools_gateway_url,
-            headers={"Authorization": f"Bearer {self._token}"},
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "X-Hr-User-Token": self._token,
+                "X-Hr-Thread-Id": run_input.thread_id,
+            },
         )
         # The client runs its own thread and event loop; start and stop block, so they are
         # kept off the loop that streams the response.
         await asyncio.to_thread(client.start)
         try:
             listed = await asyncio.to_thread(client.list_tools_sync)
-            tools = [tool for tool in listed if tool.tool_name == settings.retrieve_tool]
-            if not tools:
+            tools = [
+                tool
+                for tool in listed
+                if tool.tool_name == settings.retrieve_tool
+                or (settings.hr_tool_prefix and tool.tool_name.startswith(settings.hr_tool_prefix))
+            ]
+            offered = [tool.tool_name for tool in listed]
+            log.info("tools offered by the gateway: %s", offered)
+            if not any(tool.tool_name == settings.retrieve_tool for tool in tools):
                 log.warning(
-                    "tool %s not offered by the gateway (offered: %s); running without tools",
+                    "tool %s not offered by the gateway (offered: %s)",
                     settings.retrieve_tool,
-                    [tool.tool_name for tool in listed],
+                    offered,
                 )
+            hr_tools = any(tool.tool_name != settings.retrieve_tool for tool in tools)
             template = Agent(
                 model=BedrockModel(
                     model_id=settings.model_id,
@@ -107,7 +137,7 @@ class StrandsRun:
                     max_tokens=1024,
                     temperature=0.7,
                 ),
-                system_prompt=system_prompt(),
+                system_prompt=system_prompt(hr_tools),
                 tools=tools,
                 callback_handler=None,
             )

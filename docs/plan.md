@@ -85,4 +85,5 @@ clears `pendingAction`. Adjust after the first eval run and record the change.
 
 Self-service agent registration, AgentCore Memory, business dashboards, topic
 clustering, QA sampling, multi-model tiering, AgentCore Evaluations (after phase 6),
-Cedar per-target policies on the agents gateway.
+Cedar per-target policies on the agents gateway, on-behalf-of token exchange between
+agents and tools (the Delta version's identity model on PingFederate, D20).

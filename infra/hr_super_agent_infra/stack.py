@@ -112,6 +112,9 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from hr_super_agent_infra.hr_tools import HR_TOOL_PREFIX, TOOLS_RUNTIME_NAME, HrTools
+from hr_super_agent_infra.runtime_role import runtime_execution_role
+
 ZONE_NAME = "dengler.io"
 CHAT_HOST = f"hr.{ZONE_NAME}"
 AUTH_HOST = f"auth-hr.{ZONE_NAME}"
@@ -662,6 +665,9 @@ class HrSuperAgentStack(cdk.Stack):
         # ---- Agent image ---------------------------------------------------------------
         image_uri = self.node.try_get_context("image_uri")
         runtime_role = self._runtime_role()
+        tools_role = runtime_execution_role(
+            self, "ToolsRuntimeRole", TOOLS_RUNTIME_NAME, "Execution role for the HR tools runtime"
+        )
         if image_uri is None:
             # The context is the repository root so agent/Dockerfile can read uv.lock;
             # .dockerignore at the root keeps the context and the asset hash to the agent
@@ -676,14 +682,16 @@ class HrSuperAgentStack(cdk.Stack):
                 platform=ecr_assets.Platform.LINUX_ARM64,
             )
             asset.repository.grant_pull(runtime_role)
+            asset.repository.grant_pull(tools_role)
             image_uri = asset.image_uri
         else:
-            runtime_role.add_to_policy(
-                iam.PolicyStatement(
-                    actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
-                    resources=[f"arn:aws:ecr:{self.region}:{self.account}:repository/*"],
+            for role in (runtime_role, tools_role):
+                role.add_to_policy(
+                    iam.PolicyStatement(
+                        actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+                        resources=[f"arn:aws:ecr:{self.region}:{self.account}:repository/*"],
+                    )
                 )
-            )
 
         # ---- Edge gateway --------------------------------------------------------------
         gateway_role = iam.Role(
@@ -1742,6 +1750,19 @@ class HrSuperAgentStack(cdk.Stack):
         kb_target.node.add_dependency(tools_gateway_role)
         kb_target.node.add_dependency(data_source)
 
+        # ---- HR tools (phase 2) ----------------------------------------------------------
+        HrTools(
+            self,
+            "HrTools",
+            image_uri=image_uri,
+            role=tools_role,
+            gateway=tools_gateway,
+            gateway_role=tools_gateway_role,
+            token_issuer=f"https://cognito-idp.{self.region}.amazonaws.com/{user_pool.user_pool_id}",
+            allowed_clients=jwt_allowed_clients,
+            base_environment=RUNTIME_BASE_ENVIRONMENT,
+        )
+
         # Dynatrace trace export, shipped dark. The runtime's own OTEL_EXPORTER_OTLP_*
         # values are injected by the AgentCore platform when AGENT_OBSERVABILITY_ENABLED
         # is set (see RUNTIME_BASE_ENVIRONMENT above); OTEL's env var scheme carries only
@@ -1773,6 +1794,7 @@ class HrSuperAgentStack(cdk.Stack):
             "TOOLS_GATEWAY_URL": tools_gateway.attr_gateway_url,
             "MODEL_ID": MODEL_ID,
             "RETRIEVE_TOOL": RETRIEVE_TOOL,
+            "HR_TOOL_PREFIX": HR_TOOL_PREFIX,
             "CONVERSATION_LOG_ENABLED": "true" if CONVERSATION_LOG_ENABLED else "false",
             "CONVERSATION_LOG_BUCKET": conversation_bucket.bucket_name,
             "CONVERSATION_LOG_KEY_SECRET_ARN": conversation_secret.secret_arn,
@@ -2161,87 +2183,12 @@ class HrSuperAgentStack(cdk.Stack):
         cdk.CfnOutput(self, "RumBeaconOrigin", value=dynatrace_beacon_origin.value_as_string)
 
     def _runtime_role(self) -> iam.Role:
-        """Execution role for the runtime, following the AgentCore documented policy."""
-        role = iam.Role(
-            self,
-            "RuntimeRole",
-            assumed_by=iam.ServicePrincipal(
-                "bedrock-agentcore.amazonaws.com",
-                conditions={
-                    "StringEquals": {"aws:SourceAccount": self.account},
-                    "ArnLike": {
-                        "aws:SourceArn": f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:*"
-                    },
-                },
-            ),
-            description="Execution role for the HR Super Agent agent runtime",
+        """Execution role for the orchestrator runtime: the documented base policy plus
+        the one model it calls."""
+        role = runtime_execution_role(
+            self, "RuntimeRole", RUNTIME_NAME, "Execution role for the HR Super Agent agent runtime"
         )
         region, account = self.region, self.account
-        role.add_to_policy(
-            iam.PolicyStatement(actions=["ecr:GetAuthorizationToken"], resources=["*"])
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["logs:DescribeLogGroups"],
-                resources=[f"arn:aws:logs:{region}:{account}:log-group:*"],
-            )
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "logs:CreateLogGroup",
-                    "logs:CreateLogStream",
-                    "logs:DescribeLogStreams",
-                    "logs:PutLogEvents",
-                ],
-                resources=[
-                    f"arn:aws:logs:{region}:{account}:log-group:/aws/bedrock-agentcore/runtimes/*"
-                ],
-            )
-        )
-        # The documented execution role adds this so the runtime can let X-Ray deliver
-        # spans into the agent's own log group (the unified span destination) instead of
-        # the shared aws/spans group; scoped to this runtime's log groups as the docs show.
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["logs:PutResourcePolicy"],
-                resources=[
-                    f"arn:aws:logs:{region}:{account}:log-group:"
-                    f"/aws/bedrock-agentcore/runtimes/{RUNTIME_NAME}-*"
-                ],
-            )
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "xray:PutTraceSegments",
-                    "xray:PutTelemetryRecords",
-                    "xray:GetSamplingRules",
-                    "xray:GetSamplingTargets",
-                ],
-                resources=["*"],
-            )
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["cloudwatch:PutMetricData"],
-                resources=["*"],
-                conditions={"StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}},
-            )
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "bedrock-agentcore:GetWorkloadAccessToken",
-                    "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
-                    "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
-                ],
-                resources=[
-                    f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default",
-                    f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default/workload-identity/{RUNTIME_NAME}-*",
-                ],
-            )
-        )
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
