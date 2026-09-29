@@ -148,7 +148,10 @@ ORIGIN_RESPONSE_TIMEOUT = Duration.seconds(60)
 CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2"  # the same for every CloudFront distribution
 RETRIEVE_TOOL = f"{KB_TARGET_NAME}___Retrieve"
 
+# The orchestrator routes and answers general questions on Sonnet; the sub-agents run on
+# Haiku (D8). MODEL_ID is the sub-agents' model.
 MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+ORCHESTRATOR_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 
 # Environment the runtime hands the container before the tools gateway exists. The
 # container starts under opentelemetry-instrument (agent/Dockerfile); the runtime itself
@@ -1816,9 +1819,11 @@ class HrSuperAgentStack(cdk.Stack):
         runtime.environment_variables = {
             **RUNTIME_BASE_ENVIRONMENT,
             "TOOLS_GATEWAY_URL": tools_gateway.attr_gateway_url,
-            "MODEL_ID": MODEL_ID,
+            "MODEL_ID": ORCHESTRATOR_MODEL_ID,
+            "ROUTER_MODEL_ID": ORCHESTRATOR_MODEL_ID,
             "RETRIEVE_TOOL": RETRIEVE_TOOL,
-            "HR_TOOL_PREFIX": HR_TOOL_PREFIX,
+            "ORCHESTRATOR_EXTRA_TOOLS": f"{HR_TOOL_PREFIX}open_ticket",
+            "AGENTS_GATEWAY_URL": sub_agents.gateway.attr_gateway_url,
             "CONVERSATION_LOG_ENABLED": "true" if CONVERSATION_LOG_ENABLED else "false",
             "CONVERSATION_LOG_BUCKET": conversation_bucket.bucket_name,
             "CONVERSATION_LOG_KEY_SECRET_ARN": conversation_secret.secret_arn,
@@ -2219,9 +2224,9 @@ class HrSuperAgentStack(cdk.Stack):
                 resources=[
                     # A cross-region inference profile fans out to models in several
                     # regions, so the foundation-model wildcard stays broad; the profile
-                    # itself is narrowed to the one MODEL_ID the agent calls.
+                    # itself is narrowed to the one model the orchestrator calls.
                     "arn:aws:bedrock:*::foundation-model/*",
-                    f"arn:aws:bedrock:{region}:{account}:inference-profile/{MODEL_ID}",
+                    f"arn:aws:bedrock:{region}:{account}:inference-profile/{ORCHESTRATOR_MODEL_ID}",
                 ],
             )
         )

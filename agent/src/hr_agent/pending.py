@@ -122,3 +122,22 @@ def pending_after_messages(messages: list[dict], prefix: str) -> dict[str, Any] 
                 elif name == f"{prefix}commit_change" and committed(payload):
                     pending = None
     return pending
+
+
+def committed_in_messages(messages: list[dict], prefix: str) -> bool:
+    """Whether a run's messages include a successful commit_change."""
+    names: dict[str, str] = {}
+    for message in messages:
+        for block in message.get("content", []):
+            if "toolUse" in block:
+                names[block["toolUse"]["toolUseId"]] = block["toolUse"]["name"]
+            elif "toolResult" in block:
+                result = block["toolResult"]
+                name = names.get(result.get("toolUseId", ""), "")
+                if (
+                    name == f"{prefix}commit_change"
+                    and result.get("status") != "error"
+                    and committed(_tool_result_payload(result))
+                ):
+                    return True
+    return False

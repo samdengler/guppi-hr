@@ -338,7 +338,7 @@ def test_runtime_environment_variables_point_at_the_tools_gateway(template):
             "EnvironmentVariables": Match.object_like(
                 {
                     "LOG_LEVEL": "INFO",
-                    "MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    "MODEL_ID": "us.anthropic.claude-sonnet-4-6",
                     "OTEL_PYTHON_EXCLUDED_URLS": "/ping$",
                     "RETRIEVE_TOOL": "docs___Retrieve",
                     "TOOLS_GATEWAY_URL": Match.any_value(),
@@ -1134,12 +1134,25 @@ def test_hr_tables_are_on_demand_and_proposals_expire(template):
     assert {"AttributeName": "expires_at", "Enabled": True} in ttl
 
 
-def test_orchestrator_sees_the_hr_tools_in_phase_two(template):
+def test_orchestrator_routes_to_the_agents_gateway_on_sonnet(template):
     runtimes = template.find_resources(
         "AWS::BedrockAgentCore::Runtime", {"Properties": {"AgentRuntimeName": "hr_super_agent"}}
     )
     (runtime,) = runtimes.values()
-    assert runtime["Properties"]["EnvironmentVariables"]["HR_TOOL_PREFIX"] == "hr___"
+    env = runtime["Properties"]["EnvironmentVariables"]
+    assert env["ROUTER_MODEL_ID"] == env["MODEL_ID"] == "us.anthropic.claude-sonnet-4-6"
+    assert env["ORCHESTRATOR_EXTRA_TOOLS"] == "hr___open_ticket"
+    assert "HR_TOOL_PREFIX" not in env  # the write tools moved to the sub-agents (D22 ended)
+    assert "SubAgentsGateway" in json.dumps(env["AGENTS_GATEWAY_URL"])
+    policies = [
+        p
+        for name, p in template.find_resources("AWS::IAM::Policy").items()
+        if name.startswith("RuntimeRoleDefaultPolicy")
+    ]
+    (policy,) = policies
+    body = json.dumps(policy)
+    assert "inference-profile/us.anthropic.claude-sonnet-4-6" in body
+    assert "claude-haiku" not in body
 
 
 def test_tools_role_scopes_its_logs_to_its_own_runtime(template):

@@ -276,10 +276,10 @@ def test_subject_hash_is_stable_and_never_the_sub():
 def test_settings_require_the_gateway_url(monkeypatch):
     monkeypatch.delenv("TOOLS_GATEWAY_URL", raising=False)
     with pytest.raises(RuntimeError, match="TOOLS_GATEWAY_URL"):
-        agent_module.build_strands_agent("token")
+        agent_module.build_general_agent("token")
     monkeypatch.setenv("TOOLS_GATEWAY_URL", "https://tools.example/mcp")
     monkeypatch.setenv("MODEL_ID", "test-model")
-    runner = agent_module.build_strands_agent("token")
+    runner = agent_module.build_general_agent("token")
     assert runner._settings.model_id == "test-model"
     assert runner._settings.retrieve_tool == "docs___Retrieve"
     assert runner.usage() == {}

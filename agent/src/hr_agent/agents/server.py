@@ -38,6 +38,7 @@ from a2a.types import (
 from hr_agent.agents.domains import DOMAINS, Domain
 from hr_agent.pending import (
     PENDING_KEY,
+    committed_in_messages,
     parse_pending,
     pending_after_messages,
     pending_paragraph,
@@ -70,13 +71,17 @@ Your tools act on this employee's own records. A change always takes two turns: 
 the matching propose tool, then tell the employee the exact change it returned and ask
 them to confirm. Call commit_change with that proposal_id only when their next message
 clearly says yes; if they decline or change the details, do not commit. Never say a change
-is done unless commit_change succeeded. When the employee asks for a person, or you cannot
-help, open a ticket and give them its id.
+is done unless commit_change succeeded.
+
+When the employee asks to talk to a person, open a ticket right away with a one-line
+summary of the conversation so far, and give them its id; do not ask what it is about
+first. Do the same when you cannot help.
 """
 
 TICKET_RULE = """
-When the employee asks for a person or needs a change you cannot make, open a ticket and
-give them its id.
+When the employee asks to talk to a person, or needs a change you cannot make, open a
+ticket right away with a one-line summary of the conversation so far, and give them its
+id; do not ask what it is about first.
 """
 
 
@@ -103,6 +108,7 @@ class DomainResult:
     reply: str
     pending: dict[str, Any] | None
     tool_calls: int = 0
+    committed: bool = False
 
 
 def history_messages(history: object) -> list[dict]:
@@ -188,6 +194,7 @@ async def run_domain(
             reply=str(result).strip(),
             pending=pending_after_messages(added, settings.hr_tool_prefix),
             tool_calls=tool_calls,
+            committed=committed_in_messages(added, settings.hr_tool_prefix),
         )
     finally:
         await asyncio.to_thread(client.stop, None, None, None)
@@ -222,7 +229,15 @@ class DomainExecutor(AgentExecutor):
             record.update(outcome="finished", tool_calls=result.tool_calls)
             parts = [
                 Part(root=TextPart(text=result.reply)),
-                Part(root=DataPart(data={"domain": self.domain.name, PENDING_KEY: result.pending})),
+                Part(
+                    root=DataPart(
+                        data={
+                            "domain": self.domain.name,
+                            PENDING_KEY: result.pending,
+                            "committed": result.committed,
+                        }
+                    )
+                ),
             ]
         except Exception:
             log.exception("%s run failed", self.domain.name)
