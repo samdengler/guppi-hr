@@ -29,7 +29,7 @@ Delegation for one turn:
 
 ## Phases
 
-- [ ] **Phase 1: Bootstrap.** Fetch guppi-gpt history; rename packages, stack, hostnames
+- [x] **Phase 1: Bootstrap.** Fetch guppi-gpt history; rename packages, stack, hostnames
   (`hr.dengler.io`, `auth-hr.dengler.io`), brand; rewrite AGENTS.md and README for the new
   layout; Google redirect URI added by Sam. Done when `uv run -- pytest` and `cdk synth`
   pass, the stack deploys, and the unchanged chat works at the new hostname.

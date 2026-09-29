@@ -1,22 +1,28 @@
-# HR Super Agent Agent Instructions
+# HR Super Agent instructions
 
 ## Project Overview
 
-HR Super Agent is a minimal claude.ai style chat: one page, plain text conversation, no
-attachments, Google sign-in, and answers grounded in a Bedrock Knowledge Base. The agent
-holds nothing between runs and the page starts empty, but three things are kept: the
-sign-in session in IndexedDB, one pseudonymous record per thread in S3 for 30 days, and a
-vote on a reply as a business event. Chat history in the browser is built behind the
-`history` flag and off. The design document (`docs/guppigpt-design.html`) and the decision log
-(`docs/guppigpt-decision-log.html`) are the source of truth for architecture; this
-repository implements them. `docs/guppigpt-architecture.html` holds the diagrams. When code and design disagree,
-fix one of them in the same change.
+HR Super Agent is an MVP of an HR employee assistant, branded "HR Assistant" on the page.
+It is an iteration of guppi-gpt (`~/src/github.com/samdengler/guppi-gpt`), merged in with
+its history at commit 8baf911 and renamed. Today the code is guppi-gpt's chat under new
+names at `https://hr.dengler.io`: one page, plain text conversation, Google sign-in, and
+answers grounded in a Bedrock Knowledge Base. The agent holds nothing between runs, but
+three things are kept: the sign-in session in IndexedDB, one pseudonymous record per
+thread in S3 for 30 days, and a vote on a reply as a business event.
 
-Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
+The MVP replaces the single agent with an orchestrator that routes each turn to Profile,
+Pay, and Travel sub-agents over A2A, and adds an HR tools MCP server with a propose and
+commit pair for every write. `docs/plan.md` has the target architecture and the seven
+phases; `docs/decision-log.md` records every choice (D1 on); `docs/handoff.md` explains
+the sources. guppi-gpt's design document (`docs/guppigpt-design.html`), decision log
+(`docs/guppigpt-decision-log.html`), and diagrams (`docs/guppigpt-architecture.html`)
+stay unchanged as the record of what was inherited (D17). When code and a decision
+disagree, change one of them in the same commit.
 
 ## Tech Stack
 
-- Infrastructure: AWS CDK v2 in Python, one stack `HrSuperAgent`, region `us-east-1`
+- Infrastructure: AWS CDK v2 in Python, one stack `HrSuperAgent`, region `us-east-1`, in
+  the same account and `dengler.io` zone as guppi-gpt's `GuppiGpt` stack
 - Agent: Python 3.12, FastAPI, AG-UI over SSE, Strands Agents with the `ag-ui-strands` adapter, arm64 container on AgentCore Runtime
 - Model: Claude Haiku 4.5 through the `us.` cross-region inference profile (`MODEL_ID` in the stack)
 - Edge: CloudFront in front of an AgentCore Gateway runtime target, plus an `/api/feedback` behavior in front of a small API Gateway REST API that puts reply votes straight onto an EventBridge bus; Cognito user pool federated to Google
@@ -27,8 +33,12 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 ## Project Structure
 
 ```
-docs/                     # design document, decision log, architecture diagrams (self-contained HTML)
-  proposals/              # backlog proposals in Markdown; traceability.md covers run and trace ids
+docs/
+  handoff.md              # what the MVP is, its sources, how to start
+  plan.md                 # target architecture, the seven phases, the four scenarios
+  decision-log.md         # D1 on, one row per decision, status Proposed, Approved or Reversed
+  guppigpt-*.html         # guppi-gpt's design, decision log, and diagrams, kept unchanged (D17)
+  proposals/              # guppi-gpt's backlog proposals, unchanged; new proposals are added beside them
   dynatrace/dashboard.json  # draft DQL dashboard tiles for the queries in docs/proposals/dynatrace.md
 infra/
   app.py                  # CDK app entry
@@ -93,8 +103,17 @@ scripts/
   `uv run -- cdk synth -c image_uri=<any ecr uri>` working without Docker.
 - Prose in docs and comments: no em-dashes or en-dashes, no second person.
 - The page renders plain text only: no Markdown parser, no `innerHTML` with model or user text.
-- Tests replace `hr_agent.agent.build_strands_agent`; nothing in `agent/tests` reaches
-  Bedrock or the gateway.
+- Tests replace `hr_agent.agent.build_strands_agent` (and, from phase 3, the A2A client
+  factory); nothing in `agent/tests` reaches Bedrock or a gateway.
+- The orchestrator, the sub-agents, and the tools server share one container image; a
+  role is chosen by `AGENT_ROLE`. Add a role, not a Dockerfile (D11).
+- Every phase in `docs/plan.md` ends deployed and checked in the browser; phases are not
+  stacked undeployed.
+- Every choice not already in `docs/decision-log.md` gets a new entry with status
+  Proposed, listed in the next message to Sam.
+- Every named AWS resource differs from its `GuppiGpt` counterpart, since both stacks
+  share the account (D18). The zone apex record and Transaction Search stay with
+  `GuppiGpt` (D16).
 - Observability that reads state already reaching the browser is never behind a feature
   flag. `web/features.json` and the OpenFeature provider in `web/src/features.js` mostly
   gate product features (`docs/proposals/feature-flags.md`); the one exception is `rum`,
@@ -135,7 +154,13 @@ publishes the page from the last outputs file. Every run is
 also written to `.deploy/deploy-<timestamp>.log` with `.deploy/latest.log` pointing at the
 newest and a final `deploy exit=<code>` line, so a Claude session can watch a deploy
 started from any terminal. Deploys run on Sam's Mac; the Docker image is built there for
-arm64.
+arm64. A deploy started without a terminal (a `!` command in a Claude session) cannot
+answer cdk's approval prompt for IAM changes and exits 1 before touching the stack; pass
+`--require-approval never` there.
+
+`-c own_account_singletons=true` makes the stack create the `dengler.io` apex placeholder
+record and the Transaction Search configuration itself. It stays off while `GuppiGpt`
+exists, since a second copy of either fails the deploy (D16).
 
 The runtime's request header allowlist names `Authorization` and `traceparent`; without
 the first the runtime validates the bearer and drops it, and the agent has no token for
@@ -148,8 +173,8 @@ from the stack; the container starts under `opentelemetry-instrument` (`agent/Do
 runtime supplies the ADOT exporter settings itself. `docs/proposals/traceability.md`
 describes the identifiers and where each one is logged.
 
-Conversation logging (`docs/proposals/conversation-logging.md`) ships behind two switches,
-both off. `CONVERSATION_LOG_ENABLED` in `stack.py` decides whether the agent writes one
+Conversation logging (`docs/proposals/conversation-logging.md`) is behind two switches,
+both on (inherited from guppi-gpt, where they were turned on 5 Sep 2026). `CONVERSATION_LOG_ENABLED` in `stack.py` decides whether the agent writes one
 record per thread to the conversation log bucket, uses the keyed pseudonym on the run line,
 and tells the model that conversations are logged; `"logging"` in `web/features.json`
 decides whether the page's hint and empty state say so. Flip the runtime switch and deploy
@@ -157,10 +182,12 @@ first, then the page switch, so the page never promises a record that does not e
 them off in the other order. The bucket, the KMS key, the HMAC secret, and the investigator
 role are created either way, so flipping a switch is one line and a deploy.
 
-The stack also owns one account-wide setting, CloudWatch Transaction Search (the span
-destination and a 1 percent indexing rule), because the instrumented container's spans
-are refused until it is on. The web ACL on the edge gateway keeps all three rules in COUNT
-until `WAF_BLOCK` in `stack.py` is flipped after real traffic has been watched. The billing
+The instrumented container's spans are refused until CloudWatch Transaction Search (the
+span destination and a 1 percent indexing rule) is on for the account; the `GuppiGpt`
+stack owns that setting, and this one creates it only with `own_account_singletons` (D16).
+The web ACL on the edge gateway blocks (`WAF_BLOCK = True` in `stack.py`, inherited from
+guppi-gpt, where a day in COUNT produced no counts); set it to `False` to return to
+counting. The billing
 alarm reads `AWS/Billing EstimatedCharges`, which exists only after billing alerts are
 enabled in the account's billing preferences (a console setting, not in the stack). The two
 gateways' and the runtime's `APPLICATION_LOGS` (and, for the gateways, `TRACES`) are
@@ -168,21 +195,21 @@ delivered to CloudWatch Logs groups under `/aws/vendedlogs/bedrock-agentcore/`, 
 retention, alongside alarms on gateway 4xx rate and 5xx count, runtime 5xx count and p90
 latency, and Bedrock throttling, all notifying the alarm topic (`docs/proposals/operations.md`).
 
-Dynatrace is shipped dark: `DynatraceBeaconOrigin`, `DynatraceOtlpEndpoint`, and
-`DynatraceApiToken` are stack parameters that default empty, so the CSP and the runtime's
-trace export env vars render exactly as they do today until Sam supplies real values.
-`scripts/deploy.sh` reads the OTLP endpoint and the API token from 1Password
-(`op://Personal/GuppiGPT Dynatrace/...`, an API Credential item whose `hostname` is the
-endpoint and `credential` is the token) the same way it reads the Google OAuth client,
-skipping them when the item does not exist yet; `HR_DYNATRACE_BEACON_ORIGIN`, when
-set, becomes the `DynatraceBeaconOrigin` parameter the same way `HR_ALARM_EMAIL`
-becomes `AlarmEmail`. The RUM script itself (`web/vendor/ruxitagentjs.js`, gitignored) is
-copied into the bundle at `/dt/ruxitagentjs.js` before the sync when present. Turning RUM
-on for visitors is still the `rum` flag in `web/features.json`, flipped the same way as
-`history` and `feedback`. Reusing the OTLP parameters above, a Firehose stream forwards
-the vended logs to Dynatrace, dark until Sam supplies real OTLP values.
-`docs/proposals/dynatrace.md` has the full flip procedure and what Sam has to create in
-Dynatrace first.
+Dynatrace: `DynatraceBeaconOrigin`, `DynatraceOtlpEndpoint`, and `DynatraceApiToken` are
+stack parameters that default empty, and each Dynatrace path stays dark while its
+parameter is empty. `scripts/deploy.sh` reads the OTLP endpoint and the API token from
+1Password (`op://Personal/GuppiGPT Dynatrace/...`, an API Credential item whose
+`hostname` is the endpoint and `credential` is the token) the same way it reads the
+Google OAuth client, skipping them when the item does not exist. The item exists, so
+this stack exports traces, forwards vended logs through Firehose, and sends feedback
+business events to the same tenant as guppi-gpt; its spans carry the service name
+`hr_super_agent.DEFAULT`. `HR_DYNATRACE_BEACON_ORIGIN`, when set, becomes the
+`DynatraceBeaconOrigin` parameter the same way `HR_ALARM_EMAIL` becomes `AlarmEmail`;
+it is unset. The RUM script itself (`web/vendor/ruxitagentjs.js`, gitignored) is copied
+into the bundle at `/dt/ruxitagentjs.js` before the sync when present; this checkout has
+none, so although the `rum` flag in `web/features.json` is on, the page's request for the
+script gets a 403 and RUM does not run. `docs/proposals/dynatrace.md` has guppi-gpt's
+flip procedure.
 
 Reply votes take their own path, off the chat runtime and off the trace
 (`docs/proposals/feedback.md`). The page posts one to `/api/feedback`, a CloudFront
