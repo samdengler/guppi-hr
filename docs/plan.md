@@ -40,14 +40,14 @@ Delegation for one turn:
   subject on first read; a Runtime with protocol MCP and a second MCP target on the tools
   gateway. Done when the orchestrator lists both `docs___*` and `hr___*` tools and a
   commit without a proposal id is refused.
-- [ ] **Phase 3: Sub-agents.** `agent/src/hr_agent/agents/{profile,pay,travel}.py`: one
+- [x] **Phase 3: Sub-agents.** `agent/src/hr_agent/agents/{profile,pay,travel}.py`: one
   Strands agent each with its prompt, its subset of `hr___*` tools plus `docs___Retrieve`,
   wrapped in `A2AServer`; three Runtimes with protocol A2A and JWT authorizers; the agents
   gateway with three runtime targets and `AGENTCORE_RUNTIME_URL` set to each gateway path.
   Agent card descriptions written to be mutually distinguishable. Done when each sub-agent
   answers an A2A `message/send` through the gateway with the user's token, and a proposal
   from one call is committed by the next.
-- [ ] **Phase 4: Orchestrator.** Routing step as structured output before the main loop;
+- [x] **Phase 4: Orchestrator.** Routing step as structured output before the main loop;
   sub-agents as tools built from `A2AAgent` with the caller's token; `state` in and
   `STATE_SNAPSHOT` out; clarifying question below the threshold; `STEP_*` events; run log
   fields. Done when the four scenarios pass end to end from curl.

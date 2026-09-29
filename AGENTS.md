@@ -47,6 +47,7 @@ infra/
   hr_super_agent_infra/stack.py
   hr_super_agent_infra/hr_tools.py      # HR tools tables, MCP runtime, hr target on the tools gateway
   hr_super_agent_infra/runtime_role.py  # the documented runtime execution role, one per runtime
+  hr_super_agent_infra/sub_agents.py    # agents gateway, three A2A runtimes, runtime targets with token passthrough
   tests/                  # assertions against the synthesized template
 agent/
   src/hr_agent/app.py         # FastAPI app: POST /invocations (SSE), GET /ping, per-run log record with trace id
@@ -56,6 +57,9 @@ agent/
   src/hr_agent/conversation_log.py  # thread record: pseudonym, merge, conditional write to S3
   src/hr_agent/__main__.py    # container entrypoint: AGENT_ROLE picks the server (D11)
   src/hr_agent/tools/         # HR tools MCP server: identity.py (X-Hr-User-Token, D19), records.py, store.py (D21), server.py
+  src/hr_agent/orchestrator.py  # routing step (Sonnet), routing policy, A2A delegation, AG-UI state (D26, D27)
+  src/hr_agent/pending.py       # the pending change: parsing tool results, the prompt paragraph (D23)
+  src/hr_agent/agents/          # Profile, Pay, Travel sub-agents: domains.py (cards, tools), server.py (A2A executor, D24)
   Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/
