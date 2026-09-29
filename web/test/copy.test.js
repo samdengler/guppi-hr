@@ -53,3 +53,24 @@ test("the status line names what each tool is doing", async () => {
   assert.equal(toolStatus("hr___get_profile").running, "Checking your HR records…");
   assert.equal(toolStatus(undefined).running, "Working…");
 });
+
+test("each delegation gets its own status line and reply tag", async () => {
+  const { stepStatus, replyLabel, composerPlaceholder, BRAND } = await import("../src/copy.js");
+  assert.deepEqual(stepStatus("pay"), { running: "Asking the Pay agent…", done: "Pay agent answered" });
+  assert.equal(stepStatus("unknown").running, "Working…");
+  assert.equal(replyLabel("travel"), `${BRAND} · Travel`);
+  assert.equal(replyLabel(undefined), BRAND);
+  assert.equal(composerPlaceholder(false), `Ask the ${BRAND}`);
+  assert.equal(composerPlaceholder(true), `Reply to the ${BRAND}`);
+});
+
+test("the static pages carry the brand constant", async () => {
+  const { BRAND } = await import("../src/copy.js");
+  for (const page of ["index.html", "flags.html", "privacy.html", "terms.html"]) {
+    const html = readFileSync(new URL(`../src/${page}`, import.meta.url), "utf8");
+    const title = html.match(/<title>([^<]*)<\/title>/)[1];
+    assert.ok(title.startsWith(BRAND), `${page} title "${title}" does not start with ${BRAND}`);
+  }
+  const index = readFileSync(new URL("../src/index.html", import.meta.url), "utf8");
+  assert.ok(index.includes(`placeholder="Ask the ${BRAND}"`));
+});

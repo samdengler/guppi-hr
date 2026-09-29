@@ -37,3 +37,31 @@ export function toolStatus(toolName) {
   }
   return { running: "Working…", done: "Done" };
 }
+
+// The product name, in one place (D15). Static pages (index, flags, privacy, terms) carry
+// the same text, and web/test/copy.test.js holds them to it.
+export const BRAND = "HR Assistant";
+
+// The sub-agents the orchestrator can hand a turn to, by the step name it sends (D4).
+const AGENT_NAMES = { profile: "Profile", pay: "Pay", travel: "Travel" };
+
+export function agentName(stepName) {
+  return AGENT_NAMES[stepName] || null;
+}
+
+// The status line while the orchestrator waits on a sub-agent, and once it has answered.
+export function stepStatus(stepName) {
+  const name = agentName(stepName);
+  if (!name) return { running: "Working…", done: "Done" };
+  return { running: `Asking the ${name} agent…`, done: `${name} agent answered` };
+}
+
+// The label above a reply: the brand, tagged with the agent that answered it.
+export function replyLabel(stepName) {
+  const name = agentName(stepName);
+  return name ? `${BRAND} · ${name}` : BRAND;
+}
+
+export function composerPlaceholder(hasMessages) {
+  return hasMessages ? `Reply to the ${BRAND}` : `Ask the ${BRAND}`;
+}

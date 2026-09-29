@@ -3,7 +3,15 @@ import { initFeatures, isEnabled } from "./features.js";
 import { enabledFlagNames } from "./flags-core.js";
 import * as chatHistory from "./history.js";
 import { renderFeedbackControls, initFeedbackSink, FEEDBACK_EVENT } from "./feedback.js";
-import { hintText, emptyStateText, toolStatus } from "./copy.js";
+import {
+  BRAND,
+  composerPlaceholder,
+  emptyStateText,
+  hintText,
+  replyLabel,
+  stepStatus,
+  toolStatus,
+} from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 
@@ -114,9 +122,13 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
       title: threadTitle,
       createdAt: threadCreatedAt,
       updatedAt: Date.now(),
-      messages: messages.map(({ id, role, content, feedback }) =>
-        feedback !== undefined ? { id, role, content, feedback } : { id, role, content },
-      ),
+      messages: messages.map(({ id, role, content, feedback, agent }) => ({
+        id,
+        role,
+        content,
+        ...(feedback !== undefined ? { feedback } : {}),
+        ...(agent ? { agent } : {}),
+      })),
     };
     try {
       await chatHistory.putThread(thread);
@@ -131,8 +143,8 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
       if (message.role !== "user") continue;
-      const refs = addTurn(message.content);
       const next = messages[i + 1];
+      const refs = addTurn(message.content, next && next.role === "assistant" ? next.agent : null);
       if (next && next.role === "assistant") {
         refs.text.textContent = next.content;
         i++;
@@ -391,7 +403,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
     const canSend = (status === "idle-empty" || status === "idle") && input.value.trim().length > 0;
     sendBtn.disabled = !canSend;
     emptyState.hidden = messages.length > 0 || status === "running" || status === "error";
-    input.placeholder = messages.length > 0 ? "Reply to the HR Assistant" : "Ask the HR Assistant";
+    input.placeholder = composerPlaceholder(messages.length > 0);
   }
 
   function clearThreadState() {
@@ -416,7 +428,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
 
   // ---- Thread rendering ----
 
-  function addTurn(userText) {
+  function addTurn(userText, agentStep) {
     const turn = document.createElement("div");
     turn.className = "turn";
 
@@ -430,7 +442,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
 
     const label = document.createElement("p");
     label.className = "reply-label";
-    label.textContent = "HR Assistant";
+    label.textContent = replyLabel(agentStep);
     reply.appendChild(label);
 
     const statusLine = document.createElement("p");
@@ -461,7 +473,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
       retry();
     });
 
-    return { reply, statusLine, text, errorLine, errorText, retryLink };
+    return { reply, label, statusLine, text, errorLine, errorText, retryLink };
   }
 
   function markReply(reply, ids) {
@@ -623,6 +635,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
     let finished = false;
     let errored = false;
     let toolName = "";
+    let agentStep = null;
     let nextState = null;
     let refused = false;
     // One run id and one trace per turn; a Retry is a new run on a new trace.
@@ -701,6 +714,16 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
       onToolCallEndEvent: () => {
         setStatusLine(toolStatus(toolName).done);
       },
+      onStepStartedEvent: ({ event }) => {
+        // The orchestrator handed the turn to a sub-agent (Profile, Pay, Travel): say so
+        // while it works, and tag the reply with the agent that answered.
+        agentStep = event.stepName;
+        refs.label.textContent = replyLabel(agentStep);
+        setStatusLine(stepStatus(agentStep).running);
+      },
+      onStepFinishedEvent: ({ event }) => {
+        setStatusLine(stepStatus(event.stepName).done);
+      },
       onStateSnapshotEvent: ({ event }) => {
         // The last snapshot of a run is the whole state; it is kept only if the run
         // finishes, so an interrupted run leaves the previous state in place.
@@ -739,6 +762,9 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
     refs.text.textContent = draft;
     if (nextState) threadState = nextState;
     const assistantMessage = { id: crypto.randomUUID(), role: "assistant", content: draft };
+    // Kept with the stored thread so a reopened chat shows the same tag; stripped from
+    // the wire with every other bookkeeping field.
+    if (agentStep) assistantMessage.agent = agentStep;
     messages.push(assistantMessage);
     await persistCurrentThread();
     // Only a committed reply gets the control: never the streaming draft above, and

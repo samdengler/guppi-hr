@@ -6,13 +6,14 @@ import {
   serializeOverrides,
   OVERRIDE_KEY,
 } from "./flags-core.js";
+import { BRAND } from "./copy.js";
 
 // A static provider: every value comes from the flags object computed once at
 // initFeatures time (config.json's features overlaid with the browser's overrides). The
 // web SDK's evaluation is synchronous, so no network round trip belongs in a resolver.
 class StaticFlagsProvider {
   runsOn = "client";
-  metadata = { name: "HR Assistant static flags" };
+  metadata = { name: `${BRAND} static flags` };
 
   constructor(flags) {
     this.flags = flags;
