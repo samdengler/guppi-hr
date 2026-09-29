@@ -1,0 +1,146 @@
+{
+  "version": 20,
+  "variables": [],
+  "tiles": {
+    "1": {
+      "type": "data",
+      "title": "Runs per hour",
+      "description": "One server span named POST /invocations per run, service guppi_gpt.DEFAULT, exported by the instrumented container (observed in the tenant 5 Sep 2026).",
+      "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"guppi_gpt.DEFAULT\"\n| summarize runs = count(), by: {bin(start_time, 1h)}",
+      "visualization": "lineChart",
+      "visualizationSettings": {}
+    },
+    "2": {
+      "type": "data",
+      "title": "Run duration p50/p90",
+      "description": "Duration of the POST /invocations server span, which is the whole run rather than the first delta; the first delta lives only on the agent's log line in CloudWatch (runtime-logs), which Firehose does not forward.",
+      "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"guppi_gpt.DEFAULT\"\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90), by: {bin(start_time, 1h)}",
+      "visualization": "lineChart",
+      "visualizationSettings": {}
+    },
+    "3": {
+      "type": "data",
+      "title": "Run outcome split",
+      "description": "The failure flag on the POST /invocations server span. RUN_ERROR events emitted on a 200 stream are not failures here; the outcome field on the agent's CloudWatch log line is the finer source.",
+      "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"guppi_gpt.DEFAULT\"\n| summarize runs = count(), by: {request_is_failed}",
+      "visualization": "categoricalBarChart",
+      "visualizationSettings": {}
+    },
+    "4": {
+      "type": "data",
+      "title": "Retrieval rate",
+      "description": "Share of runs (distinct trace ids with a POST /invocations span) whose trace also holds at least one mcp tools/call docs___Retrieve span. Counting spans rather than traces gave more than 100 percent, since one run can call the tool more than once.",
+      "query": "fetch spans\n| filter service.name == \"guppi_gpt.DEFAULT\" and (span.name == \"POST /invocations\" or span.name == \"mcp tools/call docs___Retrieve\")\n| summarize runs = countDistinctExact(if(span.name == \"POST /invocations\", trace.id)), withRetrieval = countDistinctExact(if(span.name == \"mcp tools/call docs___Retrieve\", trace.id))\n| fields pct = if(runs > 0, withRetrieval * 100.0 / runs, else: 0)",
+      "visualization": "singleValue",
+      "visualizationSettings": {
+        "singleValue": {
+          "showLabel": false,
+          "label": "",
+          "autoscale": false,
+          "alignment": "center",
+          "trend": {
+            "isVisible": false
+          },
+          "sparklineSettings": {
+            "isVisible": false
+          }
+        },
+        "unitsOverrides": [
+          {
+            "identifier": "pct",
+            "unitCategory": "percentage",
+            "baseUnit": "percent",
+            "displayUnit": null,
+            "decimals": 0,
+            "suffix": "%",
+            "delimiter": false
+          }
+        ]
+      }
+    },
+    "5": {
+      "type": "data",
+      "title": "Token usage",
+      "description": "The Strands model span (named chat <model id>) carries the GenAI semantic convention usage attributes; if the attribute names differ in this Strands version, inspect one chat span in Distributed Tracing and adjust.",
+      "query": "fetch spans\n| filter startsWith(span.name, \"chat \") and service.name == \"guppi_gpt.DEFAULT\"\n| summarize input = sum(gen_ai.usage.input_tokens), output = sum(gen_ai.usage.output_tokens), by: {bin(start_time, 1h)}",
+      "visualization": "lineChart",
+      "visualizationSettings": {}
+    },
+    "6": {
+      "type": "data",
+      "title": "Feedback up/down ratio",
+      "description": "The business event guppigpt.reply-feedback, ingested through the EventBridge API destination the stack creates (docs/proposals/feedback.md). The RUM custom action this tile used to query was never stored by the tenant; the vote now arrives on the bizevents table with vote, run.id, and trace.id as top-level fields.",
+      "query": "fetch bizevents\n| filter event.type == \"guppigpt.reply-feedback\"\n| summarize votes = count(), by: {vote}",
+      "visualization": "categoricalBarChart",
+      "visualizationSettings": {}
+    },
+    "7": {
+      "type": "data",
+      "title": "WAF allowed requests",
+      "description": "The edge gateway's web ACL (a REGIONAL ACL associated with the AgentCore gateway) through the AWS connection's built-in WAFv2 service; keys are cloud.aws.wafv2.<Metric>.By.Region.Rule.WebACL with Rule ALL for the whole ACL and one series per rule. BlockedRequests is left off on purpose: a timeseries command answers no records when any named key has never existed, and that key appears only after the first block (verified 7 Sep 2026). Add it back once a block has happened.",
+      "query": "timeseries allowed = sum(cloud.aws.wafv2.AllowedRequests.By.Region.Rule.WebACL), by: {Rule}",
+      "visualization": "lineChart",
+      "visualizationSettings": {}
+    },
+    "8": {
+      "type": "data",
+      "title": "Gateway 4xx",
+      "description": "CloudWatch metric UserErrors from AWS/Bedrock-AgentCore, polled through the AWS connection's custom metric rows on the dimensions Resource, Operation, Protocol; the Dynatrace key is cloud.aws.bedrock_agentcore.UserErrors.By.Operation.Protocol.Resource (verified 7 Sep 2026). The loopback URL rejection happens at the gateway's load balancer and is not separately counted, so this tile shows all 4xx, split by gateway.",
+      "query": "timeseries userErrors = sum(cloud.aws.bedrock_agentcore.UserErrors.By.Operation.Protocol.Resource), by: {Resource}",
+      "visualization": "lineChart",
+      "visualizationSettings": {}
+    }
+  },
+  "layouts": {
+    "1": {
+      "x": 0,
+      "y": 0,
+      "w": 12,
+      "h": 6
+    },
+    "2": {
+      "x": 12,
+      "y": 0,
+      "w": 12,
+      "h": 6
+    },
+    "3": {
+      "x": 0,
+      "y": 6,
+      "w": 12,
+      "h": 6
+    },
+    "4": {
+      "x": 12,
+      "y": 6,
+      "w": 12,
+      "h": 6
+    },
+    "5": {
+      "x": 0,
+      "y": 12,
+      "w": 12,
+      "h": 6
+    },
+    "6": {
+      "x": 12,
+      "y": 12,
+      "w": 12,
+      "h": 6
+    },
+    "7": {
+      "x": 0,
+      "y": 18,
+      "w": 12,
+      "h": 6
+    },
+    "8": {
+      "x": 12,
+      "y": 18,
+      "w": 12,
+      "h": 6
+    }
+  },
+  "importedWithCode": false,
+  "settings": {}
+}

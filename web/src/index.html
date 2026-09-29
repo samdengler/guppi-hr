@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GuppiGPT</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="page">
+
+  <header class="app-header">
+    <span class="brand">GuppiGPT</span>
+    <div class="header-actions">
+      <div class="history" hidden id="history-wrap">
+        <button id="history-btn" type="button" class="text-btn" aria-haspopup="true" aria-expanded="false">Chats</button>
+        <div id="history-panel" class="history-panel" hidden>
+          <div class="history-panel-head">
+            <span class="history-panel-title">Chats</span>
+            <button id="clear-history-btn" type="button" class="text-btn small">Clear all</button>
+          </div>
+          <ul id="history-list" class="history-list"></ul>
+          <p id="history-empty" class="history-empty" hidden>No saved chats yet.</p>
+        </div>
+      </div>
+      <button id="new-chat-btn" type="button" class="text-btn" hidden>New chat</button>
+      <div class="account" hidden id="account-wrap">
+        <button id="account-btn" type="button" class="initials-btn" aria-haspopup="true" aria-expanded="false"></button>
+        <div id="account-menu" class="account-menu" hidden>
+          <p id="account-email" class="account-email"></p>
+          <a id="sign-out-link" href="#" class="sign-out-link">Sign out</a>
+          <p class="legal-links"><a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a></p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section id="signin-screen" class="signin-screen" hidden>
+    <div class="signin-card">
+      <h1 class="signin-title">GuppiGPT</h1>
+      <p class="signin-copy">Sign in to start a conversation.</p>
+      <button id="google-signin-btn" type="button" class="primary-btn">Continue with Google</button>
+      <p class="legal-links"><a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a></p>
+    </div>
+  </section>
+
+  <section id="chat-screen" class="chat-screen" hidden>
+
+    <div id="thread-wrap" class="thread-wrap">
+      <div id="empty-state" class="empty-state" hidden>
+        <h2 class="empty-title">What can I help with?</h2>
+        <p id="empty-copy" class="empty-copy">Ask anything. This conversation is not saved.</p>
+      </div>
+      <div id="thread" class="thread" aria-live="polite"></div>
+      <button id="jump-latest-btn" type="button" class="jump-latest" hidden>Jump to latest</button>
+    </div>
+
+    <form id="composer-form" class="composer">
+      <textarea id="composer-input" class="composer-input" placeholder="Ask GuppiGPT" rows="1"></textarea>
+      <button id="send-btn" type="submit" class="send-btn" aria-label="Send message" disabled>&uarr;</button>
+    </form>
+    <p id="composer-hint" class="hint">Enter to send, Shift+Enter for a new line. Nothing is saved.</p>
+
+  </section>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
