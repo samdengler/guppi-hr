@@ -14,3 +14,4 @@ node_modules/
 .DS_Store
 .deploy/
 .claude/worktrees/
+.claude/settings.local.json

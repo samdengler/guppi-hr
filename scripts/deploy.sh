@@ -3,10 +3,17 @@
 # Extra arguments are passed to `cdk deploy` (for example --hotswap or --require-approval never).
 # `--site-only` skips cdk deploy (and the image build and push) and publishes the page
 # from the outputs of the last deploy; useful on a slow connection.
+# `--reuse-parameters` skips 1Password entirely and lets CloudFormation reuse the stack's
+# existing Google OAuth and Dynatrace values, so an unattended deploy never waits on a
+# locked vault; it needs an earlier deploy that supplied them.
 set -euo pipefail
 
 SITE_ONLY=0
-if [[ "${1:-}" == "--site-only" ]]; then SITE_ONLY=1; shift; fi
+REUSE_PARAMETERS=0
+while [[ "${1:-}" == "--site-only" || "${1:-}" == "--reuse-parameters" ]]; do
+  if [[ "$1" == "--site-only" ]]; then SITE_ONLY=1; else REUSE_PARAMETERS=1; fi
+  shift
+done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ITEM="op://Personal/GuppiGPT Google OAuth"
@@ -24,7 +31,9 @@ exec > >(tee -a "$LOG") 2>&1
 trap 'code=$?; echo "deploy exit=$code"; exit $code' EXIT
 echo "deploy log: $LOG"
 
-for tool in op npx npm uv aws jq docker; do
+tools=(npx npm uv aws jq docker)
+[[ "$REUSE_PARAMETERS" == 1 ]] || tools+=(op)
+for tool in "${tools[@]}"; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
 done
 if [[ "$SITE_ONLY" == 1 && ! -f "$OUTPUTS" ]]; then
@@ -37,6 +46,8 @@ export AWS_REGION="${AWS_REGION:-us-east-1}"
 param_args=()
 if [[ "$SITE_ONLY" == 1 ]]; then
   echo "site only: skipping cdk deploy, using $OUTPUTS"
+elif [[ "$REUSE_PARAMETERS" == 1 ]]; then
+  echo "reusing the stack's existing Google OAuth and Dynatrace parameters; 1Password not read"
 # `op whoami` can report "not signed in" while reads succeed through the desktop app
 # integration, so the gate is a read of the item itself.
 elif op read "$ITEM/username" >/dev/null 2>&1; then
