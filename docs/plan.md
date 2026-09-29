@@ -51,7 +51,7 @@ Delegation for one turn:
   sub-agents as tools built from `A2AAgent` with the caller's token; `state` in and
   `STATE_SNAPSHOT` out; clarifying question below the threshold; `STEP_*` events; run log
   fields. Done when the four scenarios pass end to end from curl.
-- [ ] **Phase 5: Page.** Keep `state` from `STATE_SNAPSHOT` and send it on the next run;
+- [x] **Phase 5: Page.** Keep `state` from `STATE_SNAPSHOT` and send it on the next run;
   status line per step ("Asking the Pay agent...", "Pay agent answered"); domain tag on
   the reply label; brand from one constant. Done when `npm test` passes and the scenarios
   pass in the browser.
