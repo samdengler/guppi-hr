@@ -1153,3 +1153,69 @@ def test_tools_role_scopes_its_logs_to_its_own_runtime(template):
     assert "runtimes/hr_super_agent_tools-*" in body
     assert "bedrock:InvokeModel" not in body
     assert "dynamodb:PutItem" in body
+
+
+# ---- Sub-agents (phase 3) --------------------------------------------------------------
+
+
+def _sub_agent_runtimes(template):
+    return {
+        r["Properties"]["AgentRuntimeName"]: r
+        for r in template.find_resources(
+            "AWS::BedrockAgentCore::Runtime", {"Properties": {"ProtocolConfiguration": "A2A"}}
+        ).values()
+    }
+
+
+def test_three_a2a_sub_agents_with_jwt_authorizers(template):
+    runtimes = _sub_agent_runtimes(template)
+    assert set(runtimes) == {
+        "hr_super_agent_profile",
+        "hr_super_agent_pay",
+        "hr_super_agent_travel",
+    }
+    for name, runtime in runtimes.items():
+        props = runtime["Properties"]
+        assert props["AuthorizerConfiguration"]["CustomJWTAuthorizer"]["DiscoveryUrl"]
+        assert props["RequestHeaderConfiguration"]["RequestHeaderAllowlist"] == [
+            "Authorization",
+            "traceparent",
+        ]
+        env = props["EnvironmentVariables"]
+        assert env["AGENT_ROLE"] == name.removeprefix("hr_super_agent_")
+        assert env["HR_TOOL_PREFIX"] == "hr___"
+        assert f"/{env['AGENT_ROLE']}/invocations/" in json.dumps(env["AGENTCORE_RUNTIME_URL"])
+        assert any("RoleDefaultPolicy" in dep for dep in runtime["DependsOn"])
+
+
+def test_agents_gateway_fronts_each_sub_agent_with_token_passthrough(template):
+    gateways = template.find_resources(
+        "AWS::BedrockAgentCore::Gateway", {"Properties": {"Name": "hr-super-agent-agents"}}
+    )
+    (gateway,) = gateways.values()
+    assert "ProtocolType" not in gateway["Properties"]
+    targets = [
+        t
+        for t in template.find_resources("AWS::BedrockAgentCore::GatewayTarget").values()
+        if t["Properties"]["Name"] in ("profile", "pay", "travel")
+    ]
+    assert len(targets) == 3
+    for target in targets:
+        props = target["Properties"]
+        assert props["CredentialProviderConfigurations"] == [
+            {"CredentialProviderType": "JWT_PASSTHROUGH"}
+        ]
+        assert "AgentcoreRuntime" in props["TargetConfiguration"]["Http"]
+
+
+def test_sub_agent_roles_reach_only_their_model(template):
+    policies = [
+        p
+        for name, p in template.find_resources("AWS::IAM::Policy").items()
+        if name.startswith("SubAgentsTravelRoleDefaultPolicy")
+    ]
+    (policy,) = policies
+    body = json.dumps(policy)
+    assert "claude-haiku-4-5" in body
+    assert "runtimes/hr_super_agent_travel-*" in body
+    assert "dynamodb" not in body

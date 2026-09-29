@@ -9,7 +9,6 @@ Strands agent per thread, so a fresh adapter per request keeps the service state
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -19,6 +18,14 @@ from ag_ui.core import BaseEvent, RunAgentInput
 from ag_ui_strands.config import ToolBehavior, ToolResultContext
 
 from hr_agent import conversation_log
+from hr_agent.pending import (  # noqa: F401  (PENDING_TEXT_LIMIT is part of this module's surface)
+    PENDING_KEY,
+    PENDING_TEXT_LIMIT,
+    committed,
+    pending_action_from,
+    pending_from_result,
+    pending_paragraph,
+)
 
 log = logging.getLogger("hr_agent")
 
@@ -60,45 +67,6 @@ and give them its id.
 """
 
 
-PENDING_PARAGRAPH = """
-A change is waiting for the employee's confirmation from your previous reply: proposal_id
-{proposal_id}, {field} from "{before}" to "{after}". If the employee's message clearly
-confirms this change, call commit_change with this proposal_id. If they decline or alter
-any detail, do not commit; propose again with the new details when needed.
-"""
-
-# AG-UI state key for the change awaiting confirmation (D6, D7). It lives for one turn:
-# shown to the model on the next run, then dropped unless that run proposes again.
-PENDING_KEY = "pendingAction"
-PENDING_FIELDS = ("home_address", "emergency_contact", "direct_deposit")
-PENDING_TEXT_LIMIT = 300
-
-
-def _clean(value: object) -> str:
-    return " ".join(str(value).split())[:PENDING_TEXT_LIMIT]
-
-
-def pending_action_from(state: object) -> dict[str, str] | None:
-    """The pending change the page sent back, or None when absent or malformed. The page
-    controls this value, so it is only a hint to the model: the tools server still checks
-    the proposal's owner, conversation, status, and expiry on commit."""
-    if not isinstance(state, dict):
-        return None
-    pending = state.get(PENDING_KEY)
-    if not isinstance(pending, dict):
-        return None
-    proposal_id = str(pending.get("proposalId", ""))
-    field = pending.get("field")
-    if len(proposal_id) != 32 or not proposal_id.isalnum() or field not in PENDING_FIELDS:
-        return None
-    return {
-        "proposalId": proposal_id,
-        "field": field,
-        "from": _clean(pending.get("from", "")),
-        "to": _clean(pending.get("to", "")),
-    }
-
-
 def system_prompt(hr_tools: bool = False, pending: dict[str, str] | None = None) -> str:
     """The prompt for one run. The claim about saving follows the logging switch, the HR
     tools paragraph appears only when the gateway offered those tools, and a pending change
@@ -108,46 +76,20 @@ def system_prompt(hr_tools: bool = False, pending: dict[str, str] | None = None)
         memory=LOGGED_MEMORY_SENTENCE if logged else MEMORY_SENTENCE,
         hr_tools=HR_TOOLS_PARAGRAPH if hr_tools else "",
     )
-    if hr_tools and pending:
-        prompt += PENDING_PARAGRAPH.format(
-            proposal_id=pending["proposalId"],
-            field=pending["field"].replace("_", " "),
-            before=pending["from"],
-            after=pending["to"],
-        )
+    if hr_tools:
+        prompt += pending_paragraph(pending)
     return prompt
-
-
-def _result_dict(result_data: object) -> dict | None:
-    if isinstance(result_data, str):
-        try:
-            result_data = json.loads(result_data)
-        except ValueError:
-            return None
-    return result_data if isinstance(result_data, dict) else None
 
 
 def pending_from_proposal(context: ToolResultContext) -> dict | None:
     """state_from_result for the propose tools: the new pending change."""
-    data = _result_dict(context.result_data)
-    change = data.get("change") if data else None
-    if not data or "proposal_id" not in data or not isinstance(change, dict):
-        return None
-    return {
-        PENDING_KEY: {
-            "proposalId": data["proposal_id"],
-            "field": change.get("field"),
-            "from": change.get("from", ""),
-            "to": change.get("to", ""),
-            "expiresAt": data.get("expires_at", ""),
-        }
-    }
+    pending = pending_from_result(context.result_data)
+    return {PENDING_KEY: pending} if pending else None
 
 
 def pending_cleared_by_commit(context: ToolResultContext) -> dict | None:
     """state_from_result for commit_change: a successful commit clears the pending change."""
-    data = _result_dict(context.result_data)
-    return {PENDING_KEY: None} if data and data.get("committed") is True else None
+    return {PENDING_KEY: None} if committed(context.result_data) else None
 
 
 def tool_behaviors(tool_names: list[str], prefix: str) -> dict[str, ToolBehavior]:

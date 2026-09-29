@@ -1,5 +1,6 @@
 # AgentCore Runtime expects an arm64 image. One image serves every runtime (D11):
-# AGENT_ROLE picks the orchestrator (AG-UI on 8080) or the tools server (MCP on 8000).
+# AGENT_ROLE picks the orchestrator (AG-UI on 8080), the tools server (MCP on 8000), or a
+# sub-agent (A2A on 9000).
 # Build context is the repository root (see the CDK stack and .dockerignore) so the
 # workspace lockfile is visible: dependencies install from it in their own layer, which
 # Docker reuses until uv.lock or a pyproject changes, and the source lands in a small
@@ -27,7 +28,7 @@ COPY agent/src agent/src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --package hr-agent --no-dev --no-editable
 
-EXPOSE 8080 8000
+EXPOSE 8080 8000 9000
 # opentelemetry-instrument (from aws-opentelemetry-distro, a hr-agent dependency) is
 # the documented AgentCore entrypoint wrapper: it installs the ADOT tracer provider and
 # the FastAPI, httpx, MCP, and botocore instrumentation before the app is imported,

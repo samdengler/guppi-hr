@@ -114,6 +114,7 @@ from constructs import Construct
 
 from hr_super_agent_infra.hr_tools import HR_TOOL_PREFIX, TOOLS_RUNTIME_NAME, HrTools
 from hr_super_agent_infra.runtime_role import runtime_execution_role
+from hr_super_agent_infra.sub_agents import SubAgents
 
 ZONE_NAME = "dengler.io"
 CHAT_HOST = f"hr.{ZONE_NAME}"
@@ -681,17 +682,22 @@ class HrSuperAgentStack(cdk.Stack):
                 ignore_mode=cdk.IgnoreMode.DOCKER,
                 platform=ecr_assets.Platform.LINUX_ARM64,
             )
-            asset.repository.grant_pull(runtime_role)
-            asset.repository.grant_pull(tools_role)
             image_uri = asset.image_uri
+
+            def grant_image(role: iam.Role) -> None:
+                asset.repository.grant_pull(role)
         else:
-            for role in (runtime_role, tools_role):
+
+            def grant_image(role: iam.Role) -> None:
                 role.add_to_policy(
                     iam.PolicyStatement(
                         actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
                         resources=[f"arn:aws:ecr:{self.region}:{self.account}:repository/*"],
                     )
                 )
+
+        for role in (runtime_role, tools_role):
+            grant_image(role)
 
         # ---- Edge gateway --------------------------------------------------------------
         gateway_role = iam.Role(
@@ -1763,6 +1769,23 @@ class HrSuperAgentStack(cdk.Stack):
             allowed_clients=jwt_allowed_clients,
             base_environment=RUNTIME_BASE_ENVIRONMENT,
         )
+
+        # ---- Sub-agents (phase 3) --------------------------------------------------------
+        sub_agents = SubAgents(
+            self,
+            "SubAgents",
+            image_uri=image_uri,
+            grant_image=grant_image,
+            discovery_url=discovery_url,
+            allowed_clients=jwt_allowed_clients,
+            tools_gateway_url=tools_gateway.attr_gateway_url,
+            model_id=MODEL_ID,
+            hr_tool_prefix=HR_TOOL_PREFIX,
+            base_environment=RUNTIME_BASE_ENVIRONMENT,
+            session_header=SESSION_HEADER,
+            trace_header=TRACE_HEADER,
+        )
+        cdk.CfnOutput(self, "AgentsGatewayUrl", value=sub_agents.gateway.attr_gateway_url)
 
         # Dynatrace trace export, shipped dark. The runtime's own OTEL_EXPORTER_OTLP_*
         # values are injected by the AgentCore platform when AGENT_OBSERVABILITY_ENABLED
