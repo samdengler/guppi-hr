@@ -55,7 +55,7 @@ Delegation for one turn:
   status line per step ("Asking the Pay agent...", "Pay agent answered"); domain tag on
   the reply label; brand from one constant. Done when `npm test` passes and the scenarios
   pass in the browser.
-- [ ] **Phase 6: Evaluation and observability.** `evals/utterances.jsonl` (about 60
+- [x] **Phase 6: Evaluation and observability.** `evals/utterances.jsonl` (about 60
   labeled utterances: three domains, general questions, ambiguous cases) and
   `evals/route.py` reporting accuracy per domain with write-access weighting; the four
   scenarios as pytest cases against a fake sub-agent; log delivery and alarms for the four
