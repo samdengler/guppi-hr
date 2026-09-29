@@ -2,19 +2,19 @@
 
 ## Project Overview
 
-HR Super Agent is an MVP of an HR employee assistant, branded "HR Assistant" on the page.
-It is an iteration of guppi-gpt (`~/src/github.com/samdengler/guppi-gpt`), merged in with
-its history at commit 8baf911 and renamed. Today the code is guppi-gpt's chat under new
-names at `https://hr.dengler.io`: one page, plain text conversation, Google sign-in, and
-answers grounded in a Bedrock Knowledge Base. The agent holds nothing between runs, but
-three things are kept: the sign-in session in IndexedDB, one pseudonymous record per
-thread in S3 for 30 days, and a vote on a reply as a business event.
+HR Super Agent is an MVP of an HR employee assistant, branded "HR Assistant" on the page,
+at `https://hr.dengler.io`. It is an iteration of guppi-gpt
+(`~/src/github.com/samdengler/guppi-gpt`), merged in with its history at commit 8baf911
+and renamed. An orchestrator routes each turn to Profile, Pay, or Travel sub-agents over
+A2A, or answers general questions from the HR policy knowledge base; the sub-agents act on
+the employee's own synthetic records through an HR tools MCP server with a propose and
+commit pair for every write. The servers hold nothing between runs; the page carries
+`activeDomain` and `pendingAction` in AG-UI state, and guppi-gpt's session, conversation
+log, and feedback paths are unchanged.
 
-The MVP replaces the single agent with an orchestrator that routes each turn to Profile,
-Pay, and Travel sub-agents over A2A, and adds an HR tools MCP server with a propose and
-commit pair for every write. `docs/plan.md` has the target architecture and the seven
-phases; `docs/decision-log.md` records every choice (D1 on); `docs/handoff.md` explains
-the sources. guppi-gpt's design document (`docs/guppigpt-design.html`), decision log
+`docs/design.md` describes the system as built and `docs/demo.md` the four scenarios;
+`docs/decision-log.md` records every choice (D1 on); `docs/plan.md` has the phases, all
+done. guppi-gpt's design document (`docs/guppigpt-design.html`), decision log
 (`docs/guppigpt-decision-log.html`), and diagrams (`docs/guppigpt-architecture.html`)
 stay unchanged as the record of what was inherited (D17). When code and a decision
 disagree, change one of them in the same commit.
@@ -88,6 +88,9 @@ web/
   test/rum.test.mjs       # node:test coverage for rum.js's pure property-building functions
   test/session.test.mjs   # node:test coverage of session.js's pure decision and shaping functions
   dist/                   # build output plus config.json written by deploy.sh; not committed
+evals/
+  utterances.jsonl        # 60 labeled routing utterances (D13)
+  route.py                # runs them through the routing step and policy against Bedrock
 scripts/
   deploy.sh
   seed-content.sh         # clone the docs repositories at pinned revisions, sync Markdown to S3
@@ -113,8 +116,12 @@ scripts/
   `uv run -- cdk synth -c image_uri=<any ecr uri>` working without Docker.
 - Prose in docs and comments: no em-dashes or en-dashes, no second person.
 - The page renders plain text only: no Markdown parser, no `innerHTML` with model or user text.
-- Tests replace `hr_agent.agent.build_strands_agent` (and, from phase 3, the A2A client
-  factory); nothing in `agent/tests` reaches Bedrock or a gateway.
+- Tests replace the seams that reach Bedrock or a gateway: `hr_agent.agent.build_strands_agent`
+  (the whole orchestrator, in the app tests), the orchestrator's `router`, `sender`, and
+  `general_factory`, the sub-agent executor's `runner`, and the tools server's store and
+  verifier (DynamoDB in moto, tokens signed with a test key). Nothing in `agent/tests`
+  reaches Bedrock or a gateway. `evals/route.py` is the one thing that calls Bedrock on
+  purpose, and it is not a test.
 - The orchestrator, the sub-agents, and the tools server share one container image; a
   role is chosen by `AGENT_ROLE`. Add a role, not a Dockerfile (D11).
 - Every phase in `docs/plan.md` ends deployed and checked in the browser; phases are not
@@ -166,7 +173,9 @@ newest and a final `deploy exit=<code>` line, so a Claude session can watch a de
 started from any terminal. Deploys run on Sam's Mac; the Docker image is built there for
 arm64. A deploy started without a terminal (a `!` command in a Claude session) cannot
 answer cdk's approval prompt for IAM changes and exits 1 before touching the stack; pass
-`--require-approval never` there.
+`--require-approval never` there. `--reuse-parameters` skips 1Password and lets
+CloudFormation reuse the stack's Google OAuth and Dynatrace values, so an unattended
+deploy never waits on a locked vault.
 
 `-c own_account_singletons=true` makes the stack create the `dengler.io` apex placeholder
 record and the Transaction Search configuration itself. It stays off while `GuppiGpt`

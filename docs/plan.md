@@ -61,7 +61,7 @@ Delegation for one turn:
   scenarios as pytest cases against a fake sub-agent; log delivery and alarms for the four
   new runtimes; Dynatrace dashboard tiles for routing. Done when the script runs locally
   against Bedrock and prints a table, and the scenario tests are green.
-- [ ] **Phase 7: Docs and handoff.** `docs/design.md` and the decision log level with the
+- [x] **Phase 7: Docs and handoff.** `docs/design.md` and the decision log level with the
   code; README status; `docs/demo.md` walking the four scenarios. Done when a fresh
   reader can deploy and run the demo from the README alone.
 
