@@ -1,0 +1,25 @@
+# Decision log
+
+One entry per decision. Status is Proposed, Approved or Reversed. A decision made while
+Sam is away is written as Proposed and listed in the next message to him. When code and a
+decision disagree, one of them changes in the same commit. D1 to D15 mirror the review
+table in the Claude Docs artifact "HR Super Agent MVP: Plan and Handoff"; Sam's status
+there wins.
+
+| # | Date | Decision | Chosen | Alternatives | Why | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| D1 | 2026-09-28 | Orchestrator substrate | Strands agent in AgentCore Runtime, as in guppi-gpt | Managed AgentCore harness | The page keeps AG-UI over SSE, proven on Runtime; routing, stickiness and confirmation are code-level policy, the ASAPP doc's own trigger for leaving the harness | Proposed |
+| D2 | 2026-09-28 | Sub-agent shape | Separate A2A servers on their own Runtimes, reached through an agents gateway with runtime targets and JWT passthrough | In-process agent-as-tool; direct Runtime calls | Matches the Delta standard and the reusable-capabilities doc; in-process is ruled out | Proposed |
+| D3 | 2026-09-28 | Tool layer | One HR tools MCP server on Runtime, second target on the tools gateway, DynamoDB behind it | Lambda targets; tools inside sub-agents | No Lambda without approval; one place, one identity model; sub-agents never touch a store | Proposed |
+| D4 | 2026-09-28 | Domains | Profile (address, emergency contact), Pay (direct deposit, statements), Travel (pass travel, read-only from the KB) | Two or five domains | A real disambiguation case, a write domain, a read-only domain, a topic-shift test | Proposed |
+| D5 | 2026-09-28 | Knowledge base corpus | Synthetic HR policy Markdown in `content/`, synced by `seed-content.sh` | Keep the docs corpus; real Delta material | Real material cannot leave work; the ingestion path is unchanged | Proposed |
+| D6 | 2026-09-28 | Sticky context | AG-UI `state` round trip, servers stateless | AgentCore Memory; server-side session store | Keeps the stateless runtime and thread-as-state model; Memory later | Proposed |
+| D7 | 2026-09-28 | Confirmation on writes | `propose_*` and `commit_*` pairs; commit needs a proposal id from the same thread; the tool writes the audit record | Model-only confirmation; a confirm button | Code enforces the sequence; the page stays plain text | Proposed |
+| D8 | 2026-09-28 | Models | Orchestrator Sonnet 4.5 (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`), sub-agents Haiku 4.5 | Haiku everywhere; a newer Sonnet | Sonnet-class for routing per the ASAPP doc; Haiku keeps sub-agent hops cheap; verify ids against Bedrock | Proposed |
+| D9 | 2026-09-28 | Repo bootstrap | Fetch guppi-gpt history, rename in one commit | Copy without history; GitHub fork | Blame stays readable; the rename diff is reviewable | Proposed |
+| D10 | 2026-09-28 | Hostnames and sign-in | `hr.dengler.io`, `auth-hr.dengler.io`; reuse the GuppiGPT Google client with one more redirect URI | A second Google client and 1Password item | One console edit versus a new consent screen | Proposed |
+| D11 | 2026-09-28 | Container images | One image, role by `AGENT_ROLE` | One image per runtime | One arm64 build per deploy; shared dependency set | Proposed |
+| D12 | 2026-09-28 | Page changes | Plain text stays; status line per delegation, domain tag, confirmation as a text turn | Confirm buttons; agent tree sidebar | "Same UI experience"; the status line already exists | Proposed |
+| D13 | 2026-09-28 | Routing evaluation | About 60 labeled synthetic utterances in `evals/` and an offline routing script weighted by write access | AgentCore Evaluations from day one | The doc asks for the corpus; the script runs without a deploy; Evaluations after the routing step is stable | Proposed |
+| D14 | 2026-09-28 | Escalation | `open_ticket` tool writing a ticket record; offered when no domain fits or a sub-agent fails | None in MVP | Inside the doc's cut line; a DynamoDB record shows the flow | Proposed |
+| D15 | 2026-09-28 | Name | Working name "HR Assistant", one constant per package | A named persona | Sam names it; one commit to change | Proposed |
