@@ -40,9 +40,13 @@ docs/
   guppigpt-*.html         # guppi-gpt's design, decision log, and diagrams, kept unchanged (D17)
   proposals/              # guppi-gpt's backlog proposals, unchanged; new proposals are added beside them
   dynatrace/dashboard.json  # draft DQL dashboard tiles for the queries in docs/proposals/dynatrace.md
+content/
+  hr/                     # synthetic HR policy Markdown, synced by scripts/seed-content.sh (D5)
 infra/
   app.py                  # CDK app entry
   hr_super_agent_infra/stack.py
+  hr_super_agent_infra/hr_tools.py      # HR tools tables, MCP runtime, hr target on the tools gateway
+  hr_super_agent_infra/runtime_role.py  # the documented runtime execution role, one per runtime
   tests/                  # assertions against the synthesized template
 agent/
   src/hr_agent/app.py         # FastAPI app: POST /invocations (SSE), GET /ping, per-run log record with trace id
@@ -50,6 +54,8 @@ agent/
   src/hr_agent/validation.py  # run input validation and front trimming
   src/hr_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
   src/hr_agent/conversation_log.py  # thread record: pseudonym, merge, conditional write to S3
+  src/hr_agent/__main__.py    # container entrypoint: AGENT_ROLE picks the server (D11)
+  src/hr_agent/tools/         # HR tools MCP server: identity.py (X-Hr-User-Token, D19), records.py, store.py (D21), server.py
   Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/

@@ -33,7 +33,7 @@ Delegation for one turn:
   (`hr.dengler.io`, `auth-hr.dengler.io`), brand; rewrite AGENTS.md and README for the new
   layout; Google redirect URI added by Sam. Done when `uv run -- pytest` and `cdk synth`
   pass, the stack deploys, and the unchanged chat works at the new hostname.
-- [ ] **Phase 2: HR tools server.** `agent/src/hr_agent/tools/`: an MCP server (streamable
+- [x] **Phase 2: HR tools server.** `agent/src/hr_agent/tools/`: an MCP server (streamable
   HTTP, port 8000) with `get_profile`, `propose_address_change`, `commit_change`,
   `get_direct_deposit`, `propose_direct_deposit_change`, `list_pay_statements`,
   `open_ticket`; DynamoDB tables `employees`, `proposals`, `tickets`, `audit`, seeded per
