@@ -3,15 +3,15 @@
 import os
 
 import aws_cdk as cdk
-from guppi_gpt_infra.stack import GuppiGptStack
+from hr_super_agent_infra.stack import HrSuperAgentStack
 
 REGION = "us-east-1"
 
 app = cdk.App()
-GuppiGptStack(
+HrSuperAgentStack(
     app,
-    "GuppiGpt",
+    "HrSuperAgent",
     env=cdk.Environment(account=os.environ.get("CDK_DEFAULT_ACCOUNT"), region=REGION),
-    description="GuppiGPT: stateless chat page on AgentCore (spike stage)",
+    description="HR Super Agent: stateless chat page on AgentCore (spike stage)",
 )
 app.synth()

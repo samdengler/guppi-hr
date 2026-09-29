@@ -1,4 +1,4 @@
-"""GuppiGPT agent on the AgentCore Runtime AG-UI contract.
+"""HR Super Agent agent on the AgentCore Runtime AG-UI contract.
 
 POST /invocations takes an AG-UI run input and streams AG-UI events as server-sent events;
 GET /ping reports health. Per run: read the caller's bearer token, validate and trim the
@@ -30,15 +30,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace as otel_trace
 
-from guppi_agent import agent as agent_module
-from guppi_agent import conversation_log
-from guppi_agent.keepalive import DEFAULT_PING_INTERVAL, with_keepalive
-from guppi_agent.validation import trim_messages, validate_run
+from hr_agent import agent as agent_module
+from hr_agent import conversation_log
+from hr_agent.keepalive import DEFAULT_PING_INTERVAL, with_keepalive
+from hr_agent.validation import trim_messages, validate_run
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
-log = logging.getLogger("guppi_agent")
+log = logging.getLogger("hr_agent")
 
-app = FastAPI(title="guppi-agent")
+app = FastAPI(title="hr-agent")
 
 SESSION_HEADER = "x-amzn-bedrock-agentcore-runtime-session-id"
 # W3C trace context, minted by the page per run and passed through by the edge gateway

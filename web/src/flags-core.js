@@ -6,7 +6,7 @@
 
 /** localStorage key for the override set, shared by features.js and flags.js: the same
  * set applies to every tab of the browser, not just the one that wrote it. */
-export const OVERRIDE_KEY = "guppigpt_ff_overrides";
+export const OVERRIDE_KEY = "hrsuperagent_ff_overrides";
 
 /** Flag names that observability depends on; the flags page groups these separately
  * and says they are not meant to be turned off, though a tester still can. */

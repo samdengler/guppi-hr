@@ -11,7 +11,7 @@ import {
 } from "../src/flags-core.js";
 
 test("OVERRIDE_KEY is the localStorage key features.js and flags.js share", () => {
-  assert.equal(OVERRIDE_KEY, "guppigpt_ff_overrides");
+  assert.equal(OVERRIDE_KEY, "hrsuperagent_ff_overrides");
 });
 
 test("buildFlagRows marks a name with no override as default, using the committed default", () => {

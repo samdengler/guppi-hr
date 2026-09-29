@@ -12,7 +12,7 @@
 import { isEnabled } from "./features.js";
 import { setMessageFeedback } from "./history.js";
 
-export const FEEDBACK_EVENT = "guppi:feedback";
+export const FEEDBACK_EVENT = "hr:feedback";
 export const FEEDBACK_ENDPOINT = "/api/feedback";
 // A vote is worth nothing if it costs the page anything: one request, no retry, and a
 // short deadline after which the attempt is dropped.
@@ -28,7 +28,7 @@ export function nextVote(current, clicked) {
 }
 
 /**
- * The CustomEvent detail contract for "guppi:feedback". Pure: the same arguments
+ * The CustomEvent detail contract for "hr:feedback". Pure: the same arguments
  * always produce the same plain object, which is what the test file checks in place of
  * a live DOM event.
  */
@@ -44,7 +44,7 @@ export function buildFeedbackDetail({ threadId, runId, traceId, requestId, messa
 }
 
 /**
- * The request body for POST /api/feedback, built from one "guppi:feedback" detail. Pure,
+ * The request body for POST /api/feedback, built from one "hr:feedback" detail. Pure,
  * so this is what web/test/feedback.test.mjs checks. A withdrawn vote travels as "none"
  * rather than as an absent field, so a withdrawal is a record of its own. The three
  * optional identifiers are left out when they are absent: the API's request model
@@ -91,7 +91,7 @@ export function sendFeedback(detail, getToken) {
 }
 
 /**
- * Subscribes the feedback API to the "guppi:feedback" event. Call once, only when the
+ * Subscribes the feedback API to the "hr:feedback" event. Call once, only when the
  * feedback flag is on; every other subscriber attaches the same way.
  */
 export function initFeedbackSink(getToken) {
@@ -100,7 +100,7 @@ export function initFeedbackSink(getToken) {
 
 /**
  * Records one vote: stamps (or, for a withdrawn vote, clears) data-feedback on the
- * reply element, dispatches "guppi:feedback" on document with the detail above, and,
+ * reply element, dispatches "hr:feedback" on document with the detail above, and,
  * when the history flag is on and the thread already has a stored record, saves the
  * vote on that message. Nothing is sent over the network.
  */

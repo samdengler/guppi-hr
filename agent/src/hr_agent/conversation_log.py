@@ -24,7 +24,7 @@ from typing import Any
 
 from ag_ui.core import RunAgentInput
 
-log = logging.getLogger("guppi_agent")
+log = logging.getLogger("hr_agent")
 
 SCHEMA_VERSION = 1
 SUBJECT_KEY_VERSION = 1

@@ -1,8 +1,8 @@
-# GuppiGPT Agent Instructions
+# HR Super Agent Agent Instructions
 
 ## Project Overview
 
-GuppiGPT is a minimal claude.ai style chat: one page, plain text conversation, no
+HR Super Agent is a minimal claude.ai style chat: one page, plain text conversation, no
 attachments, Google sign-in, and answers grounded in a Bedrock Knowledge Base. The agent
 holds nothing between runs and the page starts empty, but three things are kept: the
 sign-in session in IndexedDB, one pseudonymous record per thread in S3 for 30 days, and a
@@ -16,7 +16,7 @@ Guppi is Bob's ship AI from *We Are Legion (We Are Bob)*.
 
 ## Tech Stack
 
-- Infrastructure: AWS CDK v2 in Python, one stack `GuppiGpt`, region `us-east-1`
+- Infrastructure: AWS CDK v2 in Python, one stack `HrSuperAgent`, region `us-east-1`
 - Agent: Python 3.12, FastAPI, AG-UI over SSE, Strands Agents with the `ag-ui-strands` adapter, arm64 container on AgentCore Runtime
 - Model: Claude Haiku 4.5 through the `us.` cross-region inference profile (`MODEL_ID` in the stack)
 - Edge: CloudFront in front of an AgentCore Gateway runtime target, plus an `/api/feedback` behavior in front of a small API Gateway REST API that puts reply votes straight onto an EventBridge bus; Cognito user pool federated to Google
@@ -32,14 +32,14 @@ docs/                     # design document, decision log, architecture diagrams
   dynatrace/dashboard.json  # draft DQL dashboard tiles for the queries in docs/proposals/dynatrace.md
 infra/
   app.py                  # CDK app entry
-  guppi_gpt_infra/stack.py
+  hr_super_agent_infra/stack.py
   tests/                  # assertions against the synthesized template
 agent/
-  src/guppi_agent/app.py         # FastAPI app: POST /invocations (SSE), GET /ping, per-run log record with trace id
-  src/guppi_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter
-  src/guppi_agent/validation.py  # run input validation and front trimming
-  src/guppi_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
-  src/guppi_agent/conversation_log.py  # thread record: pseudonym, merge, conditional write to S3
+  src/hr_agent/app.py         # FastAPI app: POST /invocations (SSE), GET /ping, per-run log record with trace id
+  src/hr_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter
+  src/hr_agent/validation.py  # run input validation and front trimming
+  src/hr_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
+  src/hr_agent/conversation_log.py  # thread record: pseudonym, merge, conditional write to S3
   Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
   tests/
 web/
@@ -49,7 +49,7 @@ web/
   src/session.js          # idb-backed session store: refresh token, header claims, rotated on use
   src/app.css
   src/history.js          # local chat history: idb wrapper around one "threads" object store, behind the history flag
-  src/feedback.js         # up/down reply control: vote toggle, "guppi:feedback" CustomEvent, history write, POST to /api/feedback, behind the feedback flag
+  src/feedback.js         # up/down reply control: vote toggle, "hr:feedback" CustomEvent, history write, POST to /api/feedback, behind the feedback flag
   src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
   src/copy.js             # the hint and empty-state wording for each combination of the history and logging flags
   src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
@@ -80,7 +80,7 @@ scripts/
   a preference, not a ban: when a function is the right tool, propose it and get Sam's
   approval before building it. Approved so far: the Lambda functions inside Dynatrace's
   own AWS activation stack (`GuppiGPT-Dynatrace`, 7 Sep 2026), which sits outside
-  `GuppiGpt`.
+  `HrSuperAgent`.
 - Secrets never enter files, `cdk.context.json`, or `-c` context values. Values the stack
   cannot produce (the Google OAuth client) are CloudFormation parameters with `no_echo`
   supplied by `scripts/deploy.sh` from 1Password; values it can produce (the
@@ -93,7 +93,7 @@ scripts/
   `uv run -- cdk synth -c image_uri=<any ecr uri>` working without Docker.
 - Prose in docs and comments: no em-dashes or en-dashes, no second person.
 - The page renders plain text only: no Markdown parser, no `innerHTML` with model or user text.
-- Tests replace `guppi_agent.agent.build_strands_agent`; nothing in `agent/tests` reaches
+- Tests replace `hr_agent.agent.build_strands_agent`; nothing in `agent/tests` reaches
   Bedrock or the gateway.
 - Observability that reads state already reaching the browser is never behind a feature
   flag. `web/features.json` and the OpenFeature provider in `web/src/features.js` mostly
@@ -105,7 +105,7 @@ scripts/
 
 ```sh
 uv sync --all-packages --dev        # install all workspace members and dev tools
-uv add --package guppi-agent httpx  # add a dependency to one member
+uv add --package hr-agent httpx  # add a dependency to one member
 uv run -- pytest                    # run all tests
 uv run -- pytest agent/tests -v
 uv run -- ruff check .
@@ -126,9 +126,9 @@ deploy` and no CloudFormation parameter (`docs/proposals/feature-flags.md`).
 (`op://Personal/GuppiGPT Google OAuth/...`, an API Credential item whose `username` is the client id and `credential` is the client secret), runs `cdk deploy` with them as parameters,
 builds the page (`npm ci`, `npm run build` in `web/`), writes `web/dist/config.json` from the stack outputs, syncs `web/dist/` to the site bucket, and
 invalidates CloudFront. When the 1Password read fails the script omits both parameters and
-CloudFormation reuses the stack's existing values. `GUPPI_ALARM_EMAIL`, when set, becomes
+CloudFormation reuses the stack's existing values. `HR_ALARM_EMAIL`, when set, becomes
 the `AlarmEmail` parameter and subscribes that address to the alarm topic.
-`GUPPI_INVESTIGATOR_ARN`, when set, becomes the `InvestigatorPrincipalArn` parameter and
+`HR_INVESTIGATOR_ARN`, when set, becomes the `InvestigatorPrincipalArn` parameter and
 narrows the conversation investigator role's trust to that one ARN; left unset, the role
 trusts the account root. `scripts/deploy.sh --site-only` skips `cdk deploy` (so no image build or push) and
 publishes the page from the last outputs file. Every run is
@@ -174,8 +174,8 @@ trace export env vars render exactly as they do today until Sam supplies real va
 `scripts/deploy.sh` reads the OTLP endpoint and the API token from 1Password
 (`op://Personal/GuppiGPT Dynatrace/...`, an API Credential item whose `hostname` is the
 endpoint and `credential` is the token) the same way it reads the Google OAuth client,
-skipping them when the item does not exist yet; `GUPPI_DYNATRACE_BEACON_ORIGIN`, when
-set, becomes the `DynatraceBeaconOrigin` parameter the same way `GUPPI_ALARM_EMAIL`
+skipping them when the item does not exist yet; `HR_DYNATRACE_BEACON_ORIGIN`, when
+set, becomes the `DynatraceBeaconOrigin` parameter the same way `HR_ALARM_EMAIL`
 becomes `AlarmEmail`. The RUM script itself (`web/vendor/ruxitagentjs.js`, gitignored) is
 copied into the bundle at `/dt/ruxitagentjs.js` before the sync when present. Turning RUM
 on for visitors is still the `rum` flag in `web/features.json`, flipped the same way as
@@ -189,7 +189,7 @@ Reply votes take their own path, off the chat runtime and off the trace
 behavior listed ahead of `/api/*` because behaviors are matched in the order they appear;
 behind it, an API Gateway REST API validates the body, checks the same Cognito token
 (naming the `openid` scope, without which the authorizer refuses the page's access token),
-and integrates directly with `events:PutEvents` on the `guppi-gpt-feedback` bus. A 30 day
+and integrates directly with `events:PutEvents` on the `hr-super-agent-feedback` bus. A 30 day
 archive on the bus keeps every vote; the rule that forwards them to Dynatrace as business
 events turns on with the same two parameters as log forwarding. The `feedback` flag in
 `web/features.json` is what puts the control on the page, and it is off.
@@ -209,7 +209,7 @@ today; the decision log records why.
 ## Local Development
 
 ```sh
-cd agent && uv run -- uvicorn guppi_agent.app:app --port 8080 --reload
+cd agent && uv run -- uvicorn hr_agent.app:app --port 8080 --reload
 curl -N -X POST localhost:8080/invocations -H 'content-type: application/json' \
   -d '{"threadId":"t","runId":"r","messages":[{"id":"1","role":"user","content":"hello"}]}'
 ```

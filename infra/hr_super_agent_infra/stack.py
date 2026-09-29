@@ -1,4 +1,4 @@
-"""The GuppiGpt stack.
+"""The HrSuperAgent stack.
 
 DNS and certificates, Cognito with Google federation, the agent runtime, the edge
 gateway with a runtime target, the tools gateway in front of the knowledge base,
@@ -6,7 +6,8 @@ CloudFront serving the page and proxying /api/* to the gateway, a regional web A
 the edge gateway, and the billing and WAF alarms.
 
 Resource ordering that matters:
-  apex A record -> user pool custom domain (Cognito refuses the domain without an A record)
+  apex A record -> user pool custom domain (Cognito refuses the domain without an A record;
+                   the record is GuppiGpt's unless own_account_singletons is set)
   gateway -> runtime (runtime authorizer names the gateway as its allowed workload)
   runtime -> gateway role policy -> gateway target
   tools gateway -> runtime environment variables (the runtime needs the tools gateway url)
@@ -112,16 +113,21 @@ from aws_cdk import (
 from constructs import Construct
 
 ZONE_NAME = "dengler.io"
-CHAT_HOST = f"chat.{ZONE_NAME}"
-AUTH_HOST = f"auth.{ZONE_NAME}"
+CHAT_HOST = f"hr.{ZONE_NAME}"
+AUTH_HOST = f"auth-hr.{ZONE_NAME}"
 SITE_URL = f"https://{CHAT_HOST}/"
 
 # RFC 5737 TEST-NET-1: reserved for documentation, never routed. Cognito only needs the
 # parent domain to resolve before it will create the custom domain.
 APEX_PLACEHOLDER_IP = "192.0.2.1"
 
-RUNTIME_NAME = "guppi_gpt"
-GATEWAY_NAME = "guppi-gpt-edge"
+# The apex placeholder record and Transaction Search exist once per zone and once per
+# account. The GuppiGpt stack in the same account already owns both, so this stack
+# creates them only with -c own_account_singletons=true, for an account without it.
+OWN_ACCOUNT_SINGLETONS_CONTEXT = "own_account_singletons"
+
+RUNTIME_NAME = "hr_super_agent"
+GATEWAY_NAME = "hr-super-agent-edge"
 TARGET_NAME = "api"  # makes the gateway path /api/invocations, matching the /api/* behavior
 SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 # W3C trace context minted by the page per run (docs/proposals/traceability.md). Both the
@@ -130,9 +136,9 @@ SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 # used here: the runtime allowlist refuses every x-amzn- header except its own custom
 # prefix ("Pass custom headers to Amazon Bedrock AgentCore Runtime", devguide).
 TRACE_HEADER = "traceparent"
-TOOLS_GATEWAY_NAME = "guppi-gpt-tools"
+TOOLS_GATEWAY_NAME = "hr-super-agent-tools"
 KB_TARGET_NAME = "docs"  # tools are named docs___Retrieve and docs___AgenticRetrieveStream
-KB_NAME = "guppi-gpt-docs"
+KB_NAME = "hr-super-agent-docs"
 CONTENT_PREFIX = "docs/"  # scripts/seed-content.sh writes docs/<source>/... to the content bucket
 ORIGIN_RESPONSE_TIMEOUT = Duration.seconds(60)
 CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2"  # the same for every CloudFront distribution
@@ -224,16 +230,16 @@ DYNATRACE_BIZEVENTS_INGEST_PATH = "/api/v2/bizevents/ingest"
 # A vote is a business event, not a turn: it travels its own path (REST API to EventBridge
 # to a Dynatrace business event) rather than through the chat runtime or the trace
 # (docs/proposals/feedback.md).
-FEEDBACK_API_NAME = "guppi-gpt-feedback"
+FEEDBACK_API_NAME = "hr-super-agent-feedback"
 FEEDBACK_STAGE_NAME = "prod"
 FEEDBACK_PATH = "feedback"  # under /api on the API, so /api/feedback through CloudFront lands on it
-FEEDBACK_BUS_NAME = "guppi-gpt-feedback"
-FEEDBACK_EVENT_SOURCE = "guppigpt.feedback"
+FEEDBACK_BUS_NAME = "hr-super-agent-feedback"
+FEEDBACK_EVENT_SOURCE = "hrsuperagent.feedback"
 FEEDBACK_DETAIL_TYPE = "reply-feedback"
 FEEDBACK_ARCHIVE_RETENTION_DAYS = 30
 # What the Dynatrace business event carries as its two identifying attributes.
-DYNATRACE_FEEDBACK_EVENT_TYPE = "guppigpt.reply-feedback"
-DYNATRACE_EVENT_PROVIDER = "guppigpt"
+DYNATRACE_FEEDBACK_EVENT_TYPE = "hrsuperagent.reply-feedback"
+DYNATRACE_EVENT_PROVIDER = "hrsuperagent"
 
 # The page mints run ids with crypto.randomUUID (web/src/app.js), so the request validator
 # can hold runId to that shape; the trace id is the 16 byte W3C value as 32 hex digits
@@ -335,7 +341,7 @@ def _waf_override_action() -> wafv2.CfnWebACL.OverrideActionProperty:
     return wafv2.CfnWebACL.OverrideActionProperty(count={})
 
 
-class GuppiGptStack(cdk.Stack):
+class HrSuperAgentStack(cdk.Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
@@ -466,46 +472,52 @@ class GuppiGptStack(cdk.Stack):
         zone = route53.HostedZone.from_lookup(self, "Zone", domain_name=ZONE_NAME)
 
         # ---- Transaction Search ----------------------------------------------------------
-        # Account-wide, and the one account-level switch this stack owns: the instrumented
+        # Account-wide, so created only with own_account_singletons: the instrumented
         # container sends spans to CloudWatch's OTLP endpoint, which answers 400 until the
         # trace segment destination is CloudWatch Logs (observed 3 Sep 2026). The resource
         # policy is the one the AgentCore observability guide gives for X-Ray to write the
         # span log groups; the config resource flips the destination and indexes 1 percent.
-        span_policy = logs.CfnResourcePolicy(
-            self,
-            "TransactionSearchLogsPolicy",
-            policy_name="GuppiGptTransactionSearchXRayAccess",
-            policy_document=json.dumps(
-                {
-                    "Version": "2012-10-17",
-                    "Statement": [
-                        {
-                            "Sid": "TransactionSearchXRayAccess",
-                            "Effect": "Allow",
-                            "Principal": {"Service": "xray.amazonaws.com"},
-                            "Action": "logs:PutLogEvents",
-                            "Resource": [
-                                f"arn:aws:logs:{self.region}:{self.account}:log-group:aws/spans:*",
-                                f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/application-signals/data:*",
-                            ],
-                            "Condition": {
-                                "ArnLike": {
-                                    "aws:SourceArn": f"arn:aws:xray:{self.region}:{self.account}:*"
+        own_account_singletons = self.node.try_get_context(
+            OWN_ACCOUNT_SINGLETONS_CONTEXT
+        ) in (True, "true")
+        if own_account_singletons:
+            span_policy = logs.CfnResourcePolicy(
+                self,
+                "TransactionSearchLogsPolicy",
+                policy_name="HrSuperAgentTransactionSearchXRayAccess",
+                policy_document=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Sid": "TransactionSearchXRayAccess",
+                                "Effect": "Allow",
+                                "Principal": {"Service": "xray.amazonaws.com"},
+                                "Action": "logs:PutLogEvents",
+                                "Resource": [
+                                    f"arn:aws:logs:{self.region}:{self.account}:log-group:aws/spans:*",
+                                    f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/application-signals/data:*",
+                                ],
+                                "Condition": {
+                                    "ArnLike": {
+                                        "aws:SourceArn": (
+                                            f"arn:aws:xray:{self.region}:{self.account}:*"
+                                        )
+                                    },
+                                    "StringEquals": {"aws:SourceAccount": self.account},
                                 },
-                                "StringEquals": {"aws:SourceAccount": self.account},
-                            },
-                        }
-                    ],
-                }
-            ),
-        )
-        transaction_search = xray.CfnTransactionSearchConfig(
-            self, "TransactionSearch", indexing_percentage=1
-        )
-        transaction_search.node.add_dependency(span_policy)
+                            }
+                        ],
+                    }
+                ),
+            )
+            transaction_search = xray.CfnTransactionSearchConfig(
+                self, "TransactionSearch", indexing_percentage=1
+            )
+            transaction_search.node.add_dependency(span_policy)
 
         # ---- Alerting --------------------------------------------------------------------
-        alarm_topic = sns.Topic(self, "AlarmTopic", display_name="GuppiGPT alarms")
+        alarm_topic = sns.Topic(self, "AlarmTopic", display_name="HR Super Agent alarms")
         email_subscription = sns.CfnSubscription(
             self,
             "AlarmEmailSubscription",
@@ -536,17 +548,20 @@ class GuppiGptStack(cdk.Stack):
         billing_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
         # ---- DNS and certificates ------------------------------------------------------
-        apex_record = route53.ARecord(
-            self,
-            "ApexPlaceholder",
-            zone=zone,
-            target=route53.RecordTarget.from_ip_addresses(APEX_PLACEHOLDER_IP),
-            ttl=Duration.hours(1),
-            comment=(
-                "Placeholder so Cognito will issue auth.dengler.io; "
-                "192.0.2.1 is RFC 5737 TEST-NET-1 and never routes"
-            ),
-        )
+        # Without own_account_singletons the apex record is the one the GuppiGpt stack made.
+        apex_record = None
+        if own_account_singletons:
+            apex_record = route53.ARecord(
+                self,
+                "ApexPlaceholder",
+                zone=zone,
+                target=route53.RecordTarget.from_ip_addresses(APEX_PLACEHOLDER_IP),
+                ttl=Duration.hours(1),
+                comment=(
+                    f"Placeholder so Cognito will issue {AUTH_HOST}; "
+                    "192.0.2.1 is RFC 5737 TEST-NET-1 and never routes"
+                ),
+            )
         chat_cert = acm.Certificate(
             self,
             "ChatCertificate",
@@ -564,7 +579,7 @@ class GuppiGptStack(cdk.Stack):
         user_pool = cognito.UserPool(
             self,
             "UserPool",
-            user_pool_name="guppi-gpt",
+            user_pool_name="hr-super-agent",
             self_sign_up_enabled=False,  # users arrive only through Google federation
             sign_in_aliases=cognito.SignInAliases(email=True),
             standard_attributes=cognito.StandardAttributes(
@@ -586,7 +601,7 @@ class GuppiGptStack(cdk.Stack):
         )
         client = user_pool.add_client(
             "Web",
-            user_pool_client_name="guppi-gpt-web",
+            user_pool_client_name="hr-super-agent-web",
             generate_secret=False,
             o_auth=cognito.OAuthSettings(
                 flows=cognito.OAuthFlows(authorization_code_grant=True),
@@ -621,7 +636,8 @@ class GuppiGptStack(cdk.Stack):
             custom_domain=cognito.CustomDomainOptions(domain_name=AUTH_HOST, certificate=auth_cert),
             managed_login_version=cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
         )
-        domain.node.add_dependency(apex_record)
+        if apex_record is not None:
+            domain.node.add_dependency(apex_record)
         cognito.CfnManagedLoginBranding(
             self,
             "Branding",
@@ -633,7 +649,7 @@ class GuppiGptStack(cdk.Stack):
             self,
             "AuthRecord",
             zone=zone,
-            record_name="auth",
+            record_name=AUTH_HOST,
             target=route53.RecordTarget.from_alias(CognitoDomainAlias(domain)),
         )
 
@@ -674,13 +690,13 @@ class GuppiGptStack(cdk.Stack):
             self,
             "GatewayRole",
             assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
-            description="Lets the edge gateway invoke the GuppiGPT runtime",
+            description="Lets the edge gateway invoke the HR Super Agent runtime",
         )
         gateway = agentcore.CfnGateway(
             self,
             "EdgeGateway",
             name=GATEWAY_NAME,
-            description="GuppiGPT edge: JWT check, per-user limits, runtime target",
+            description="HR Super Agent edge: JWT check, per-user limits, runtime target",
             role_arn=gateway_role.role_arn,
             authorizer_type="CUSTOM_JWT",
             authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
@@ -739,7 +755,7 @@ class GuppiGptStack(cdk.Stack):
             visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
                 sampled_requests_enabled=True,
                 cloud_watch_metrics_enabled=True,
-                metric_name="GuppiGptCloudFrontOnly",
+                metric_name="HrSuperAgentCloudFrontOnly",
             ),
         )
         common_rule_set_rule = wafv2.CfnWebACL.RuleProperty(
@@ -754,7 +770,7 @@ class GuppiGptStack(cdk.Stack):
             visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
                 sampled_requests_enabled=True,
                 cloud_watch_metrics_enabled=True,
-                metric_name="GuppiGptCommonRuleSet",
+                metric_name="HrSuperAgentCommonRuleSet",
             ),
         )
         rate_limit_rule = wafv2.CfnWebACL.RuleProperty(
@@ -774,7 +790,7 @@ class GuppiGptStack(cdk.Stack):
             visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
                 sampled_requests_enabled=True,
                 cloud_watch_metrics_enabled=True,
-                metric_name="GuppiGptRateLimit",
+                metric_name="HrSuperAgentRateLimit",
             ),
         )
         web_acl = wafv2.CfnWebACL(
@@ -787,7 +803,7 @@ class GuppiGptStack(cdk.Stack):
             visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
                 sampled_requests_enabled=True,
                 cloud_watch_metrics_enabled=True,
-                metric_name="GuppiGptEdgeWebAcl",
+                metric_name="HrSuperAgentEdgeWebAcl",
             ),
             rules=[cloudfront_only_rule, common_rule_set_rule, rate_limit_rule],
         )
@@ -805,7 +821,7 @@ class GuppiGptStack(cdk.Stack):
             waf_alarm = cloudwatch.Alarm(
                 self,
                 f"{metric_name}Alarm",
-                alarm_description=f"{metric_name} on the GuppiGPT edge gateway crossed zero",
+                alarm_description=f"{metric_name} on the HR Super Agent edge gateway crossed zero",
                 metric=cloudwatch.Metric(
                     namespace="AWS/Bedrock-AgentCore",
                     metric_name=metric_name,
@@ -855,7 +871,7 @@ class GuppiGptStack(cdk.Stack):
             self,
             "Runtime",
             agent_runtime_name=RUNTIME_NAME,
-            description="GuppiGPT agent (AG-UI over SSE)",
+            description="HR Super Agent agent (AG-UI over SSE)",
             role_arn=runtime_role.role_arn,
             agent_runtime_artifact=agentcore.CfnRuntime.AgentRuntimeArtifactProperty(
                 container_configuration=agentcore.CfnRuntime.ContainerConfigurationProperty(
@@ -920,7 +936,7 @@ class GuppiGptStack(cdk.Stack):
             "RuntimeTarget",
             gateway_identifier=gateway.attr_gateway_identifier,
             name=TARGET_NAME,
-            description="GuppiGPT runtime, token passthrough",
+            description="HR Super Agent runtime, token passthrough",
             target_configuration=agentcore.CfnGatewayTarget.TargetConfigurationProperty(
                 http=agentcore.CfnGatewayTarget.HttpTargetConfigurationProperty(
                     agentcore_runtime=agentcore.CfnGatewayTarget.RuntimeTargetConfigurationProperty(
@@ -982,7 +998,7 @@ class GuppiGptStack(cdk.Stack):
         feedback_authorizer = apigateway.CognitoUserPoolsAuthorizer(
             self,
             "FeedbackAuthorizer",
-            authorizer_name="guppi-gpt-feedback",
+            authorizer_name="hr-super-agent-feedback",
             cognito_user_pools=[user_pool],
         )
         feedback_validator = feedback_api.add_request_validator(
@@ -1109,7 +1125,7 @@ class GuppiGptStack(cdk.Stack):
             self,
             "FeedbackArchive",
             source_event_bus=feedback_bus,
-            archive_name="guppi-gpt-feedback",
+            archive_name="hr-super-agent-feedback",
             description="Reply votes, kept for replay",
             retention=Duration.days(FEEDBACK_ARCHIVE_RETENTION_DAYS),
             event_pattern=events.EventPattern(source=[FEEDBACK_EVENT_SOURCE]),
@@ -1122,7 +1138,7 @@ class GuppiGptStack(cdk.Stack):
         feedback_connection = events.Connection(
             self,
             "DynatraceBizeventsConnection",
-            connection_name="guppi-gpt-dynatrace-bizevents",
+            connection_name="hr-super-agent-dynatrace-bizevents",
             description="Api-Token header for the Dynatrace business events endpoint",
             # Connection takes a SecretValue. cfn_parameter would carry the bare token, and
             # the header needs the "Api-Token " realm in front of it, so the value is the
@@ -1137,7 +1153,7 @@ class GuppiGptStack(cdk.Stack):
         feedback_destination = events.ApiDestination(
             self,
             "DynatraceBizeventsDestination",
-            api_destination_name="guppi-gpt-dynatrace-bizevents",
+            api_destination_name="hr-super-agent-dynatrace-bizevents",
             connection=feedback_connection,
             endpoint=cdk.Fn.join("", [dynatrace_base_url, DYNATRACE_BIZEVENTS_INGEST_PATH]),
             http_method=events.HttpMethod.POST,
@@ -1155,7 +1171,7 @@ class GuppiGptStack(cdk.Stack):
         feedback_rule = events.Rule(
             self,
             "FeedbackToDynatrace",
-            rule_name="guppi-gpt-feedback-to-dynatrace",
+            rule_name="hr-super-agent-feedback-to-dynatrace",
             description="Reply votes to Dynatrace as business events",
             event_bus=feedback_bus,
             event_pattern=events.EventPattern(source=[FEEDBACK_EVENT_SOURCE]),
@@ -1298,7 +1314,7 @@ class GuppiGptStack(cdk.Stack):
         distribution = cloudfront.Distribution(
             self,
             "Distribution",
-            comment="GuppiGPT",
+            comment="HR Super Agent",
             domain_names=[CHAT_HOST],
             certificate=chat_cert,
             default_root_object="index.html",
@@ -1338,7 +1354,7 @@ class GuppiGptStack(cdk.Stack):
                 self,
                 f"Chat{record_type}Record",
                 zone=zone,
-                record_name="chat",
+                record_name=CHAT_HOST,
                 target=route53.RecordTarget.from_alias(targets.CloudFrontTarget(distribution)),
             )
 
@@ -1462,9 +1478,9 @@ class GuppiGptStack(cdk.Stack):
         conversation_key = kms.Key(
             self,
             "ConversationLogKey",
-            description="Encrypts the GuppiGPT conversation log bucket",
+            description="Encrypts the HR Super Agent conversation log bucket",
             enable_key_rotation=True,
-            alias="guppi-gpt-conversations",
+            alias="hr-super-agent-conversations",
             removal_policy=RemovalPolicy.RETAIN,
         )
         conversation_bucket = s3.Bucket(
@@ -1634,7 +1650,7 @@ class GuppiGptStack(cdk.Stack):
                     },
                 },
             ),
-            description="Lets the tools gateway retrieve from the GuppiGPT knowledge base",
+            description="Lets the tools gateway retrieve from the HR Super Agent knowledge base",
         )
         tools_gateway_role.add_to_policy(
             iam.PolicyStatement(
@@ -1650,7 +1666,7 @@ class GuppiGptStack(cdk.Stack):
             self,
             "ToolsGateway",
             name=TOOLS_GATEWAY_NAME,
-            description="GuppiGPT tools: the knowledge base as MCP tools, user JWT inbound",
+            description="HR Super Agent tools: the knowledge base as MCP tools, user JWT inbound",
             role_arn=tools_gateway_role.role_arn,
             protocol_type="MCP",
             authorizer_type="CUSTOM_JWT",
@@ -1667,7 +1683,7 @@ class GuppiGptStack(cdk.Stack):
             "KnowledgeBaseTarget",
             gateway_identifier=tools_gateway.attr_gateway_identifier,
             name=KB_TARGET_NAME,
-            description="GuppiGPT documentation knowledge base",
+            description="HR Super Agent documentation knowledge base",
             target_configuration=agentcore.CfnGatewayTarget.TargetConfigurationProperty(
                 mcp=agentcore.CfnGatewayTarget.McpTargetConfigurationProperty(
                     connector=agentcore.CfnGatewayTarget.ConnectorTargetConfigurationProperty(
@@ -1790,17 +1806,17 @@ class GuppiGptStack(cdk.Stack):
 
         _resource_error_alarm(
             "EdgeGateway5xxAlarm",
-            "5xx (SystemErrors) on the GuppiGPT edge gateway crossed zero",
+            "5xx (SystemErrors) on the HR Super Agent edge gateway crossed zero",
             gateway.attr_gateway_arn,
         )
         _resource_error_alarm(
             "ToolsGateway5xxAlarm",
-            "5xx (SystemErrors) on the GuppiGPT tools gateway crossed zero",
+            "5xx (SystemErrors) on the HR Super Agent tools gateway crossed zero",
             tools_gateway.attr_gateway_arn,
         )
         _resource_error_alarm(
             "Runtime5xxAlarm",
-            "5xx (SystemErrors) on the GuppiGPT runtime crossed zero",
+            "5xx (SystemErrors) on the HR Super Agent runtime crossed zero",
             runtime.attr_agent_runtime_arn,
         )
 
@@ -1830,7 +1846,7 @@ class GuppiGptStack(cdk.Stack):
             self,
             "EdgeGateway4xxRateAlarm",
             alarm_description=(
-                "4xx (UserErrors) rate on the GuppiGPT edge gateway crossed "
+                "4xx (UserErrors) rate on the HR Super Agent edge gateway crossed "
                 f"{EDGE_GATEWAY_4XX_RATE_THRESHOLD_PERCENT}%"
             ),
             metric=edge_gateway_4xx_rate,
@@ -1847,7 +1863,7 @@ class GuppiGptStack(cdk.Stack):
             self,
             "RuntimeLatencyP90Alarm",
             alarm_description=(
-                "GuppiGPT runtime invocation latency p90 crossed "
+                "HR Super Agent runtime invocation latency p90 crossed "
                 f"{RUNTIME_LATENCY_P90_THRESHOLD_MS} ms"
             ),
             metric=cloudwatch.Metric(
@@ -1868,7 +1884,9 @@ class GuppiGptStack(cdk.Stack):
         bedrock_throttling_alarm = cloudwatch.Alarm(
             self,
             "BedrockThrottlingAlarm",
-            alarm_description="Bedrock InvocationThrottles for the GuppiGPT model crossed zero",
+            alarm_description=(
+                "Bedrock InvocationThrottles for the HR Super Agent model crossed zero"
+            ),
             metric=cloudwatch.Metric(
                 namespace="AWS/Bedrock",
                 metric_name="InvocationThrottles",
@@ -1952,7 +1970,7 @@ class GuppiGptStack(cdk.Stack):
         logs.CfnResourcePolicy(
             self,
             "VendedLogDeliveryPolicy",
-            policy_name="GuppiGptVendedLogDelivery",
+            policy_name="HrSuperAgentVendedLogDelivery",
             policy_document=json.dumps(
                 iam.PolicyDocument(
                     statements=[
@@ -1990,7 +2008,7 @@ class GuppiGptStack(cdk.Stack):
         # destination (docs.dynatrace.com/docs/ingest-from/amazon-web-services/
         # integrate-with-aws/aws-logs-ingest/lma-stream-logs-with-firehose), subscribed to
         # the three vended log groups above. The runtime's own log group
-        # (/aws/bedrock-agentcore/runtimes/guppi_gpt-*) is created lazily by the service,
+        # (/aws/bedrock-agentcore/runtimes/hr_super_agent-*) is created lazily by the service,
         # not by this stack (only _runtime_role's policy names its pattern); a
         # CloudFormation subscription filter needs an exact, stack-owned log group, so that
         # group is a follow-up, not something this change subscribes.
@@ -2152,7 +2170,7 @@ class GuppiGptStack(cdk.Stack):
                     },
                 },
             ),
-            description="Execution role for the GuppiGPT agent runtime",
+            description="Execution role for the HR Super Agent agent runtime",
         )
         region, account = self.region, self.account
         role.add_to_policy(

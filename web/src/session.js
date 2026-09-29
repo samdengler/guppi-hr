@@ -2,7 +2,7 @@
 // signed-in session with a silent refresh instead of a redirect through Cognito. Never
 // stores the access token; the access and id tokens live in page memory only, as before.
 //
-// Uses its own database, separate from web/src/history.js's "guppigpt-history", so
+// Uses its own database, separate from web/src/history.js's "hrsuperagent-history", so
 // clearing chat history never touches the session and clearing the session never touches
 // chat history.
 //
@@ -11,7 +11,7 @@
 
 import { openDB } from "idb";
 
-const DB_NAME = "guppigpt-session";
+const DB_NAME = "hrsuperagent-session";
 const DB_VERSION = 1;
 const STORE = "session";
 const RECORD_ID = "current";

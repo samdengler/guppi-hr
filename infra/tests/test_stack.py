@@ -3,7 +3,7 @@ import json
 import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Match, Template
-from guppi_gpt_infra.stack import GuppiGptStack
+from hr_super_agent_infra.stack import HrSuperAgentStack
 
 ACCOUNT = "123456789012"
 REGION = "us-east-1"
@@ -14,11 +14,13 @@ def synth(**extra_context) -> Template:
     app = cdk.App(
         context={
             ZONE_CONTEXT_KEY: {"Id": "/hostedzone/Z0000000000000", "Name": "dengler.io."},
-            "image_uri": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/guppi-gpt:test",
+            "image_uri": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/hr-super-agent:test",
             **extra_context,
         }
     )
-    stack = GuppiGptStack(app, "GuppiGpt", env=cdk.Environment(account=ACCOUNT, region=REGION))
+    stack = HrSuperAgentStack(
+        app, "HrSuperAgent", env=cdk.Environment(account=ACCOUNT, region=REGION)
+    )
     return Template.from_stack(stack)
 
 
@@ -35,7 +37,7 @@ def test_web_client_rotates_refresh_tokens(template):
     template.has_resource_properties(
         "AWS::Cognito::UserPoolClient",
         {
-            "ClientName": "guppi-gpt-web",
+            "ClientName": "hr-super-agent-web",
             "RefreshTokenRotation": {"Feature": "ENABLED", "RetryGracePeriodSeconds": 30},
             # Unchanged: 30 days, expressed in minutes by CloudFormation.
             "RefreshTokenValidity": 43200,
@@ -43,24 +45,51 @@ def test_web_client_rotates_refresh_tokens(template):
     )
 
 
-def test_apex_placeholder_record(template):
-    template.has_resource_properties(
+@pytest.fixture(scope="module")
+def singleton_template() -> Template:
+    return synth(own_account_singletons="true")
+
+
+def test_account_singletons_are_left_to_the_guppi_gpt_stack_by_default(template):
+    template.resource_count_is("AWS::XRay::TransactionSearchConfig", 0)
+    apex = [
+        r
+        for r in template.find_resources("AWS::Route53::RecordSet").values()
+        if r["Properties"]["Name"] == "dengler.io."
+    ]
+    assert apex == []
+    domains = template.find_resources("AWS::Cognito::UserPoolDomain")
+    (domain,) = domains.values()
+    assert domain["Properties"]["Domain"] == "auth-hr.dengler.io"
+    assert not any(dep.startswith("ApexPlaceholder") for dep in domain.get("DependsOn", []))
+
+
+def test_apex_placeholder_record(singleton_template):
+    singleton_template.has_resource_properties(
         "AWS::Route53::RecordSet",
         {"Name": "dengler.io.", "Type": "A", "ResourceRecords": ["192.0.2.1"]},
     )
 
 
-def test_user_pool_domain_waits_for_apex_record(template):
-    domains = template.find_resources("AWS::Cognito::UserPoolDomain")
+def test_user_pool_domain_waits_for_apex_record(singleton_template):
+    domains = singleton_template.find_resources("AWS::Cognito::UserPoolDomain")
     assert len(domains) == 1
     (domain,) = domains.values()
-    assert domain["Properties"]["Domain"] == "auth.dengler.io"
+    assert domain["Properties"]["Domain"] == "auth-hr.dengler.io"
     assert any(dep.startswith("ApexPlaceholder") for dep in domain.get("DependsOn", []))
+
+
+def test_site_and_auth_records_use_the_hr_hostnames(template):
+    names = {
+        r["Properties"]["Name"]
+        for r in template.find_resources("AWS::Route53::RecordSet").values()
+    }
+    assert names == {"hr.dengler.io.", "auth-hr.dengler.io."}
 
 
 def test_gateway_has_no_protocol_type_and_uses_cognito_jwt(template):
     gateways = template.find_resources("AWS::BedrockAgentCore::Gateway")
-    (gateway,) = [g for g in gateways.values() if g["Properties"]["Name"] == "guppi-gpt-edge"]
+    (gateway,) = [g for g in gateways.values() if g["Properties"]["Name"] == "hr-super-agent-edge"]
     assert "ProtocolType" not in gateway["Properties"]
     assert gateway["Properties"]["AuthorizerType"] == "CUSTOM_JWT"
 
@@ -123,7 +152,7 @@ def test_api_behavior_streams_through_cloudfront(template):
         "AWS::CloudFront::Distribution",
         {
             "DistributionConfig": {
-                "Aliases": ["chat.dengler.io"],
+                "Aliases": ["hr.dengler.io"],
                 "CacheBehaviors": Match.array_with(
                     [
                         Match.object_like(
@@ -262,7 +291,7 @@ def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(temp
     # parameter set is the false branch of the Fn::If (test_csp_adds_the_beacon_origin_
     # only_when_the_parameter_is_set below checks both branches).
     assert csp["Fn::If"][2] == (
-        "default-src 'self'; connect-src 'self' https://auth.dengler.io; "
+        "default-src 'self'; connect-src 'self' https://auth-hr.dengler.io; "
         "img-src 'self' data:; style-src 'self'; script-src 'self'; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     )
@@ -353,7 +382,7 @@ def test_runtime_role_grants_only_the_one_inference_profile(template):
 def test_tools_gateway_is_mcp_with_cognito_jwt_and_kb_connector(template):
     template.has_resource_properties(
         "AWS::BedrockAgentCore::Gateway",
-        {"Name": "guppi-gpt-tools", "ProtocolType": "MCP", "AuthorizerType": "CUSTOM_JWT"},
+        {"Name": "hr-super-agent-tools", "ProtocolType": "MCP", "AuthorizerType": "CUSTOM_JWT"},
     )
     template.has_resource_properties(
         "AWS::BedrockAgentCore::GatewayTarget",
@@ -429,7 +458,7 @@ def test_runtime_role_can_let_xray_write_spans_to_its_own_log_group(template):
                                     "Action": "logs:PutResourcePolicy",
                                     "Resource": Match.string_like_regexp(
                                         r"arn:aws:logs:.*:log-group:"
-                                        r"/aws/bedrock-agentcore/runtimes/guppi_gpt-\*"
+                                        r"/aws/bedrock-agentcore/runtimes/hr_super_agent-\*"
                                     ),
                                 }
                             )
@@ -460,7 +489,7 @@ def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
     # before Dynatrace, with no beacon origin appended.
     without_beacon = if_branches[2]
     assert without_beacon == (
-        "default-src 'self'; connect-src 'self' https://auth.dengler.io; "
+        "default-src 'self'; connect-src 'self' https://auth-hr.dengler.io; "
         "img-src 'self' data:; style-src 'self'; script-src 'self'; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     )
@@ -471,7 +500,7 @@ def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
         part if isinstance(part, str) else "<DynatraceBeaconOrigin>" for part in joined
     )
     assert rendered == (
-        "default-src 'self'; connect-src 'self' https://auth.dengler.io "
+        "default-src 'self'; connect-src 'self' https://auth-hr.dengler.io "
         "<DynatraceBeaconOrigin>; img-src 'self' data:; style-src 'self'; "
         "script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     )
@@ -533,18 +562,18 @@ def test_runtime_env_omits_dynatrace_otlp_vars_until_both_parameters_are_set(tem
     )
 
 
-def test_transaction_search_is_enabled_with_the_span_log_policy(template):
-    template.has_resource_properties(
+def test_transaction_search_is_enabled_with_the_span_log_policy(singleton_template):
+    singleton_template.has_resource_properties(
         "AWS::XRay::TransactionSearchConfig", {"IndexingPercentage": 1}
     )
     policies = [
         p["Properties"]["PolicyDocument"]
-        for p in template.find_resources("AWS::Logs::ResourcePolicy").values()
+        for p in singleton_template.find_resources("AWS::Logs::ResourcePolicy").values()
         if "xray.amazonaws.com" in p["Properties"]["PolicyDocument"]
     ]
     (document,) = policies
     assert "log-group:aws/spans:*" in document
-    searches = template.find_resources("AWS::XRay::TransactionSearchConfig")
+    searches = singleton_template.find_resources("AWS::XRay::TransactionSearchConfig")
     (search,) = searches.values()
     assert any(dep.startswith("TransactionSearchLogsPolicy") for dep in search.get("DependsOn", []))
 
@@ -740,9 +769,9 @@ def test_vended_log_groups_have_30_day_retention_under_the_shared_prefix(templat
     groups = template.find_resources("AWS::Logs::LogGroup")
     names = {g["Properties"]["LogGroupName"] for g in groups.values()}
     assert names == {
-        "/aws/vendedlogs/bedrock-agentcore/guppi-gpt-edge",
-        "/aws/vendedlogs/bedrock-agentcore/guppi-gpt-tools",
-        "/aws/vendedlogs/bedrock-agentcore/guppi_gpt",
+        "/aws/vendedlogs/bedrock-agentcore/hr-super-agent-edge",
+        "/aws/vendedlogs/bedrock-agentcore/hr-super-agent-tools",
+        "/aws/vendedlogs/bedrock-agentcore/hr_super_agent",
     }
     for group in groups.values():
         assert group["Properties"]["RetentionInDays"] == 30
@@ -799,7 +828,7 @@ def test_dynatrace_monitoring_role_is_gone(template):
     # push-based activation stack, deployed outside this repo, polls CloudWatch on its own.
     roles = template.find_resources("AWS::IAM::Role")
     names = {r["Properties"].get("RoleName") for r in roles.values()}
-    assert "GuppiGptDynatraceMonitoring" not in names
+    assert "HrSuperAgentDynatraceMonitoring" not in names
     rendered = template.to_json()
     assert "DynatraceAwsAccountId" not in rendered.get("Parameters", {})
     assert "DynatraceExternalId" not in rendered.get("Parameters", {})
@@ -915,8 +944,8 @@ def test_feedback_integration_puts_one_event_on_the_bus_with_no_compute(template
         "integration.request.header.Content-Type": "'application/x-amz-json-1.1'",
     }
     body = integration["RequestTemplates"]["application/json"]
-    assert '"EventBusName":"guppi-gpt-feedback"' in body
-    assert '"Source":"guppigpt.feedback"' in body
+    assert '"EventBusName":"hr-super-agent-feedback"' in body
+    assert '"Source":"hrsuperagent.feedback"' in body
     # The one field the request body cannot supply is the time the request arrived. The
     # caller's Cognito sub claim stays out of the event: the template cannot hash it, and
     # a vote joins its conversation through threadId rather than through the subject.
@@ -945,12 +974,12 @@ def test_feedback_behavior_is_matched_before_the_api_wildcard(template):
 
 def test_feedback_bus_and_archive_keep_every_vote_without_dynatrace(template):
     (bus,) = template.find_resources("AWS::Events::EventBus").values()
-    assert bus["Properties"]["Name"] == "guppi-gpt-feedback"
+    assert bus["Properties"]["Name"] == "hr-super-agent-feedback"
     assert "Condition" not in bus
     (archive,) = template.find_resources("AWS::Events::Archive").values()
     assert "Condition" not in archive
     assert archive["Properties"]["RetentionDays"] == 30
-    assert archive["Properties"]["EventPattern"] == {"source": ["guppigpt.feedback"]}
+    assert archive["Properties"]["EventPattern"] == {"source": ["hrsuperagent.feedback"]}
 
 
 def test_feedback_reaches_dynatrace_only_when_the_parameters_are_set(template):
@@ -973,14 +1002,14 @@ def test_feedback_reaches_dynatrace_only_when_the_parameters_are_set(template):
 
     (rule,) = template.find_resources("AWS::Events::Rule").values()
     assert rule["Condition"] == "HasDynatraceLogs"
-    assert rule["Properties"]["EventPattern"] == {"source": ["guppigpt.feedback"]}
+    assert rule["Properties"]["EventPattern"] == {"source": ["hrsuperagent.feedback"]}
     (target,) = rule["Properties"]["Targets"]
     assert target["RetryPolicy"] == {"MaximumRetryAttempts": 2}
     (queue_id,) = template.find_resources("AWS::SQS::Queue").keys()
     assert target["DeadLetterConfig"]["Arn"] == {"Fn::GetAtt": [queue_id, "Arn"]}
     body = target["InputTransformer"]["InputTemplate"]
-    assert '"event.type":"guppigpt.reply-feedback"' in body
-    assert '"event.provider":"guppigpt"' in body
+    assert '"event.type":"hrsuperagent.reply-feedback"' in body
+    assert '"event.provider":"hrsuperagent"' in body
     for field in ("vote", "run.id", "trace.id", "thread.id", "message.id", "request.id"):
         assert f'"{field}":<' in body
     assert "subject" not in body

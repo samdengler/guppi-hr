@@ -17,9 +17,9 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from botocore.exceptions import ClientError
-from guppi_agent import agent as agent_module
-from guppi_agent import conversation_log
-from guppi_agent.app import app
+from hr_agent import agent as agent_module
+from hr_agent import conversation_log
+from hr_agent.app import app
 from httpx import ASGITransport, AsyncClient
 
 TOKEN = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyLTEifQ."  # header.{"sub":"user-1"}.
@@ -140,7 +140,7 @@ def log_records(caplog) -> list[dict]:
 
 
 async def test_the_first_run_of_a_thread_writes_the_record(fake_s3, caplog):
-    caplog.set_level("INFO", logger="guppi_agent")
+    caplog.set_level("INFO", logger="hr_agent")
     response = await post(run_body("hello there"))
     assert response.status_code == 200
 
@@ -166,7 +166,7 @@ async def test_the_first_run_of_a_thread_writes_the_record(fake_s3, caplog):
 
 
 async def test_the_subject_is_the_keyed_pseudonym_and_the_sub_appears_nowhere(fake_s3, caplog):
-    caplog.set_level("INFO", logger="guppi_agent")
+    caplog.set_level("INFO", logger="hr_agent")
     await post(run_body("hello there"))
     body = fake_s3.record()
     expected = conversation_log.subject_from_token(TOKEN, KEY)
@@ -201,7 +201,7 @@ async def test_a_second_run_merges_into_the_thread(fake_s3):
 
 
 async def test_a_conflicting_write_is_retried_once_and_then_given_up(fake_s3, caplog):
-    caplog.set_level("INFO", logger="guppi_agent")
+    caplog.set_level("INFO", logger="hr_agent")
     fake_s3.conflicts = 1
     await post(run_body("hello there"))
     assert len(fake_s3.puts) == 2 and fake_s3.record()["runs"][0]["run"] == "r1"
@@ -216,7 +216,7 @@ async def test_a_conflicting_write_is_retried_once_and_then_given_up(fake_s3, ca
 
 
 async def test_a_failing_read_writes_nothing_and_logs_one_warning(fake_s3, caplog):
-    caplog.set_level("INFO", logger="guppi_agent")
+    caplog.set_level("INFO", logger="hr_agent")
     fake_s3.get_error = client_error("AccessDenied")
     response = await post(run_body("hello there"))
     assert [event for event in response.text.splitlines() if "RUN_FINISHED" in event]
@@ -227,7 +227,7 @@ async def test_a_failing_read_writes_nothing_and_logs_one_warning(fake_s3, caplo
 
 
 async def test_a_slow_write_times_out_without_writing(fake_s3, caplog, monkeypatch):
-    caplog.set_level("INFO", logger="guppi_agent")
+    caplog.set_level("INFO", logger="hr_agent")
     monkeypatch.setattr(conversation_log, "WRITE_TIMEOUT_SECONDS", 0.05)
     fake_s3.get_delay = 0.4
     response = await post(run_body("hello there"))
@@ -243,7 +243,7 @@ async def test_the_switch_off_writes_nothing_and_keeps_the_old_hash(monkeypatch,
     monkeypatch.setattr(conversation_log, "_s3", fake)
     monkeypatch.setattr(conversation_log, "_key", KEY)
     monkeypatch.delenv("CONVERSATION_LOG_ENABLED", raising=False)
-    caplog.set_level("INFO", logger="guppi_agent")
+    caplog.set_level("INFO", logger="hr_agent")
     await post(run_body("hello there"))
     assert fake.puts == [] and fake.objects == {}
     (line,) = log_records(caplog)
@@ -252,7 +252,7 @@ async def test_the_switch_off_writes_nothing_and_keeps_the_old_hash(monkeypatch,
 
 
 async def test_a_client_disconnect_is_logged_and_not_merged(fake_s3, caplog):
-    caplog.set_level("INFO", logger="guppi_agent")
+    caplog.set_level("INFO", logger="hr_agent")
     run = RunAgentInput.model_validate(run_body("hello there"))
     record = {"thread": "t1", "run": "r1", "outcome": "client_disconnected", "session": "s"}
     conversation_log.schedule_write(run, record, TOKEN)

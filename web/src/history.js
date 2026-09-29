@@ -8,7 +8,7 @@
 
 import { openDB } from "idb";
 
-const DB_NAME = "guppigpt-history";
+const DB_NAME = "hrsuperagent-history";
 const DB_VERSION = 1;
 const STORE = "threads";
 

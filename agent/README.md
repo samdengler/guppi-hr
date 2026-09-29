@@ -1,4 +1,4 @@
-# guppi-agent
+# hr-agent
 
 FastAPI application implementing the AgentCore Runtime AG-UI contract:
 `POST /invocations` streams AG-UI events as server-sent events, `GET /ping` reports health.

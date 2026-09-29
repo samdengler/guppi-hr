@@ -1,10 +1,10 @@
-# GuppiGPT
+# HR Super Agent
 
 A one page, plain text chat behind Google sign-in. The page is served from CloudFront,
 the stream runs through an AgentCore Gateway to a Strands agent on AgentCore Runtime, and
 the agent reads a Bedrock Knowledge Base through a second gateway.
 
-![GuppiGPT runtime architecture](docs/guppigpt-architecture-runtime.png)
+![HR Super Agent runtime architecture](docs/guppigpt-architecture-runtime.png)
 
 The stack is [Amazon Bedrock](https://aws.amazon.com/bedrock/) end to end, with the page
 and its state kept deliberately small. In brief:
@@ -75,7 +75,7 @@ disagree, fix one of them in the same change.
 | Path | Contents |
 | --- | --- |
 | `docs/` | Design document, decision log, architecture diagrams |
-| `infra/` | AWS CDK app (Python), one stack named `GuppiGpt` |
+| `infra/` | AWS CDK app (Python), one stack named `HrSuperAgent` |
 | `agent/` | The agent container: FastAPI serving AG-UI over SSE on the AgentCore Runtime contract |
 | `web/` | The static page: sources in `src/`, esbuild bundle in `dist/` |
 | `scripts/` | `deploy.sh`, `seed-content.sh` (refresh the knowledge base corpus), `ingest.sh` (index it) |
@@ -112,7 +112,7 @@ Deployed and verified in the browser on 3 Sep 2026, reconciled against the accou
 7 Sep 2026. Remaining work is listed in the design document, section 16. Operational
 notes:
 
-* `WAF_BLOCK` in `infra/guppi_gpt_infra/stack.py` has been `True` since 4 Sep 2026, after a
+* `WAF_BLOCK` in `infra/hr_super_agent_infra/stack.py` has been `True` since 4 Sep 2026, after a
   day in COUNT produced no counts on any rule. Set it back to `False` to return to
   watching; a direct call to the gateway hostname now gets a 403 from the WAF.
 * The edge gateway's front door answers 403 from its load balancer, before any of the
@@ -150,21 +150,21 @@ Preference for anything on the backend: AWS native services, serverless where po
 (scale to zero, pay per use, automatic scaling).
 
 1. Dynatrace RUM on the page plus the Dynatrace AWS connection. Live since 5 Sep 2026 on
-   environment wfd05358: RUM application GuppiGPT (self-hosted script, `rum` flag on),
+   environment wfd05358: RUM application HR Super Agent (self-hosted script, `rum` flag on),
    Firehose log forwarding from the vended log groups, and OTLP trace export from the
    runtime. The connection is the push-based one, deployed 7 Sep 2026 from Dynatrace's own
    activation stack `GuppiGPT-Dynatrace`, with `AWS/Bedrock-AgentCore` and `AWS/Bedrock`
    added as custom namespaces; the role-based model never worked. Setting the Dynatrace
    endpoint redirects trace export, so CloudWatch Transaction Search receives no spans
    (`docs/proposals/dynatrace.md`, design section 12).
-2. A Dynatrace dashboard for operational metrics. The dashboard GuppiGPT operations exists
+2. A Dynatrace dashboard for operational metrics. The dashboard HR Super Agent operations exists
    in the tenant, created from `docs/dynatrace/dashboard.json`; edits are re-imported from
    that file.
 3. Correlation ids and traceability. Done: `docs/proposals/traceability.md`.
 4. Up/down feedback on each reply. Built and verified 5 Sep 2026; the `feedback` flag went off again on 8 Sep 2026 at Sam's request, so the thumbs are hidden unless a tab turns them on with `?ff=feedback`. The pipeline behind them stays deployed: the page
    posts the vote to `/api/feedback`, a REST API with a Cognito authorizer integrates
    directly with EventBridge, and an API destination turns it into a Dynatrace business
-   event (`fetch bizevents | filter event.type == "guppigpt.reply-feedback"`). RUM custom
+   event (`fetch bizevents | filter event.type == "hrsuperagent.reply-feedback"`). RUM custom
    actions were tried first and the tenant's new RUM does not ingest them:
    `docs/proposals/feedback.md`.
 5. Chat history local to the browser. Built dark behind the `history` flag as Chats:

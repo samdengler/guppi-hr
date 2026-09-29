@@ -5,8 +5,8 @@
     "1": {
       "type": "data",
       "title": "Runs per hour",
-      "description": "One server span named POST /invocations per run, service guppi_gpt.DEFAULT, exported by the instrumented container (observed in the tenant 5 Sep 2026).",
-      "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"guppi_gpt.DEFAULT\"\n| summarize runs = count(), by: {bin(start_time, 1h)}",
+      "description": "One server span named POST /invocations per run, service hr_super_agent.DEFAULT, exported by the instrumented container (observed in the tenant 5 Sep 2026).",
+      "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"hr_super_agent.DEFAULT\"\n| summarize runs = count(), by: {bin(start_time, 1h)}",
       "visualization": "lineChart",
       "visualizationSettings": {}
     },
@@ -14,7 +14,7 @@
       "type": "data",
       "title": "Run duration p50/p90",
       "description": "Duration of the POST /invocations server span, which is the whole run rather than the first delta; the first delta lives only on the agent's log line in CloudWatch (runtime-logs), which Firehose does not forward.",
-      "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"guppi_gpt.DEFAULT\"\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90), by: {bin(start_time, 1h)}",
+      "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"hr_super_agent.DEFAULT\"\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90), by: {bin(start_time, 1h)}",
       "visualization": "lineChart",
       "visualizationSettings": {}
     },
@@ -22,7 +22,7 @@
       "type": "data",
       "title": "Run outcome split",
       "description": "The failure flag on the POST /invocations server span. RUN_ERROR events emitted on a 200 stream are not failures here; the outcome field on the agent's CloudWatch log line is the finer source.",
-      "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"guppi_gpt.DEFAULT\"\n| summarize runs = count(), by: {request_is_failed}",
+      "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"hr_super_agent.DEFAULT\"\n| summarize runs = count(), by: {request_is_failed}",
       "visualization": "categoricalBarChart",
       "visualizationSettings": {}
     },
@@ -30,7 +30,7 @@
       "type": "data",
       "title": "Retrieval rate",
       "description": "Share of runs (distinct trace ids with a POST /invocations span) whose trace also holds at least one mcp tools/call docs___Retrieve span. Counting spans rather than traces gave more than 100 percent, since one run can call the tool more than once.",
-      "query": "fetch spans\n| filter service.name == \"guppi_gpt.DEFAULT\" and (span.name == \"POST /invocations\" or span.name == \"mcp tools/call docs___Retrieve\")\n| summarize runs = countDistinctExact(if(span.name == \"POST /invocations\", trace.id)), withRetrieval = countDistinctExact(if(span.name == \"mcp tools/call docs___Retrieve\", trace.id))\n| fields pct = if(runs > 0, withRetrieval * 100.0 / runs, else: 0)",
+      "query": "fetch spans\n| filter service.name == \"hr_super_agent.DEFAULT\" and (span.name == \"POST /invocations\" or span.name == \"mcp tools/call docs___Retrieve\")\n| summarize runs = countDistinctExact(if(span.name == \"POST /invocations\", trace.id)), withRetrieval = countDistinctExact(if(span.name == \"mcp tools/call docs___Retrieve\", trace.id))\n| fields pct = if(runs > 0, withRetrieval * 100.0 / runs, else: 0)",
       "visualization": "singleValue",
       "visualizationSettings": {
         "singleValue": {
@@ -62,15 +62,15 @@
       "type": "data",
       "title": "Token usage",
       "description": "The Strands model span (named chat <model id>) carries the GenAI semantic convention usage attributes; if the attribute names differ in this Strands version, inspect one chat span in Distributed Tracing and adjust.",
-      "query": "fetch spans\n| filter startsWith(span.name, \"chat \") and service.name == \"guppi_gpt.DEFAULT\"\n| summarize input = sum(gen_ai.usage.input_tokens), output = sum(gen_ai.usage.output_tokens), by: {bin(start_time, 1h)}",
+      "query": "fetch spans\n| filter startsWith(span.name, \"chat \") and service.name == \"hr_super_agent.DEFAULT\"\n| summarize input = sum(gen_ai.usage.input_tokens), output = sum(gen_ai.usage.output_tokens), by: {bin(start_time, 1h)}",
       "visualization": "lineChart",
       "visualizationSettings": {}
     },
     "6": {
       "type": "data",
       "title": "Feedback up/down ratio",
-      "description": "The business event guppigpt.reply-feedback, ingested through the EventBridge API destination the stack creates (docs/proposals/feedback.md). The RUM custom action this tile used to query was never stored by the tenant; the vote now arrives on the bizevents table with vote, run.id, and trace.id as top-level fields.",
-      "query": "fetch bizevents\n| filter event.type == \"guppigpt.reply-feedback\"\n| summarize votes = count(), by: {vote}",
+      "description": "The business event hrsuperagent.reply-feedback, ingested through the EventBridge API destination the stack creates (docs/proposals/feedback.md). The RUM custom action this tile used to query was never stored by the tenant; the vote now arrives on the bizevents table with vote, run.id, and trace.id as top-level fields.",
+      "query": "fetch bizevents\n| filter event.type == \"hrsuperagent.reply-feedback\"\n| summarize votes = count(), by: {vote}",
       "visualization": "categoricalBarChart",
       "visualizationSettings": {}
     },

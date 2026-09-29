@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the GuppiGpt stack with secrets read from 1Password, then publish the page.
+# Deploy the HrSuperAgent stack with secrets read from 1Password, then publish the page.
 # Extra arguments are passed to `cdk deploy` (for example --hotswap or --require-approval never).
 # `--site-only` skips cdk deploy (and the image build and push) and publishes the page
 # from the outputs of the last deploy; useful on a slow connection.
@@ -63,18 +63,18 @@ elif op read "$ITEM/username" >/dev/null 2>&1; then
 else
   echo "1Password is not readable (op read failed); reusing the stack's existing Google OAuth and Dynatrace parameters" >&2
 fi
-if [[ -n "${GUPPI_ALARM_EMAIL:-}" ]]; then
-  param_args+=(--parameters "AlarmEmail=$GUPPI_ALARM_EMAIL")
+if [[ -n "${HR_ALARM_EMAIL:-}" ]]; then
+  param_args+=(--parameters "AlarmEmail=$HR_ALARM_EMAIL")
 fi
-if [[ -n "${GUPPI_INVESTIGATOR_ARN:-}" ]]; then
-  param_args+=(--parameters "InvestigatorPrincipalArn=$GUPPI_INVESTIGATOR_ARN")
+if [[ -n "${HR_INVESTIGATOR_ARN:-}" ]]; then
+  param_args+=(--parameters "InvestigatorPrincipalArn=$HR_INVESTIGATOR_ARN")
 fi
-if [[ -n "${GUPPI_DYNATRACE_BEACON_ORIGIN:-}" ]]; then
-  param_args+=(--parameters "DynatraceBeaconOrigin=$GUPPI_DYNATRACE_BEACON_ORIGIN")
+if [[ -n "${HR_DYNATRACE_BEACON_ORIGIN:-}" ]]; then
+  param_args+=(--parameters "DynatraceBeaconOrigin=$HR_DYNATRACE_BEACON_ORIGIN")
 fi
 if [[ "$SITE_ONLY" == 0 ]]; then
   cd "$ROOT/infra"
-  npx --yes aws-cdk@2 deploy GuppiGpt \
+  npx --yes aws-cdk@2 deploy HrSuperAgent \
     "${param_args[@]+"${param_args[@]}"}" \
     --outputs-file "$OUTPUTS" \
     "$@"
@@ -94,18 +94,18 @@ if [[ -f "$ROOT/web/vendor/ruxitagentjs.js" ]]; then
 fi
 
 cd "$ROOT"
-bucket="$(jq -r '.GuppiGpt.SiteBucketName' "$OUTPUTS")"
-distribution="$(jq -r '.GuppiGpt.DistributionId' "$OUTPUTS")"
+bucket="$(jq -r '.HrSuperAgent.SiteBucketName' "$OUTPUTS")"
+distribution="$(jq -r '.HrSuperAgent.DistributionId' "$OUTPUTS")"
 
 jq --slurpfile features web/features.json '{
   region: "'"$AWS_REGION"'",
-  userPoolClientId: .GuppiGpt.UserPoolClientId,
-  authDomain: .GuppiGpt.AuthDomain,
-  siteUrl: .GuppiGpt.SiteUrl,
+  userPoolClientId: .HrSuperAgent.UserPoolClientId,
+  authDomain: .HrSuperAgent.AuthDomain,
+  siteUrl: .HrSuperAgent.SiteUrl,
   features: $features[0],
   rum: {
-    scriptPath: .GuppiGpt.RumScriptPath,
-    beaconOrigin: .GuppiGpt.RumBeaconOrigin,
+    scriptPath: .HrSuperAgent.RumScriptPath,
+    beaconOrigin: .HrSuperAgent.RumBeaconOrigin,
     identifyUser: false
   }
 }' "$OUTPUTS" > web/dist/config.json

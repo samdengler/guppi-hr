@@ -5,8 +5,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export AWS_REGION="${AWS_REGION:-us-east-1}"
-kb="$(jq -r '.GuppiGpt.KnowledgeBaseId' "$ROOT/cdk-outputs.json")"
-ds="$(jq -r '.GuppiGpt.DataSourceId' "$ROOT/cdk-outputs.json")"
+kb="$(jq -r '.HrSuperAgent.KnowledgeBaseId' "$ROOT/cdk-outputs.json")"
+ds="$(jq -r '.HrSuperAgent.DataSourceId' "$ROOT/cdk-outputs.json")"
 
 job="$(aws bedrock-agent start-ingestion-job --knowledge-base-id "$kb" --data-source-id "$ds" \
   --query 'ingestionJob.ingestionJobId' --output text)"

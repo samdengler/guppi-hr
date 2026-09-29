@@ -1,7 +1,7 @@
 [project]
-name = "guppi-gpt"
+name = "hr-super-agent"
 version = "0.1.0"
-description = "GuppiGPT: a one page, stateless chat on Amazon Bedrock AgentCore"
+description = "HR Super Agent: a one page, stateless chat on Amazon Bedrock AgentCore"
 requires-python = ">=3.12"
 
 [tool.uv.workspace]

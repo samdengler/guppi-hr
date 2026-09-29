@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-bucket="${1:-$(jq -r '.GuppiGpt.ContentBucketName' "$ROOT/cdk-outputs.json")}"
+bucket="${1:-$(jq -r '.HrSuperAgent.ContentBucketName' "$ROOT/cdk-outputs.json")}"
 
 for tool in git aws jq; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }

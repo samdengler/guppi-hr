@@ -1,1 +1,0 @@
-"""GuppiGPT infrastructure."""

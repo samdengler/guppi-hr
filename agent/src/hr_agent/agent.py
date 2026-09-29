@@ -16,9 +16,9 @@ from typing import Any
 
 from ag_ui.core import BaseEvent, RunAgentInput
 
-from guppi_agent import conversation_log
+from hr_agent import conversation_log
 
-log = logging.getLogger("guppi_agent")
+log = logging.getLogger("hr_agent")
 
 DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 DEFAULT_RETRIEVE_TOOL = "docs___Retrieve"
@@ -30,7 +30,7 @@ LOGGED_MEMORY_SENTENCE = (
     "and you cannot recall earlier sessions."
 )
 
-SYSTEM_PROMPT_TEMPLATE = """You are Guppi, the assistant behind GuppiGPT.
+SYSTEM_PROMPT_TEMPLATE = """You are the HR Assistant.
 
 You have no memory beyond the conversation on the current page. {memory}
 
@@ -113,7 +113,7 @@ class StrandsRun:
             )
             adapter = StrandsAgent(
                 template,
-                name="guppi",
+                name="hr-assistant",
                 config=StrandsAgentConfig(emit_messages_snapshot=False),
                 agents_by_thread=self._agents_by_thread,
             )

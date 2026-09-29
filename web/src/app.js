@@ -386,7 +386,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
     const canSend = (status === "idle-empty" || status === "idle") && input.value.trim().length > 0;
     sendBtn.disabled = !canSend;
     emptyState.hidden = messages.length > 0 || status === "running" || status === "error";
-    input.placeholder = messages.length > 0 ? "Reply to GuppiGPT" : "Ask GuppiGPT";
+    input.placeholder = messages.length > 0 ? "Reply to the HR Assistant" : "Ask the HR Assistant";
   }
 
   function clearThreadState() {
@@ -424,7 +424,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
 
     const label = document.createElement("p");
     label.className = "reply-label";
-    label.textContent = "GuppiGPT";
+    label.textContent = "HR Assistant";
     reply.appendChild(label);
 
     const statusLine = document.createElement("p");

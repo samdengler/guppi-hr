@@ -12,7 +12,7 @@ import {
 // web SDK's evaluation is synchronous, so no network round trip belongs in a resolver.
 class StaticFlagsProvider {
   runsOn = "client";
-  metadata = { name: "GuppiGPT static flags" };
+  metadata = { name: "HR Assistant static flags" };
 
   constructor(flags) {
     this.flags = flags;
@@ -82,7 +82,7 @@ function applyUrlOverrides() {
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
     if (event.key === OVERRIDE_KEY) {
-      console.debug("guppigpt: feature flag overrides changed in another tab; reload to apply");
+      console.debug("hrsuperagent: feature flag overrides changed in another tab; reload to apply");
     }
   });
 }
