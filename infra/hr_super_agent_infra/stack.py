@@ -1986,8 +1986,16 @@ class HrSuperAgentStack(cdk.Stack):
         # automatically the first time delivery starts (AWS-logs-infrastructure-V2-
         # CloudWatchLogs.html), which the deploying principal is not guaranteed to have.
         def _vended_log_delivery(
-            resource_label: str, resource_name: str, resource_arn: str, log_types: list[str]
+            resource_label: str,
+            resource_name: str,
+            resource_arn: str,
+            log_types: list[str],
+            delivery_name: str | None = None,
         ) -> logs.LogGroup:
+            # Delivery sources and destinations are named per account with underscores
+            # made hyphens, so a runtime and a gateway whose names differ only by that
+            # (hr_super_agent_tools, hr-super-agent-tools) need delivery_name to differ.
+            delivery_name = (delivery_name or resource_name).replace("_", "-")
             log_group = logs.LogGroup(
                 self,
                 f"{resource_label}LogGroup",
@@ -1998,7 +2006,7 @@ class HrSuperAgentStack(cdk.Stack):
             destination = logs.CfnDeliveryDestination(
                 self,
                 f"{resource_label}LogDeliveryDestination",
-                name=f"{resource_name}-logs".replace("_", "-"),
+                name=f"{delivery_name}-logs",
                 delivery_destination_type="CWL",
                 destination_resource_arn=log_group.log_group_arn,
             )
@@ -2006,7 +2014,7 @@ class HrSuperAgentStack(cdk.Stack):
                 source = logs.CfnDeliverySource(
                     self,
                     f"{resource_label}{log_type.title().replace('_', '')}Source",
-                    name=f"{resource_name}-{log_type}".replace("_", "-").lower(),
+                    name=f"{delivery_name}-{log_type}".replace("_", "-").lower(),
                     log_type=log_type,
                     resource_arn=resource_arn,
                 )
@@ -2039,6 +2047,7 @@ class HrSuperAgentStack(cdk.Stack):
                 TOOLS_RUNTIME_NAME,
                 hr_tools.runtime.attr_agent_runtime_arn,
                 ["APPLICATION_LOGS"],
+                delivery_name=f"{TOOLS_RUNTIME_NAME}-runtime",
             ),
             "AgentsGateway": _vended_log_delivery(
                 "AgentsGateway",

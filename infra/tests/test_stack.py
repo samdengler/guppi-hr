@@ -1252,3 +1252,15 @@ def test_every_new_runtime_and_the_agents_gateway_have_a_5xx_alarm(template):
         "travel sub-agent runtime",
     ):
         assert any(subject in d and "5xx" in d for d in descriptions), subject
+
+
+def test_log_delivery_names_are_unique_in_the_account(template):
+    names = [
+        r["Properties"]["Name"]
+        for kind in ("AWS::Logs::DeliverySource", "AWS::Logs::DeliveryDestination")
+        for r in template.find_resources(kind).values()
+    ]
+    assert len(names) == len(set(names))
+    # The existing deliveries keep their names, so the deploy does not replace them.
+    assert "hr-super-agent-tools-application-logs" in names
+    assert "hr-super-agent-tools-runtime-application-logs" in names
