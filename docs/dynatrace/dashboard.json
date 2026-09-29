@@ -5,7 +5,7 @@
     "1": {
       "type": "data",
       "title": "Runs per hour",
-      "description": "One server span named POST /invocations per run, service hr_super_agent.DEFAULT, exported by the instrumented container (observed in the tenant 5 Sep 2026).",
+      "description": "One server span named POST /invocations per run, service hr_super_agent.DEFAULT, exported by the instrumented container (guppi-gpt's equivalent service was observed in the tenant 5 Sep 2026).",
       "query": "fetch spans\n| filter span.name == \"POST /invocations\" and service.name == \"hr_super_agent.DEFAULT\"\n| summarize runs = count(), by: {bin(start_time, 1h)}",
       "visualization": "lineChart",
       "visualizationSettings": {}
@@ -76,17 +76,25 @@
     },
     "7": {
       "type": "data",
-      "title": "WAF allowed requests",
-      "description": "The edge gateway's web ACL (a REGIONAL ACL associated with the AgentCore gateway) through the AWS connection's built-in WAFv2 service; keys are cloud.aws.wafv2.<Metric>.By.Region.Rule.WebACL with Rule ALL for the whole ACL and one series per rule. BlockedRequests is left off on purpose: a timeseries command answers no records when any named key has never existed, and that key appears only after the first block (verified 7 Sep 2026). Add it back once a block has happened.",
-      "query": "timeseries allowed = sum(cloud.aws.wafv2.AllowedRequests.By.Region.Rule.WebACL), by: {Rule}",
-      "visualization": "lineChart",
+      "title": "Routing decisions by area",
+      "description": "Draft (29 Sep 2026), not yet run against the tenant: reads the orchestrator's run log line (domain, confidence, action, delegated_to, confirmed; D26), which reaches Dynatrace only if the runtime's application logs are forwarded.",
+      "query": "fetch logs\n| filter contains(content, \"\\\"delegated_to\\\"\")\n| parse content, \"JSON:run\"\n| fieldsAdd area = coalesce(run[delegated_to], run[action])\n| summarize turns = count(), by: {area}",
+      "visualization": "pieChart",
       "visualizationSettings": {}
     },
     "8": {
       "type": "data",
-      "title": "Gateway 4xx",
-      "description": "CloudWatch metric UserErrors from AWS/Bedrock-AgentCore, polled through the AWS connection's custom metric rows on the dimensions Resource, Operation, Protocol; the Dynatrace key is cloud.aws.bedrock_agentcore.UserErrors.By.Operation.Protocol.Resource (verified 7 Sep 2026). The loopback URL rejection happens at the gateway's load balancer and is not separately counted, so this tile shows all 4xx, split by gateway.",
-      "query": "timeseries userErrors = sum(cloud.aws.bedrock_agentcore.UserErrors.By.Operation.Protocol.Resource), by: {Resource}",
+      "title": "Routing confidence bands",
+      "description": "Draft (29 Sep 2026), not yet run against the tenant: reads the orchestrator's run log line (domain, confidence, action, delegated_to, confirmed; D26), which reaches Dynatrace only if the runtime's application logs are forwarded.",
+      "query": "fetch logs\n| filter contains(content, \"\\\"delegated_to\\\"\")\n| parse content, \"JSON:run\"\n| fieldsAdd band = run[confidence]\n| summarize turns = count(), by: {band, bin(timestamp, 1h)}",
+      "visualization": "barChart",
+      "visualizationSettings": {}
+    },
+    "9": {
+      "type": "data",
+      "title": "Confirmed changes and clarifying questions",
+      "description": "Draft (29 Sep 2026), not yet run against the tenant: reads the orchestrator's run log line (domain, confidence, action, delegated_to, confirmed; D26), which reaches Dynatrace only if the runtime's application logs are forwarded.",
+      "query": "fetch logs\n| filter contains(content, \"\\\"delegated_to\\\"\")\n| parse content, \"JSON:run\"\n| summarize confirmed = countIf(run[confirmed] == true), clarified = countIf(run[action] == \"clarify\"), by: {bin(timestamp, 1h)}",
       "visualization": "lineChart",
       "visualizationSettings": {}
     }
@@ -130,14 +138,20 @@
     },
     "7": {
       "x": 0,
-      "y": 18,
-      "w": 12,
+      "y": 24,
+      "w": 8,
       "h": 6
     },
     "8": {
-      "x": 12,
-      "y": 18,
-      "w": 12,
+      "x": 8,
+      "y": 24,
+      "w": 8,
+      "h": 6
+    },
+    "9": {
+      "x": 16,
+      "y": 24,
+      "w": 8,
       "h": 6
     }
   },
