@@ -40,3 +40,16 @@ test("both switches on name both", () => {
     "Ask anything. Chats are saved on this device and logged for troubleshooting.",
   );
 });
+
+test("the status line names what each tool is doing", async () => {
+  const { toolStatus } = await import("../src/copy.js");
+  assert.deepEqual(toolStatus("docs___Retrieve"), {
+    running: "Searching the HR policies…",
+    done: "Searched the HR policies",
+  });
+  assert.equal(toolStatus("hr___propose_address_change").running, "Preparing the change…");
+  assert.equal(toolStatus("hr___commit_change").done, "Saved the change");
+  assert.equal(toolStatus("hr___open_ticket").done, "Opened a ticket");
+  assert.equal(toolStatus("hr___get_profile").running, "Checking your HR records…");
+  assert.equal(toolStatus(undefined).running, "Working…");
+});

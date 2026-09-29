@@ -3,7 +3,7 @@ import { initFeatures, isEnabled } from "./features.js";
 import { enabledFlagNames } from "./flags-core.js";
 import * as chatHistory from "./history.js";
 import { renderFeedbackControls, initFeedbackSink, FEEDBACK_EVENT } from "./feedback.js";
-import { hintText, emptyStateText } from "./copy.js";
+import { hintText, emptyStateText, toolStatus } from "./copy.js";
 import { initRum, identifyRumUser } from "./rum.js";
 import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideOnLoad, newestRefreshToken } from "./session.js";
 
@@ -77,6 +77,10 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
 
   let sessionId = newSessionId();
   let threadId = crypto.randomUUID();
+  // AG-UI state for this thread, from the last run's STATE_SNAPSHOT and sent back on the
+  // next run. It carries the change awaiting confirmation (pendingAction), so a "yes"
+  // can commit it. Memory only: a reload or a switched thread starts without it.
+  let threadState = {};
   let messages = [];         // {id, role, content}, the full thread as sent to the agent
 
   let auth = "anonymous";    // anonymous | signed-in
@@ -138,6 +142,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
 
   function switchToThread(thread) {
     threadId = thread.id;
+    threadState = {};
     threadCreatedAt = thread.createdAt;
     threadTitle = thread.title;
     // A stored feedback field carries through in memory so a later send does not wipe
@@ -392,6 +397,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
   function clearThreadState() {
     messages = [];
     threadId = crypto.randomUUID();
+    threadState = {};
     threadCreatedAt = Date.now();
     threadTitle = null;
     status = "idle-empty";
@@ -616,6 +622,8 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
     let stallTimer = null;
     let finished = false;
     let errored = false;
+    let toolName = "";
+    let nextState = null;
     let refused = false;
     // One run id and one trace per turn; a Retry is a new run on a new trace.
     const runId = crypto.randomUUID();
@@ -660,6 +668,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
       // Strip any bookkeeping field (feedback included) that does not belong on the
       // wire; the agent's validation only expects id, role, and content per message.
       initialMessages: messageList.map(({ id, role, content }) => ({ id, role, content })),
+      initialState: threadState,
       headers: {
         authorization: `Bearer ${tokens.access_token}`,
         "x-amzn-bedrock-agentcore-runtime-session-id": sessionId,
@@ -680,16 +689,22 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
       onEvent: () => {
         resetStallTimer(); // every event counts, the CUSTOM ping included
       },
-      onToolCallStartEvent: () => {
-        // Text streamed before a search is the model narrating its plan ("Let me correct
-        // that:"); the status line records the search, so only what follows the last
-        // search is kept as the reply.
+      onToolCallStartEvent: ({ event }) => {
+        // Text streamed before a tool call is the model narrating its plan ("Let me correct
+        // that:"); the status line records the call, so only what follows the last call
+        // is kept as the reply.
         draft = "";
         schedulePaint();
-        setStatusLine("Searching the knowledge base\u2026");
+        toolName = event.toolCallName;
+        setStatusLine(toolStatus(toolName).running);
       },
       onToolCallEndEvent: () => {
-        setStatusLine("Searched the knowledge base");
+        setStatusLine(toolStatus(toolName).done);
+      },
+      onStateSnapshotEvent: ({ event }) => {
+        // The last snapshot of a run is the whole state; it is kept only if the run
+        // finishes, so an interrupted run leaves the previous state in place.
+        nextState = event.snapshot || {};
       },
       onTextMessageStartEvent: () => {
         // A second message in one run (text around a tool call) starts a new paragraph.
@@ -722,6 +737,7 @@ import { saveSession, loadSession, clearSession, classifyRefreshFailure, decideO
       return;
     }
     refs.text.textContent = draft;
+    if (nextState) threadState = nextState;
     const assistantMessage = { id: crypto.randomUUID(), role: "assistant", content: draft };
     messages.push(assistantMessage);
     await persistCurrentThread();
