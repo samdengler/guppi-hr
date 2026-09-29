@@ -915,6 +915,10 @@ class HrSuperAgentStack(cdk.Stack):
             # gateway exists; it is defined later in this file.
             environment_variables=dict(RUNTIME_BASE_ENVIRONMENT),
         )
+        # role_arn alone orders the runtime after the role but not after its DefaultPolicy,
+        # and AgentCore checks the ECR pull grants at create time; a fresh stack failed with
+        # "Access denied while validating ECR URI" (observed 28 Sep 2026).
+        runtime.node.add_dependency(runtime_role)
 
         invoke_policy = iam.Policy(
             self,

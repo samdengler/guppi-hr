@@ -1039,3 +1039,8 @@ def test_feedback_outputs_name_the_api_and_the_bus(template):
     assert json.dumps(outputs["FeedbackApiUrl"]["Value"]).endswith('"/api/feedback"]]}')
     (bus_id,) = template.find_resources("AWS::Events::EventBus").keys()
     assert outputs["FeedbackBusName"]["Value"] == {"Ref": bus_id}
+
+
+def test_runtime_waits_for_the_runtime_role_policy(template):
+    (runtime,) = template.find_resources("AWS::BedrockAgentCore::Runtime").values()
+    assert any(dep.startswith("RuntimeRoleDefaultPolicy") for dep in runtime.get("DependsOn", []))
