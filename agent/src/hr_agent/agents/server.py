@@ -67,7 +67,10 @@ and do not guess.
 """
 
 WRITE_RULE = """
-Your tools act on this employee's own records. A change always takes two turns: first call
+Your tools act on this employee's own records. When the employee asks about one of their
+details ("what about my emergency contact?"), look it up and say what is on file before
+anything else; ask for new values only if they want to change it. A change always takes
+two turns: first call
 the matching propose tool, then tell the employee the exact change it returned and ask
 them to confirm. Call commit_change with that proposal_id only when their next message
 clearly says yes; if they decline or change the details, do not commit. Never say a change

@@ -141,6 +141,11 @@ def test_each_domain_holds_only_its_own_tools():
     assert TRAVEL.tool_names("hr___") == {RETRIEVE_TOOL, "hr___open_ticket"}
 
 
+def test_writer_prompts_show_what_is_on_file_first():
+    assert "say what is on file before" in server.system_prompt(PROFILE)
+    assert "say what is on file before" not in server.system_prompt(TRAVEL)
+
+
 def test_travel_is_read_only_in_its_prompt():
     assert "commit_change" not in server.system_prompt(TRAVEL, PENDING)
     assert PROPOSAL_ID in server.system_prompt(PROFILE, PENDING)
