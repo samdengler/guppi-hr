@@ -2,7 +2,7 @@
 
 One entry per decision. Status is Proposed, Approved or Reversed. A decision made while
 Sam is away is written as Proposed and listed in the next message to him. When code and a
-decision disagree, one of them changes in the same commit. D1 to D15 mirror the review
+decision disagree, one of them changes in the same commit. D1 to D18 mirror the review
 table in the Claude Docs artifact "HR Super Agent MVP: Plan and Handoff"; Sam's status
 there wins.
 
