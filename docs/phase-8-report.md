@@ -18,7 +18,9 @@ and `state` from `onSend`, with no blockers.
 | 3 | `06be59d` | `web/src` page and its tests deleted; `web/manifest.json` (no `theme`), `web/src/ext.js` as an ES module, `copy.js` cut to its pure helpers; 14 `node:test` cases (D32, D33) |
 | 4 | `5eafcc3` | `scripts/deploy.sh`: no Google OAuth read, Dynatrace from 1Password with fallback, `--reuse-parameters` and `--site-only` kept, `HR_GITHUB_TOKEN` from `gh auth token`, manifest and extension to `projects/hr/` with `no-cache`, `/projects/hr/*` invalidated |
 | 5 | `a5123eb` | README, AGENTS.md, design.md, plan.md (phase 8), demo.md, agent/README.md; D34 records the move and marks D9, D10 and D17 Reversed |
-| 6 | this commit | `scripts/deploy.sh --reuse-parameters --require-approval never`: `deploy exit=0` (`.deploy/deploy-20261002-073017.log`, 1433 s of `cdk deploy`) |
+| 6 | `39b3ffe` | `scripts/deploy.sh --reuse-parameters --require-approval never`: `deploy exit=0` (`.deploy/deploy-20261002-073017.log`, 1433 s of `cdk deploy`) |
+| 7 | `8ac6dbe` | `scripts/browser-check.mjs` and Playwright as a `web/` dev dependency; the checks below |
+| 8 | this commit | This report's decisions, blockers and manual list |
 
 ## Resources removed
 
@@ -118,3 +120,46 @@ The page's console on `/p/hr/` showed the platform's Dynatrace RUM beacon refuse
 (CORS on `https://bf49265sdi.bf.dynatrace.com/bf`, two 400s). RUM is the platform's
 (`rum` is on in its `config.json` and in this manifest, as it was in HR's flags); nothing
 of HR's failed.
+
+## Decisions
+
+All Proposed, in `docs/decision-log.md`:
+
+- D29: the unchanged Dockerfile could not install the kit (no git in `python:3.12-slim`,
+  and `samdengler/guppi-gpt` is private). The image installs git and reads a GitHub token
+  as the BuildKit secret `github_token`, which the stack's image asset takes from
+  `HR_GITHUB_TOKEN` and `scripts/deploy.sh` sets from `gh auth token`. Checked: the token
+  is in no layer, file or image history of the built image. guppi-connect's bridge will
+  meet the same problem when it depends on the kit.
+- D30: `app.py` passes `create_app` a three line `build_strands_agent` that looks up
+  `hr_agent.agent.build_strands_agent` per request, so the tests' seam still works; the
+  three deleted modules diffed identical to `kit-v0.2.0` apart from the package name; the
+  run line now comes from the `guppi_agent` logger.
+- D31: the platform parameters read, the issuer cut from the discovery URL, new logical
+  ids for the target and its policy (an add and a delete, no replacement), the
+  investigator's `ListUsers` on the platform pool, and what stays (billing alarm, log
+  forwarding, `own_account_singletons` for Transaction Search, `target_credentials`).
+- D32: the manifest and extension; the extension keeps the last `STATE_SNAPSHOT` it sees,
+  where phase 5 kept it only after `RUN_FINISHED`.
+- D33: the reply's agent tag is not kept in the platform's text-only history; the one thing
+  phase 5's page had that the extension does not.
+- D34 (Approved, the brief's own decision): the move onto the platform, reversing D9, D10
+  and D17.
+
+## Blockers
+
+None. Nothing rolled back.
+
+## For Sam
+
+- Remove `https://auth-hr.dengler.io/oauth2/idpresponse` from the Google OAuth client's
+  authorized redirect URIs (and `https://auth-hr.dengler.io` from its JavaScript origins,
+  if listed); the user pool and its domain are gone.
+- Delete the retained site bucket `hrsuperagent-sitebucket397a1860-ahfzxmjr1rik`
+  (empty it first: `aws s3 rb s3://hrsuperagent-sitebucket397a1860-ahfzxmjr1rik --force`).
+- Check `https://chat.dengler.io/p/hr/` in a signed-in browser of your own: the four
+  suggestions, "HR Assistant · Profile" with "Asking the Profile agent…", and a "yes" that
+  commits.
+- Optional: the platform's Dynatrace RUM beacon is refused by CORS on `/p/hr/` (Checks).
+- Review D29 to D33. The private kit dependency (D29) goes away if guppi-gpt becomes
+  public or the kit moves to a package index.
