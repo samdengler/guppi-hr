@@ -252,7 +252,8 @@ works against a JWT runtime today; guppi-gpt's decision log records why.
 
 `scripts/browser-check.mjs` runs the four scenarios on `https://chat.dengler.io/p/hr/` in
 headless Chrome with the session from `$HOME/.config/guppi/test-session.json` (written by
-`../guppi-gpt/scripts/test-token.sh`) and saves `.deploy/phase-8-<scenario>.png`. Tokens
+`../guppi-gpt/scripts/test-token.sh`; Playwright is a dev dependency of `web/`) and saves
+`.deploy/phase-8-<scenario>.png`. Tokens
 from that script are used only inside command substitution; never print, log, or commit
 one.
 

@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The HR project's extension for the chat.dengler.io platform page: one ES module bundled by esbuild into dist/",
+  "description": "The HR project's extension for the chat.dengler.io platform page: one ES module bundled by esbuild into dist/; Playwright drives scripts/browser-check.mjs",
   "scripts": {
     "build": "esbuild src/ext.js --bundle --minify --format=esm --target=es2022 --outfile=dist/ext.js",
     "test": "node --test"
   },
   "devDependencies": {
-    "esbuild": "0.25.10"
+    "esbuild": "0.25.10",
+    "playwright": "1.63.0"
   }
 }

@@ -62,3 +62,59 @@ gateway lists two targets, `api` and `hr`, both `READY`. `hr.dengler.io` and
 `https://hr-super-agent-agents-rfkdgz7314.gateway.bedrock-agentcore.us-east-1.amazonaws.com`
 and `https://hr-super-agent-tools-7bi54dgr6g.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp`.
 Both now accept only the platform pool's token, which is what guppi-connect's plan expects.
+
+## Checks
+
+With curl, 2 Oct 2026 after the deploy:
+
+| Request | Result |
+| --- | --- |
+| `https://chat.dengler.io/p/hr/` | 200 `text/html` |
+| `/projects/hr/manifest.json` | 200 `application/json` |
+| `/projects/hr/ext.js` | 200 `text/javascript`, `cache-control: no-cache` |
+| `POST /api/hr/invocations` without a bearer | 401 from the platform gateway (`www-authenticate: Bearer error="invalid_token"`, body `Missing Bearer token`) |
+| `/` and `/p/mcp-app/` | 200 |
+
+The four scenarios as AG-UI runs against `/api/hr/invocations` with a token from
+`../guppi-gpt/scripts/test-token.sh` (held in the process environment, never printed),
+`forwardedProps.project` `hr`, each run's `STATE_SNAPSHOT` sent back as the next run's
+`state`. Thread A held the first scenario, thread B the other three in order. Raw events
+are in `.deploy/phase8-scenarios.json` (gitignored); keepalive pings are left out below.
+
+| Scenario | Turn | Events | Reply | State after |
+| --- | --- | --- | --- | --- |
+| Disambiguation | "I need to update my information" | `RUN_STARTED`, text, `STATE_SNAPSHOT`, `RUN_FINISHED`; no step | "Is this about your personal details, such as your home address or emergency contact, or about your pay, such as your direct deposit account or pay statements?" | `pendingAction: null` |
+| Confirmation | "Change my home address to 419 Glendale Ave, Decatur GA 30030" | `STEP_STARTED profile`, `STEP_FINISHED profile`, text, `STATE_SNAPSHOT` | "I'm proposing to change your home address from 88 Lake Shore Dr, Chicago, IL 60611 to 419 Glendale Ave, Decatur, GA 30030. Is that correct?" | `pendingAction` with proposal `6226f303...`, from, to, expiry, domain `profile` |
+| | "yes" (with that state) | profile step, text, snapshot | "Done. Your home address has been changed to 419 Glendale Ave, Decatur, GA 30030." | `activeDomain: profile`, `pendingAction: null` |
+| Sticky context | "what about my emergency contact?" | profile step, no re-route | "Your emergency contact on file is Jordan Grant (Partner), (404) 555-7167. Would you like to change it?" | `activeDomain: profile` |
+| Topic shift | "How many buddy passes do I get?" | `STEP_STARTED travel` | "each eligible employee receives 8 buddy passes per calendar year..." | `activeDomain: travel` |
+| | "I need to talk to someone" | travel step | "Your ticket ID is HR-206993. Someone from the HR team will follow up with you within two business days." | `activeDomain: travel` |
+
+The audit table's entry for proposal `6226f303...` carries trace id
+`102c075a7f784cd9bee6a145fb256088`, the `traceparent` the "yes" run sent, so the trace
+survives the platform's gateway and every hop after it.
+
+Browser check: `scripts/browser-check.mjs` (adapted from guppi-gpt's, Playwright as a dev
+dependency of `web/`) seeded the session from `$HOME/.config/guppi/test-session.json`, ran
+the same four scenarios on `/p/hr/` and saved `.deploy/phase-8-disambiguation.png`,
+`phase-8-confirmation.png`, `phase-8-sticky.png` and `phase-8-topic-shift.png`; results in
+`.deploy/phase8-browser.json`. The page's brand reads "HR Assistant" on the Sky palette,
+and the four suggestions show under the empty state.
+
+| Scenario | Label | Status lines seen | Outcome |
+| --- | --- | --- | --- |
+| Disambiguation | "HR Assistant" | none | the clarifying question naming both areas |
+| Confirmation | "HR Assistant · Profile" on both turns | "Asking the Profile agent…", "Profile agent answered" | the proposal read back; on "yes" "Your address change has been completed"; a new audit entry (proposal `63aa53f3...`, trace `6abf9bcd...`) shows the commit |
+| Sticky context | "HR Assistant · Profile" | the same two | the emergency contact on the same record |
+| Topic shift | "HR Assistant · Travel" on both turns | "Asking the Travel agent…", "Travel agent answered" | 8 buddy passes, then ticket HR-848114 |
+
+The browser ran after the curl scenarios with the same test user, so its address proposal
+read back the address curl had just written (from and to the same); the agent said so and
+committed on "yes". `https://chat.dengler.io/` (brand "GuppiGPT") and `/p/mcp-app/` (brand
+"MCP App Lab") reached the chat screen as before (`.deploy/phase-8-root.png`,
+`phase-8-mcpApp.png`).
+
+The page's console on `/p/hr/` showed the platform's Dynatrace RUM beacon refused
+(CORS on `https://bf49265sdi.bf.dynatrace.com/bf`, two 400s). RUM is the platform's
+(`rum` is on in its `config.json` and in this manifest, as it was in HR's flags); nothing
+of HR's failed.
