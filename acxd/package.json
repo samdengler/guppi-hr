@@ -1,0 +1,15 @@
+{
+  "name": "guppi-connect-acxd",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentic CX designer resources for the guppi-connect spike, created through the ACXD SDK",
+  "type": "commonjs",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "amazon-connect-acxd-sdk": "0.2.0"
+  },
+  "scripts": {
+    "deploy": "node deploy.js",
+    "inspect": "node inspect.js"
+  }
+}
