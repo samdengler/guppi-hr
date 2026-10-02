@@ -24,8 +24,10 @@ tests: the Claude Doc "Agentic CX designer as the HR super-agent".
 
 ```
 acxd/       designer resources as data (hr.js, probes.js), deploy.js, logs.js
-infra/      CDK app: the mock and echo Lambda
+agent/      the AG-UI to Connect bridge on the platform agent kit (connect_bridge)
+infra/      CDK app: the mock and echo Lambda, the bridge Runtime, table and edge target
 mock/       the Lambda handler
-scripts/    contact flow, chat harness, routing eval, HR token minting
-docs/       spike report
+web/        the hr-connect project manifest for chat.dengler.io
+scripts/    contact flow, chat harness, routing eval, HR token minting, deploy, bridge check
+docs/       spike report, platform plan
 ```

@@ -79,6 +79,20 @@ readable in the contact record for its lifetime. Phase 0 settles this before any
 The gate passes with one design change: the bridge blanks `hrToken` after the first reply
 and starts a new contact for a token near expiry. Phase 1 can go ahead.
 
+## Phase 2 and 3 status, 2 October
+
+Built and tested, not yet deployed. `agent/` holds the bridge (`ConnectTurn`, the
+DynamoDB session store, `app = create_app(build_agent)` on `kit-v0.2.0`) with seven tests
+on fake Connect clients. `infra/guppi_connect_infra/bridge.py` adds the Runtime with the
+platform's JWT authorizer, the session table, the `hr-connect` target on the platform's
+edge gateway and the `InvokeAgentRuntime` grant for its role; `cdk diff` shows those six
+resources and no change to the mock. `web/manifest.json` is the project manifest, and
+`scripts/deploy.sh` deploys the stack and publishes it. `scripts/bridge_check.py` runs
+turns through `/api/hr-connect/invocations` with the platform test session's token.
+
+The kit's conversation log is off for the bridge: the platform's log bucket admits only
+the platform runtime's role. Joining it needs a platform change to the bucket policy.
+
 ## Phases
 
 Each phase ends with a deploy and a check, as in the other GUPPI repositories.

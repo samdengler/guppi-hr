@@ -12,6 +12,6 @@ GuppiConnectStack(
     app,
     "GuppiConnect",
     env=cdk.Environment(account=os.environ.get("CDK_DEFAULT_ACCOUNT"), region=REGION),
-    description="guppi-connect spike: echo and mock A2A endpoints for the Agentic CX designer",
+    description="guppi-connect: mock A2A endpoints and the AG-UI to Connect bridge",
 )
 app.synth()
