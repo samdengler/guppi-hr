@@ -137,7 +137,13 @@ No utterance meant for one write domain reached the other.
     missing step is the console's Sync, which the SDK has no call for.
 12. Canvas overhead per delegated turn is about 0.5 to 0.7 s on top of the sub-agent
     (designer logs: `NluResponded.responseTime` 548 to 682 ms with a 30 to 50 ms mock).
-13. `QueryLogs` returns node-level events (traversals, conditions, data request status,
+13. The token stays on the contact. `GetContactAttributes` on a finished contact still
+    returns `hrToken` (checked on the 2 October real-token contact, attribute names only),
+    so anyone allowed that call on the instance can read an employee's access token until
+    it expires, an hour for Cognito. This needs a fix before any real use: clear the
+    attribute once the designer session has it, or pass a short-lived, audience-limited
+    token minted per contact.
+14. `QueryLogs` returns node-level events (traversals, conditions, data request status,
     journey tool calls) one to two minutes after a turn; `acxd/logs.js` prints them.
 
 ## What is left for Sam
