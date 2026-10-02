@@ -1,0 +1,108 @@
+# Plan: guppi-connect as a chat.dengler.io project
+
+Branch `platform-project`. The aim is the Agentic CX designer canvas from the spike,
+served on the platform page at `https://chat.dengler.io/p/hr-connect/` with the platform's
+sign-in, the Sky theme from guppi-mcp-app, and the same HR sub-agents behind it, so the
+Strands orchestrator (`/p/hr/`) and the Connect canvas (`/p/hr-connect/`) can be compared
+side by side on one page and one sign-in.
+
+## Where the pieces stand
+
+| Repository | State | What this plan needs from it |
+| --- | --- | --- |
+| guppi-gpt, `platform` branch | Phases 1 to 4 done: projects at `/p/<name>/`, manifests, themes, suggestions, the extension API, the MCP Apps host. Phase 5a (agent kit `create_app`, `kit-v0.2.0`) briefed, not run | The kit tag, and nothing else; no change to the platform |
+| guppi-mcp-app | A tools-only project; its manifest carries the Sky theme (blue `#2d7ff9` actions on `#f5f9ff`, navy `#1a5ea8` brand) | The theme block, copied into this project's manifest |
+| hr-super-agent | Standalone at `hr.dengler.io`. Phase 8 (re-home as `/p/hr/` on the platform, every JWT authorizer pointed at the platform's Cognito pool) briefed, waits on 5a | After phase 8 its gateways accept the chat.dengler.io token, which is the token this project forwards |
+| guppi-connect | Spike done: canvas, contact flows, mock, eval; real sub-agents passed with an HR-pool token | Becomes an agent project |
+
+## How it fits the platform
+
+The platform page speaks AG-UI to `/api/<name>/invocations` on its edge gateway, and an
+agent project is a Runtime target behind it. The Connect canvas does not speak AG-UI, so
+this project adds one small agent: a bridge on the platform kit that turns each AG-UI run
+into a Connect chat turn.
+
+```
+page /p/hr-connect/ ──AG-UI──> edge gateway target hr-connect ──> bridge Runtime (kit create_app)
+                                                                     │ StartChatContact / SendMessage
+                                                                     │ (participant API)
+                                                                     v
+                                     Connect contact flow ──> Agentic CX block ──> canvas
+                                                                     │ A2A message/send, tools/call
+                                                                     v
+                                     hr-super-agent agents gateway, sub-agents, tools gateway
+```
+
+The kit needs no change. `create_app(build)` calls `build(token)` and iterates
+`.run(run_input)` for AG-UI events; hr-super-agent's Orchestrator already works that way
+and is not a Strands agent. The bridge is a `ConnectTurn` object with the same shape.
+
+## Bridge design
+
+| Concern | Choice | Reason |
+| --- | --- | --- |
+| Session | One Connect chat contact per AG-UI thread. A DynamoDB table keyed by user and thread holds the contact id, the participant connection token and the last transcript item seen, with a TTL | The Runtime stays stateless, as every platform agent is; a new microVM finds the conversation |
+| Transport | Per run: `SendMessage` on the participant connection, then poll `GetTranscript` forward from the last item until the canvas has replied and gone quiet | No WebSocket held across runs. The spike's harness used the WebSocket; the polling path is a phase 1 check |
+| Events | Each canvas message becomes one `TEXT_MESSAGE` start, content, end; a `STEP_STARTED` "Connect is working" while polling; the kit's keepalive pings cover sub-agent turns of up to 10 s | Fits the page's existing rendering and status line |
+| Escalation | When the contact flow's Escalation branch fires, a `CUSTOM` event `connect/escalated` and a closing line; the thread record is closed | A person's replies across later runs are out of scope for this plan |
+| Identity | The user's chat.dengler.io access token from the request becomes the contact attribute `hrToken`, as in the spike | One token from the page to every HR hop, which phase 8 makes valid |
+| Conversation log | The kit's log, so `/p/hr-connect/` threads land beside the others | Free with the kit |
+
+## Gate: the token on the contact record
+
+The spike found that `GetContactAttributes` on a finished contact still returns
+`hrToken`. Carrying the platform token there would leave every user's access token
+readable in the contact record for its lifetime. Phase 0 settles this before any build:
+
+1. After the canvas's first reply, the bridge calls `UpdateContactAttributes` to blank
+   `hrToken`; check that the designer session keeps the value it already read and later
+   turns still reach the sub-agents.
+2. Check whether an updated attribute reaches a running designer session at all, which
+   also decides how a token refreshed after an hour gets in.
+3. If neither works, the project stops at the mock sub-agents until a short-lived,
+   audience-limited token per contact is available (PingFederate token exchange at Delta;
+   Cognito has none).
+
+## Phases
+
+Each phase ends with a deploy and a check, as in the other GUPPI repositories.
+
+0. Token gate (this repository, spike resources). The two checks above with the mock
+   sub-agents and a dummy token, plus `CreateParticipantConnection` with
+   `CONNECTION_CREDENTIALS` and polling `GetTranscript`, to confirm the bridge can work
+   without a WebSocket. Done when the report records each answer.
+1. Platform prerequisites (other repositories, already briefed). guppi-gpt phase 5a,
+   then hr-super-agent phase 8. Done when `/p/hr/` passes its four scenarios with the
+   platform token.
+2. Bridge. `agent/` in this repository: `ConnectTurn`, the thread table, `app = create_app(build)`
+   on `kit-v0.2.0`, tests with a fake participant client. Stack additions in `infra/`:
+   the bridge Runtime with the platform's JWT authorizer (discovery URL and client id from
+   `/guppi/platform/*`), the thread table, an edge gateway target named `hr-connect` with
+   JWT passthrough, and the `InvokeAgentRuntime` grant for the platform's gateway role,
+   as phase 8 builds its own. Done when curl with a platform token gets a canvas reply
+   through `/api/hr-connect/invocations`.
+3. Manifest and theme. `web/manifest.json`: `name` `hr-connect`, `label` "HR Assistant
+   (Connect)", `agent` `/api/hr-connect/invocations`, the Sky `theme` from guppi-mcp-app,
+   and the four scenario openers as `suggestions`. A small `ext.js` only if the escalation
+   event needs more than the closing line. Published to `projects/hr-connect/` from the
+   deploy script, as guppi-mcp-app does. Done when the page loads themed and signed in.
+4. Canvas on the platform token. The production application's data requests already
+   point at the HR gateways; after phase 8 nothing in the canvas changes. Run the four
+   scenarios on `/p/hr-connect/` in the browser and the routing eval through the bridge.
+   Done when both match the spike's results.
+5. Report and docs, as in the other repositories.
+
+## What this plan does not change
+
+The platform repository, the canvas design, the contact flows, the mock (kept for
+development), and the decision to keep hr-super-agent's sub-agents and tools as they are.
+
+## Risks
+
+- The token gate may not pass; the plan then stops at phase 0's answer.
+- A run that waits on a slow sub-agent holds the gateway connection for up to 30 s, the
+  canvas node limit; the platform's CloudFront origin timeout must allow it (the kit's
+  keepalive pings exist for exactly this).
+- Polling `GetTranscript` costs a few calls per turn and adds up to its interval in
+  latency; the WebSocket per run is the fallback.
+- Two pages for one HR assistant can confuse; the labels say which is which.
