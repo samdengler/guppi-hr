@@ -42,7 +42,8 @@ both docs need correcting (done the same night).
 
 Canvas (acxd/hr.js): WelcomeFlow, ClarifyFlow, ProfileFlow, PayFlow, TravelFlow,
 PolicyFlow, GoodbyeFlow, EscalationFlow. Diagnostics (acxd/probes.js): HeaderProbe and
-ReplyProbe, reached by saying "run the header probe" or "run the reply probe".
+ReplyProbe and McpProbe, reached by saying "run the header probe", "run the reply probe"
+or "run the mcp probe".
 
 ## Scenarios over Connect chat (mock sub-agents)
 
@@ -103,8 +104,10 @@ No utterance meant for one write domain reached the other.
     contact flow import fails.
 11. The designer's MCP data request, used as a journey tool, fails every call with "data
     request could not be prepared" before any HTTP request, whether exposed as one tool
-    or one tool per MCP tool. A plain HTTP data request that posts JSON-RPC `tools/call`
-    to the tools gateway reaches it. The likely missing step is the console's Sync.
+    or one tool per MCP tool. Called from a fixed data_request node (McpProbe, "run the mcp
+    probe") it takes the failure edge with no request logged at all. A plain HTTP data
+    request that posts JSON-RPC `tools/call` to the tools gateway reaches it. The likely
+    missing step is the console's Sync, which the SDK has no call for.
 12. Canvas overhead per delegated turn is about 0.5 to 0.7 s on top of the sub-agent
     (designer logs: `NluResponded.responseTime` 548 to 682 ms with a 30 to 50 ms mock).
 13. `QueryLogs` returns node-level events (traversals, conditions, data request status,

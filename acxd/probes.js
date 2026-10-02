@@ -254,7 +254,39 @@ function a2aProbeFlow() {
   };
 }
 
-const FLOWS = [headerProbeFlow(), a2aProbeFlow()];
+function mcpProbeFlow() {
+  const f = new FlowBuilder('McpProbe');
+  const call = (name, payload) => ({ dataRequestId: 'HrTools', name, action: name, headers: {}, payload, alwaysRetrigger: true });
+  f.add('start', 'start', { children: ['listen'] })
+    .add('listen', 'user_input', {
+      children: [
+        { to: 'retrieve', when: [{ left: { type: 'captured_flow' }, operator: 'exists' }] },
+        { to: 'retrieve', when: [{ left: { type: 'captured_flow' }, operator: 'not_exists' }] },
+      ],
+      messages: ['MCP probe ready. Send a policy question.'],
+    })
+    .add('retrieve', 'data_request', {
+      children: [
+        { to: 'ok', when: [statusIs('success')] },
+        { to: 'failed', when: [statusIs('failure')] },
+        { to: 'timedOut', when: [statusIs('timeout')] },
+      ],
+      dataRequests: [call('docs___Retrieve', { retrievalQuery: { text: '{System.utterance:NLX.System}' } })],
+    })
+    .add('ok', 'basic', { children: ['end'], messages: ['MCP probe: success. {HrTools.content.0.text:NLX.Variable}'] })
+    .add('failed', 'basic', { children: ['end'], messages: ['MCP probe: failure.'] })
+    .add('timedOut', 'basic', { children: ['end'], messages: ['MCP probe: timeout.'] })
+    .add('end', 'terminate');
+  return {
+    flowId: 'McpProbe',
+    untrained: true,
+    description: 'Spike experiment: call the HrTools MCP data request from a fixed data_request node.',
+    aiDescription: 'Diagnostic flow; not a routing target.',
+    nodes: f.nodes,
+  };
+}
+
+const FLOWS = [headerProbeFlow(), a2aProbeFlow(), mcpProbeFlow()];
 
 
 module.exports = { DATA_REQUESTS, FLOWS, A2A_BODY };

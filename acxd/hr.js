@@ -328,6 +328,7 @@ function welcomeFlow() {
       children: [
         { to: 'toHeaderProbe', when: utteranceMatches('^run the header probe$'), name: 'headerProbe' },
         { to: 'toReplyProbe', when: utteranceMatches('^run the reply probe$'), name: 'replyProbe' },
+        { to: 'toMcpProbe', when: utteranceMatches('^run the mcp probe$'), name: 'mcpProbe' },
         {
           to: 'help',
           when: [{ left: { type: 'captured_flow' }, operator: 'eq', right: { type: 'constant', value: 'WelcomeFlow' } }],
@@ -356,6 +357,7 @@ function welcomeFlow() {
     .add('toPolicy', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'PolicyFlow' } } })
     .add('toHeaderProbe', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'HeaderProbe' } } })
     .add('toReplyProbe', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'ReplyProbe' } } })
+    .add('toMcpProbe', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'McpProbe' } } })
     .add('end', 'end');
   return {
     flowId: 'WelcomeFlow',
