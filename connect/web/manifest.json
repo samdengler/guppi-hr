@@ -1,0 +1,24 @@
+{
+  "name": "hr-connect",
+  "label": "HR Assistant (Connect)",
+  "assistant": "HR Assistant",
+  "agent": "/api/hr-connect/invocations",
+  "suggestions": [
+    {
+      "label": "Change my address",
+      "prompt": "I need to change my home address"
+    },
+    {
+      "label": "Update my information",
+      "prompt": "I need to update my information"
+    },
+    {
+      "label": "Buddy passes",
+      "prompt": "How do buddy passes work?"
+    },
+    {
+      "label": "PTO policy",
+      "prompt": "How much PTO do I earn per year?"
+    }
+  ]
+}
