@@ -12,7 +12,17 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
 
 COPY pyproject.toml uv.lock ./
+# guppi-gpt is a private repository. The build secret github_token (the stack passes it from
+# HR_GITHUB_TOKEN, which scripts/deploy.sh sets from `gh auth token`) reaches git only through
+# environment configuration for this one command, so it is in no layer, file or cache entry,
+# as in the HR image (guppi-hr D29).
 RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=secret,id=github_token,required=false \
+    if [ -s /run/secrets/github_token ]; then \
+        export GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/github_token)@github.com/.insteadOf" \
+            GIT_CONFIG_VALUE_0="https://github.com/"; \
+    fi; \
     uv sync --frozen --no-dev --no-editable --no-install-project
 
 COPY src src

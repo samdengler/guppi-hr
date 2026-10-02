@@ -99,19 +99,47 @@ manifest answer 200, and `/api/hr-connect/invocations` without a token answers 4
 Later the same day the repository moved into guppi-hr as `connect/`; `cdk diff` from the
 new path showed only the mock Lambda's asset hash (a `__pycache__` the old folder held).
 
+## Phase 4 in the browser, 2 October afternoon
+
+Sam's signed-in Chrome session on `https://chat.dengler.io/p/hr-connect/`, the platform
+token, the production application and the real sub-agents and tools gateway. No test token
+was minted.
+
+| Scenario | Result |
+| --- | --- |
+| "I need to update my information", "pay", "Show my last pay statements" | One clarifying question, then Pay; the real Pay agent listed three statements. This was the first turn through the page end to end |
+| "How much PTO do I earn per year?" | First try: the canvas went to EscalationFlow ("Connecting you to the HR service desk.") without answering. Second try in a new chat: PolicySearch answered with the accrual table, citing the Paid time off and sick time policy. The first try was a routing miss, not a token failure |
+| "How do buddy passes work?", "I need to talk to someone" | Travel answered from policy; EscalationFlow fired. A further "hello" in that thread got the canvas's greeting from a new contact, so the bridge closed the escalated thread as designed |
+| "I need to change my home address", a new address, "no", "what about my emergency contact?" | Profile read the real record, proposed the change, declined on "no" ("Okay, I won't make that change."), and the follow-up stayed in Profile with the emergency contact on file. The "yes" branch, which commits, was not run: the session's auto mode refused a commit to Sam's record |
+
+The platform token reaches every HR hop through the bridge: the agents gateway (Pay,
+Travel, Profile) and the tools gateway (PolicySearch).
+
+One gap: the bridge's escalation closing line never showed. It went out only as the
+CUSTOM event `connect/escalated`, and the page renders no CUSTOM event itself (guppi-gpt
+`web/src/extensions.js`); a project needs an `ext.js` renderer for one. The bridge now
+sends the closing line as a text message too, beside the CUSTOM event, for both
+escalation and a chat that ended. On the development flow the contact flow's
+`[flow] Escalation` line arrived 1.5 s after the canvas's last message, inside the
+bridge's 2.5 s quiet window, so the bridge does see it in the same run.
+
 ## Open items, 2 October
 
-- [ ] A turn through `/p/hr-connect/` end to end. Not yet seen: the scripted check
-  (`scripts/bridge_check.py`, which mints a platform test token) was refused by the
-  session's auto mode, so Sam runs it or tries the page in the browser. Start with
-  "I need to update my information", which needs only the canvas.
-- [ ] Phase 4: the four scenarios on `/p/hr-connect/` in the browser and the routing eval
-  through the bridge, now that phase 8 has the HR gateways accepting the platform token.
+- [x] A turn through `/p/hr-connect/` end to end. Done in the browser (phase 4 above).
+- [ ] Deploy the bridge with `scripts/deploy.sh`. `cdk diff` shows the Runtime image and
+  the mock's asset hash only. The deploy carries the closing line change and the build
+  secret below; the session's auto mode refused it. After the deploy, "I need to talk to
+  someone" on the page should end with the closing line.
+- [ ] Phase 4, the rest: the address change's "yes" (commit, then change the address
+  back to 419 Glendale Ave, Decatur, GA 30030), and the routing eval through the bridge,
+  which needs a platform test token (`scripts/bridge_check.py` mints one; auto mode
+  refused it earlier).
 - [ ] Phase 5: the report, as in the other phases.
-- [ ] The bridge image installs the private guppi-gpt kit without a token and builds only
-  because Docker's uv cache already holds it from the HR image. Give `agent/Dockerfile`
-  the same build secret the HR image uses (guppi-hr D29, `HR_GITHUB_TOKEN` from
-  `gh auth token` in the root `scripts/deploy.sh`).
+- [x] The bridge image now takes the github_token build secret as the HR image does
+  (guppi-hr D29): `agent/Dockerfile`, `build_secrets` on the image asset, and
+  `HR_GITHUB_TOKEN` from `gh auth token` in `scripts/deploy.sh`. Checked on an empty uv
+  cache: the build fails without the secret and passes with it, and the token's value
+  is in no layer of the saved image.
 - [ ] The kit's conversation log for the bridge (needs the platform bucket policy change
   above), or keep the run lines in CloudWatch.
 - [ ] Optional, from the spike: press Sync on HrTools in the designer console (the MCP

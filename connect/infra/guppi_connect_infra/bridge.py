@@ -67,6 +67,9 @@ class ConnectBridge(Construct):
             "Image",
             directory=str(AGENT_DIR),
             platform=ecr_assets.Platform.LINUX_ARM64,
+            # The kit comes from the private guppi-gpt repository; the build reads a GitHub
+            # token from this variable as a BuildKit secret (guppi-hr D29).
+            build_secrets={"github_token": "env=HR_GITHUB_TOKEN"},
         )
         image.repository.grant_pull(role)
         role.add_to_policy(iam.PolicyStatement(actions=["ecr:GetAuthorizationToken"], resources=["*"]))

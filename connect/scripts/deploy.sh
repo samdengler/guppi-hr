@@ -38,6 +38,14 @@ export AWS_REGION="${AWS_REGION:-us-east-1}"
 if [[ "$SITE_ONLY" == 1 ]]; then
   echo "site only: skipping cdk deploy"
 else
+  # The bridge image installs the platform kit from the private guppi-gpt repository; the
+  # build reads this token as a BuildKit secret (agent/Dockerfile). It stays in this
+  # process's environment and is never printed.
+  if [[ -z "${HR_GITHUB_TOKEN:-}" ]]; then
+    command -v gh >/dev/null || { echo "missing: gh (or set HR_GITHUB_TOKEN)" >&2; exit 1; }
+    HR_GITHUB_TOKEN="$(gh auth token)"
+  fi
+  export HR_GITHUB_TOKEN
   cd "$ROOT/infra"
   uv run cdk deploy GuppiConnect --outputs-file "$OUTPUTS" "$@"
 fi

@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 
 import connect_bridge.turn as turn_module
 from connect_bridge.store import MemorySessionStore
-from connect_bridge.turn import ConnectTurn, Settings, classify, session_key
+from connect_bridge.turn import ESCALATED_LINE, ConnectTurn, Settings, classify, session_key
 
 
 def jwt(sub: str = "employee-1", exp: float | None = None) -> str:
@@ -158,7 +158,7 @@ async def test_a_later_run_reuses_the_contact_and_does_not_clear_again():
     assert participant.sent == ["one", "two"]
 
 
-async def test_escalation_becomes_a_custom_event_and_closes_the_thread():
+async def test_escalation_becomes_a_closing_line_and_a_custom_event_and_closes_the_thread():
     participant = FakeParticipant(
         {"talk to someone": [bot("Connecting you to the HR service desk."), bot("[flow] Escalation: transferring you.")]}
     )
@@ -168,6 +168,9 @@ async def test_escalation_becomes_a_custom_event_and_closes_the_thread():
     events = await collect(ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep), "talk to someone")
     custom = [e for e in events if types([e]) == ["CUSTOM"]]
     assert [c.name for c in custom] == ["connect/escalated"]
+    # The page renders no CUSTOM event itself, so the closing line also arrives as text.
+    texts = [e.delta for e in events if types([e]) == ["TEXT_MESSAGE_CONTENT"]]
+    assert texts == ["Connecting you to the HR service desk.", ESCALATED_LINE]
     assert store.get(session_key(token, "t1")).closed
     # A closed thread gets a new contact on its next run.
     participant.script["again"] = [bot("hello again")]

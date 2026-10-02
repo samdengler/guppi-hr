@@ -57,6 +57,13 @@ GREETING_QUIET = 1.5
 GREETING_LIMIT = 12.0
 # The spike's contact flow says this before transferring to a queue.
 ESCALATION_PREFIX = "[flow] Escalation"
+# Closing lines for a thread whose contact left the canvas. The page renders no CUSTOM
+# event itself, so each also goes out as a text message.
+ESCALATED_LINE = (
+    "The HR service desk queue has this conversation now. "
+    "A new message here starts over with the assistant."
+)
+ENDED_LINE = "The conversation ended. A new message here starts a new one."
 FLOW_MESSAGE_PREFIX = "[flow]"
 ENDED_CONTENT_TYPES = (
     "application/vnd.amazonaws.connect.event.chat.ended",
@@ -153,17 +160,15 @@ class ConnectTurn:
         async for reply in self.replies(session):
             if reply.kind == "text":
                 replied = True
-                message_id = uuid.uuid4().hex
-                yield TextMessageStartEvent(
-                    type=EventType.TEXT_MESSAGE_START, message_id=message_id, role="assistant"
-                )
-                yield TextMessageContentEvent(
-                    type=EventType.TEXT_MESSAGE_CONTENT, message_id=message_id, delta=reply.text
-                )
-                yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
             else:
                 session.closed = True
                 yield CustomEvent(type=EventType.CUSTOM, name=f"connect/{reply.kind}", value={"text": reply.text})
+            message_id = uuid.uuid4().hex
+            yield TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=message_id, role="assistant")
+            yield TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT, message_id=message_id, delta=reply.text
+            )
+            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
         if replied and not session.token_cleared:
             await asyncio.to_thread(self.clear_token, session)
         await asyncio.to_thread(self.store.put, session)
@@ -278,12 +283,12 @@ class ConnectTurn:
 def classify(item: dict) -> Reply | None:
     """A transcript item as a reply to relay, or None for the customer's own and the rest."""
     if item.get("Type") == "EVENT" and item.get("ContentType") in ENDED_CONTENT_TYPES:
-        return Reply("ended", "The conversation ended.")
+        return Reply("ended", ENDED_LINE)
     if item.get("Type") != "MESSAGE" or item.get("ParticipantRole") == "CUSTOMER":
         return None
     content = item.get("Content", "")
     if content.startswith(ESCALATION_PREFIX):
-        return Reply("escalated", "Transferring you to the HR service desk.")
+        return Reply("escalated", ESCALATED_LINE)
     if content.startswith(FLOW_MESSAGE_PREFIX):
         return None
     return Reply("text", content)
