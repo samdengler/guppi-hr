@@ -34,13 +34,17 @@ const DOMAINS = [
     name: 'profile',
     flowId: 'ProfileFlow',
     title: 'Profile',
-    aiDescription: 'The employee wants to see or change their home address or emergency contact.',
+    // Routing text taken from hr-super-agent's own domain descriptions (agents/domains.py).
+    aiDescription:
+      "The employee's own personal record: name, job, home address and emergency contact. Show or change the home address or emergency contact, and tax effects of a move.",
     utterances: [
       'Change my home address',
       'I moved and need to update my address',
       'Update my emergency contact',
       'What address do you have on file for me',
       'Who is my emergency contact',
+      'What name and job do you have for me',
+      'Will moving change anything on my record',
       'profile',
       'my profile',
     ],
@@ -49,7 +53,8 @@ const DOMAINS = [
     name: 'pay',
     flowId: 'PayFlow',
     title: 'Pay',
-    aiDescription: 'The employee asks about direct deposit, pay statements, paychecks or pay dates.',
+    aiDescription:
+      'Where and when the employee is paid: show or change the direct deposit account, list recent pay statements, pay schedule and payroll correction questions.',
     utterances: [
       'Change my direct deposit',
       'Update my bank account for direct deposit',
@@ -64,7 +69,8 @@ const DOMAINS = [
     name: 'travel',
     flowId: 'TravelFlow',
     title: 'Travel',
-    aiDescription: 'The employee asks about pass travel, buddy passes or flight benefits.',
+    aiDescription:
+      'The employee travel benefit: pass travel eligibility, buddy passes and their service charges, boarding priority and embargo dates.',
     utterances: [
       'How many buddy passes do I get',
       'Can my parents fly on my pass travel',
@@ -184,7 +190,8 @@ const utteranceMatches = (regex) => [
   { left: { type: 'system', name: 'System.utterance' }, operator: 'matches_regex', right: { type: 'constant', value: regex } },
 ];
 const YES = '^\\s*([Yy]es|[Yy]eah|[Yy]ep|[Cc]onfirm|[Oo][Kk]|[Oo]kay|[Ss]ure|[Gg]o ahead|[Pp]lease do|[Dd]o it)\\b';
-const NO = '^\\s*([Nn]o|[Nn]ope|[Cc]ancel|[Dd]on.t|[Ss]top)\\b';
+// A bare refusal only: "no, make it 421 instead" goes back to the sub-agent to re-propose.
+const NO = '^\\s*([Nn]o|[Nn]ope|[Cc]ancel|[Nn]ever ?mind|[Dd]on.t do it|[Ss]top)[\\s.!]*$';
 const setContext = (name, value) => ({ type: 'context', name, modification: 'set', value });
 /** The turn's utterance and the reply just given, kept as the next call's history. */
 const remember = (d, confirm) => [
@@ -237,8 +244,11 @@ function domainFlow(d) {
       children: [
         { to: 'commit', when: utteranceMatches(YES), name: 'confirmed' },
         { to: 'declined', when: utteranceMatches(NO), name: 'declined' },
-        { to: 'shift', when: capturedOther(d.flowId), name: 'topicShift' },
+        // Any other reply to a pending change stays with this sub-agent (hr-super-agent
+        // D28): "no, make it 421 instead" re-proposes. It goes without the pending
+        // change, so it cannot commit. captured_flow exists covers every other flow.
         ...stayEdges(d.flowId, 'call', 'otherReply'),
+        { to: 'call', when: [{ left: { type: 'captured_flow' }, operator: 'exists' }], name: 'otherReplyAny' },
       ],
     })
     .add('commit', 'data_request', {
@@ -316,15 +326,36 @@ function welcomeFlow() {
     })
     .add('listen', 'user_input', {
       children: [
+        { to: 'toHeaderProbe', when: utteranceMatches('^run the header probe$'), name: 'headerProbe' },
+        { to: 'toReplyProbe', when: utteranceMatches('^run the reply probe$'), name: 'replyProbe' },
+        {
+          to: 'help',
+          when: [{ left: { type: 'captured_flow' }, operator: 'eq', right: { type: 'constant', value: 'WelcomeFlow' } }],
+          name: 'smallTalk',
+        },
         { to: 'toCaptured', when: [{ left: { type: 'captured_flow' }, operator: 'exists' }], name: 'recognized' },
         { to: 'toPolicy', when: [{ left: { type: 'captured_flow' }, operator: 'not_exists' }], name: 'unrecognized' },
       ],
+    })
+    // "Hi there" is captured as WelcomeFlow itself; a redirect to it would land on a
+    // silent listen node and fail the turn with NoMessages (live, 2026-10-02).
+    .add('help', 'basic', {
+      children: ['toListen'],
+      messages: [
+        'I can help with your home address and emergency contact, your pay and direct deposit, your travel benefits, or an HR policy question. What do you need?',
+      ],
+    })
+    .add('toListen', 'redirect', {
+      children: ['end'],
+      metadata: { redirect: { type: 'flow', flowId: 'WelcomeFlow', nodeId: f.id('listen') } },
     })
     .add('toCaptured', 'redirect', {
       children: ['end'],
       metadata: { redirect: { type: 'flow', flowId: '{System.capturedFlow:NLX.System}' } },
     })
     .add('toPolicy', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'PolicyFlow' } } })
+    .add('toHeaderProbe', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'HeaderProbe' } } })
+    .add('toReplyProbe', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'ReplyProbe' } } })
     .add('end', 'end');
   return {
     flowId: 'WelcomeFlow',
@@ -365,7 +396,8 @@ function clarifyFlow() {
   return {
     flowId: 'ClarifyFlow',
     description: 'Asks one clarifying question when the employee wants to update information without saying which.',
-    aiDescription: 'The employee wants to update or change their information or details but does not say whether it is their address, contact or pay.',
+    aiDescription:
+      'A vague request to change, update, fix or check the employee information, details, records or account without saying whether it is the address, the emergency contact or pay.',
     utterances: [
       'I need to update my information',
       'Update my details',
@@ -483,6 +515,20 @@ function policyFlow() {
   };
 }
 
+function goodbyeFlow() {
+  const f = new FlowBuilder('GoodbyeFlow');
+  f.add('start', 'start', { children: ['bye'] })
+    .add('bye', 'basic', { children: ['end'], messages: ["You're welcome. Have a good day."] })
+    .add('end', 'terminate');
+  return {
+    flowId: 'GoodbyeFlow',
+    description: 'Closes the conversation when the employee is done.',
+    aiDescription: 'The employee is finished: thanks the assistant, says goodbye or says they need nothing else.',
+    utterances: ["That's everything, thank you", 'Goodbye', 'No, nothing else', 'All set, thanks'].map((text) => ({ text })),
+    nodes: f.nodes,
+  };
+}
+
 function escalationFlow() {
   const f = new FlowBuilder('EscalationFlow');
   f.add('start', 'start', { children: ['escalate'] }).add('escalate', 'escalate', {
@@ -508,6 +554,6 @@ const DATA_REQUESTS = [
   hrToolsDataRequest(),
 ];
 
-const FLOWS = [welcomeFlow(), clarifyFlow(), ...DOMAINS.map(domainFlow), policyFlow(), escalationFlow()];
+const FLOWS = [welcomeFlow(), clarifyFlow(), ...DOMAINS.map(domainFlow), policyFlow(), goodbyeFlow(), escalationFlow()];
 
 module.exports = { DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS };

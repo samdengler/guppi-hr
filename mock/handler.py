@@ -21,6 +21,7 @@ import uuid
 AFFIRMATIVE = re.compile(r"^\s*(yes|yep|yeah|confirm|confirmed|ok|okay|sure|go ahead|do it)\b", re.I)
 NEGATIVE = re.compile(r"^\s*(no|nope|cancel|stop|don't|do not)\b", re.I)
 ADDRESS_CHANGE = re.compile(r"address\s+to\s+(.+)$", re.I)
+DEPOSIT_CHANGE = re.compile(r"(switch|change|update|move).*(deposit|routing|account)", re.I)
 
 
 def preview(value: str | None) -> dict:
@@ -90,6 +91,18 @@ def sub_agent_reply(domain: str, text: str, pending: dict | None) -> tuple[str, 
         return (f"Done. Your {pending.get('field', 'record')} is now {pending.get('after', '')}.", None, True)
     if pending and NEGATIVE.search(text):
         return ("Okay, I won't make that change.", None, False)
+    if domain == "pay" and DEPOSIT_CHANGE.search(text):
+        proposal = {
+            "proposalId": uuid.uuid4().hex,
+            "field": "direct_deposit",
+            "before": "checking ending 1234",
+            "after": "account ending " + (re.findall(r"\d{4}", text) or ["0000"])[-1],
+        }
+        return (
+            f'I can change your direct deposit from {proposal["before"]} to {proposal["after"]}. Confirm?',
+            proposal,
+            False,
+        )
     match = ADDRESS_CHANGE.search(text)
     if domain == "profile" and match:
         after = match.group(1).strip().rstrip(".")
@@ -123,6 +136,8 @@ def a2a(domain: str, headers: dict, body: dict) -> dict:
     if not isinstance(pending, dict) or not pending.get("proposalId"):
         pending = None
     reply, new_pending, committed = sub_agent_reply(domain, text, pending)
+    if not reply.startswith("[mock"):
+        reply = f"{reply} [mock {domain} agent]"  # every mock reply names its domain, for scoring
     history = metadata.get("history")
     print(json.dumps({"domain": domain, "text": text[:200], "pending": bool(pending),
                       "pendingRaw": metadata.get("pendingAction"), "history": history,

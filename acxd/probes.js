@@ -207,8 +207,8 @@ function headerProbeFlow() {
   return {
     flowId: 'HeaderProbe',
     description: 'Spike experiment: does a context variable reach a data request header?',
-    aiDescription: 'Runs the header probe diagnostic',
-    utterances: [{ text: 'run the header probe' }, { text: 'header probe' }],
+    untrained: true,
+    aiDescription: 'Diagnostic flow; not a routing target.',
     nodes: f.nodes,
   };
 }
@@ -248,8 +248,8 @@ function a2aProbeFlow() {
   return {
     flowId: 'ReplyProbe',
     description: 'Spike experiment: read fields from a nested A2A message/send reply.',
-    aiDescription: 'Runs the A2A reply probe diagnostic',
-    utterances: [{ text: 'run the a2a probe' }],
+    untrained: true,
+    aiDescription: 'Diagnostic flow; not a routing target.',
     nodes: f.nodes,
   };
 }
