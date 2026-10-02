@@ -1,0 +1,30 @@
+{
+  "name": "hr",
+  "label": "HR Assistant",
+  "agent": "/api/hr/invocations",
+  "features": {
+    "history": false,
+    "feedback": false,
+    "logging": true,
+    "rum": true
+  },
+  "extension": "/projects/hr/ext.js",
+  "suggestions": [
+    {
+      "label": "Update my information",
+      "prompt": "I need to update my information"
+    },
+    {
+      "label": "Change my home address",
+      "prompt": "Change my home address to 419 Glendale Ave, Decatur GA 30030"
+    },
+    {
+      "label": "My emergency contact",
+      "prompt": "What about my emergency contact?"
+    },
+    {
+      "label": "Buddy passes",
+      "prompt": "How many buddy passes do I get?"
+    }
+  ]
+}

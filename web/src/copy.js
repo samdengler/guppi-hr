@@ -1,24 +1,6 @@
-// The page's privacy notice, in one place because two switches decide what it may claim.
-// history would keep chats in browser storage; logging records threads in the conversation
-// log bucket. Both are off until the feature behind them ships.
-
-const KEYS = "Enter to send, Shift+Enter for a new line.";
-
-export function noticeSentence(history, logging) {
-  if (history && logging) return "Chats are saved on this device and logged for troubleshooting.";
-  if (history) return "Chats are saved on this device only.";
-  if (logging) return "Conversations are logged for troubleshooting.";
-  return null;
-}
-
-export function hintText(history, logging) {
-  return `${KEYS} ${noticeSentence(history, logging) ?? "Nothing is saved."}`;
-}
-
-export function emptyStateText(history, logging) {
-  const sentence = noticeSentence(history, logging);
-  return sentence ? `Ask anything. ${sentence}` : "Ask anything. This conversation is not saved.";
-}
+// The wording the HR extension (ext.js) puts on the platform page: the status line for
+// each tool call and each delegation, and the label above a reply. Pure functions, so
+// web/test/copy.test.js covers them without a DOM.
 
 // The status line during a tool call: what is happening while it runs, and what happened
 // once it ends. Gateway tool names carry the target prefix (docs___, hr___).
@@ -38,8 +20,8 @@ export function toolStatus(toolName) {
   return { running: "Working…", done: "Done" };
 }
 
-// The product name, in one place (D15). Static pages (index, flags, privacy, terms) carry
-// the same text, and web/test/copy.test.js holds them to it.
+// The product name, in one place (D15). web/manifest.json's label carries the same text,
+// and web/test/copy.test.js holds them to it.
 export const BRAND = "HR Assistant";
 
 // The sub-agents the orchestrator can hand a turn to, by the step name it sends (D4).
@@ -60,8 +42,4 @@ export function stepStatus(stepName) {
 export function replyLabel(stepName) {
   const name = agentName(stepName);
   return name ? `${BRAND} · ${name}` : BRAND;
-}
-
-export function composerPlaceholder(hasMessages) {
-  return hasMessages ? `Reply to the ${BRAND}` : `Ask the ${BRAND}`;
 }
