@@ -5,17 +5,21 @@ orchestrator on AgentCore Runtime reads each turn, routes it to a Profile, Pay, 
 sub-agent over A2A (or answers a general question itself from the HR policy knowledge
 base), and every change to an employee record is proposed, read back, and committed only
 after the employee confirms it. This document describes the system as deployed on
-29 Sep 2026. The decisions behind it are D1 to D28 in [decision-log.md](decision-log.md);
-guppi-gpt's documents (`guppigpt-*.html`) describe the parts inherited unchanged: sign-in,
-the edge, the page shell, conversation logging, feedback, and feature flags.
+2 Oct 2026, after phase 8 moved it onto the chat.dengler.io platform. The decisions behind
+it are D1 on in [decision-log.md](decision-log.md). The platform (guppi-gpt's `GuppiGpt`
+stack, described in guppi-gpt's `docs/proposals/platform.md` and `guppigpt-design.html`
+section 13) owns the page, Google sign-in through Cognito, CloudFront, AWS WAF, the edge
+gateway with its per-user limits, reply feedback and feature flags; this stack reads the
+platform's identifiers from `/guppi/platform/*` SSM parameters and owns everything that is
+HR (D31, D34).
 
 ## What runs where
 
 | Component | Runs on | Protocol | Code |
 | --- | --- | --- | --- |
-| Page | S3 behind CloudFront at `hr.dengler.io` | AG-UI over SSE to `/api/invocations` | `web/src/` |
-| Edge gateway | AgentCore Gateway, runtime target, JWT passthrough, AWS WAF | HTTP | `infra/.../stack.py` |
-| Orchestrator | AgentCore Runtime `hr_super_agent`, Sonnet 4.6 | AG-UI (HTTP contract, port 8080) | `agent/src/hr_agent/orchestrator.py`, `agent.py`, `app.py` |
+| Page | The platform's page at `chat.dengler.io/p/hr/`, with this project's manifest and extension under `/projects/hr/` in the platform's site bucket | AG-UI over SSE to `/api/hr/invocations` | `web/manifest.json`, `web/src/ext.js` |
+| Edge gateway | The platform's AgentCore Gateway with AWS WAF and per-user limits; this stack's target `hr` on it, JWT passthrough | HTTP | `infra/.../stack.py` (the target and its invoke grant) |
+| Orchestrator | AgentCore Runtime `hr_super_agent`, Sonnet 4.6 | AG-UI (HTTP contract, port 8080), on the platform kit's `create_app` | `agent/src/hr_agent/orchestrator.py`, `agent.py`, `app.py` |
 | Agents gateway | AgentCore Gateway `hr-super-agent-agents`, three runtime targets, JWT passthrough | HTTP | `infra/.../sub_agents.py` |
 | Profile, Pay, Travel sub-agents | AgentCore Runtimes `hr_super_agent_{profile,pay,travel}`, Haiku 4.5 | A2A (port 9000) | `agent/src/hr_agent/agents/` |
 | Tools gateway | AgentCore Gateway `hr-super-agent-tools`, MCP | MCP | `infra/.../stack.py`, `hr_tools.py` |
@@ -28,11 +32,13 @@ profile, pay, or travel (`agent/src/hr_agent/__main__.py`, D11).
 
 ## One turn, end to end
 
-1. The page sends the whole thread (text only) and the AG-UI `state` it kept from the
-   previous run: `activeDomain` and `pendingAction` (D6, D23). The request carries the
-   user's Cognito access token.
-2. The edge gateway checks the token and passes it through to the orchestrator runtime,
-   which checks it again.
+1. The platform's page posts the whole thread (text only) to `/api/hr/invocations`. The
+   extension's `onSend` hook puts on it the AG-UI `state` kept from the previous run's
+   `STATE_SNAPSHOT`: `activeDomain` and `pendingAction` (D6, D23, D32). The request carries
+   the user's access token from the platform's Cognito pool.
+2. CloudFront rewrites the path to `/hr/invocations` on the platform's edge gateway, which
+   applies WAF and the per-user limits, checks the token, and passes it through to the
+   orchestrator runtime through the target named `hr`; the runtime checks it again.
 3. The orchestrator makes one Converse call to Sonnet 4.6 that must answer through a
    `route` tool: domain, confidence band, alternatives, follow-up flag, and a clarifying
    question (D26).
@@ -47,8 +53,9 @@ profile, pay, or travel (`agent/src/hr_agent/__main__.py`, D11).
    part and a data part: the pending change its run left and whether it committed one
    (D24).
 7. The orchestrator emits the reply text, `STEP_FINISHED`, and a `STATE_SNAPSHOT` with the
-   new `activeDomain` and `pendingAction`. The page keeps that state for the next run and
-   tags the reply "HR Assistant · Pay".
+   new `activeDomain` and `pendingAction`. The extension keeps that state for the next run,
+   and on `STEP_STARTED` it tagged the reply "HR Assistant · Pay" through `ctx.setLabel`
+   and set the status line.
 8. The run log line gains `domain`, `confidence`, `alternatives`, `follow_up`, `action`,
    `delegated_to`, and `confirmed`.
 
@@ -96,12 +103,12 @@ does not propose again drops it.
 
 | Hop | Credential presented | Checked by |
 | --- | --- | --- |
-| Page to edge gateway | User's Cognito access token | Gateway JWT authorizer |
-| Edge gateway to orchestrator | Same token (passthrough) | Runtime JWT authorizer |
+| Page to the platform's edge gateway | User's access token from the platform's Cognito pool | Platform gateway JWT authorizer |
+| Platform edge gateway to orchestrator | Same token (passthrough) | Runtime JWT authorizer, on the platform pool and client |
 | Orchestrator to agents gateway | Same token | Gateway JWT authorizer |
 | Agents gateway to sub-agent | Same token (passthrough) | Runtime JWT authorizer |
 | Sub-agent or orchestrator to tools gateway | Same token | Gateway JWT authorizer |
-| Tools gateway to HR tools runtime | Gateway role (SigV4); user token in `X-Hr-User-Token` | Runtime IAM; the server verifies the header token against the user pool's keys |
+| Tools gateway to HR tools runtime | Gateway role (SigV4); user token in `X-Hr-User-Token` | Runtime IAM; the server verifies the header token against the platform pool's keys |
 | Tools gateway to knowledge base | Gateway role | Bedrock |
 
 The tools hop differs because an MCP gateway accepts only MCP targets, and an MCP target
@@ -109,7 +116,10 @@ cannot pass the caller's bearer token through: its outbound options are none, OA
 SigV4, or API key, and `Authorization` cannot be allowlisted for propagation (D19). The HR
 tools server therefore trusts neither the gateway nor the header's presence: it verifies
 the token's signature, issuer, expiry, token use, and client itself and takes `sub` from
-it. Issuer, keys, clients, and audience are environment settings. The Delta version
+it. Issuer, keys, clients, and audience are environment settings; the stack sets the
+issuer from the platform's discovery URL and the client from its app client id. Every
+JWT authorizer in this stack names the same pool and client, so the token the page holds
+on chat.dengler.io is the one accepted on every hop. The Delta version
 replaces token passthrough with on-behalf-of token exchange (RFC 8693) on PingFederate,
 which Cognito cannot do (D20); with those settings the change is configuration.
 
@@ -147,12 +157,14 @@ asks for a person.
 
 - One trace per turn: the page mints `traceparent`, and it survives every hop, so the
   audit entry of a commit carries the orchestrator run's trace id (checked 29 Sep 2026).
-- The orchestrator's run line carries the routing fields above; sub-agents log one line
+- The orchestrator's run line, written by the kit's `guppi_agent` logger, carries the
+  routing fields above; sub-agents log one line
   per request (domain, outcome, tool calls, duration); the tools server logs proposals,
   commits, refusals, and tickets without values.
-- Every gateway and runtime delivers application logs to
+- Every gateway and runtime in this stack delivers application logs to
   `/aws/vendedlogs/bedrock-agentcore/`, forwarded to Dynatrace when its parameters are set,
-  and has a 5xx alarm on the alarm topic.
+  and has a 5xx alarm on the alarm topic. The edge gateway's logs, WAF metrics and 4xx
+  alarm are the platform's.
 - `docs/dynatrace/dashboard.json` has three draft routing tiles over the run line, not yet
   run against the tenant.
 
@@ -174,7 +186,9 @@ next step.
 - Sub-agent replies arrive whole rather than streamed, because the A2A call is
   `message/send`. The status line covers the wait.
 - A sub-agent receives the last ten turns as text; it does not see earlier tool results.
-- The runtimes accept any token from the user pool's client; there is no allow-list of
-  users (guppi-gpt's backlog item 8).
-- Stored browser history does not keep AG-UI state, so a pending change does not survive
-  a reload; the employee proposes again.
+- The runtimes accept any token from the platform pool's client; there is no allow-list
+  of users (guppi-gpt's backlog item 8). The platform's per-user rate limit counts every
+  project's requests together.
+- Stored browser history keeps text only: AG-UI state and the reply's agent tag do not
+  survive a reload or a switched thread, so a pending change is proposed again and a
+  reopened reply shows the plain "HR Assistant" label (D33).

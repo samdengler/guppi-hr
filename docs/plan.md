@@ -1,13 +1,15 @@
 # Implementation plan
 
-Seven phases. Each ends with a deploy and a browser check so the repository is always
+Eight phases. Each ends with a deploy and a browser check so the repository is always
 one working step past guppi-gpt. Tick a phase when its "done when" holds and the decision
 log has an entry for any choice made along the way.
 
 ## Target architecture
 
 Page (plain text, Google sign-in) > CloudFront > edge gateway (JWT, WAF) > orchestrator
-Runtime (AG-UI, Sonnet). Orchestrator > agents gateway (runtime targets, JWT
+Runtime (AG-UI, Sonnet). Since phase 8 the page, sign-in, CloudFront, WAF and the edge
+gateway are the chat.dengler.io platform's, and the orchestrator is the target `hr` on the
+platform's edge gateway. Orchestrator > agents gateway (runtime targets, JWT
 passthrough) > Profile, Pay, Travel sub-agent Runtimes (A2A, Haiku). Sub-agents and
 orchestrator > tools gateway (MCP, JWT passthrough) > HR tools MCP server Runtime
 (DynamoDB) and the Bedrock knowledge base (synthetic HR policy corpus). One container
@@ -64,6 +66,12 @@ Delegation for one turn:
 - [x] **Phase 7: Docs and handoff.** `docs/design.md` and the decision log level with the
   code; README status; `docs/demo.md` walking the four scenarios. Done when a fresh
   reader can deploy and run the demo from the README alone.
+- [x] **Phase 8: Re-home on the platform.** (`docs/phase-8.md`) The orchestrator on the
+  platform kit (`guppi-agent` at `kit-v0.2.0`); the stack reads `/guppi/platform/*`, drops
+  the page, sign-in, DNS, edge gateway, WAF, rate limits and feedback, points every JWT
+  authorizer at the platform pool, and adds the target `hr` on the platform's edge
+  gateway; `web/` becomes a manifest and an extension. Done when `/p/hr/` serves the four
+  scenarios in the browser (`docs/phase-8-report.md`).
 
 ## The four scenarios
 

@@ -3,98 +3,96 @@
 ## Project Overview
 
 HR Super Agent is an MVP of an HR employee assistant, branded "HR Assistant" on the page,
-at `https://hr.dengler.io`. It is an iteration of guppi-gpt
+at `https://chat.dengler.io/p/hr/`. It began as an iteration of guppi-gpt
 (`~/src/github.com/samdengler/guppi-gpt`), merged in with its history at commit 8baf911
-and renamed. An orchestrator routes each turn to Profile, Pay, or Travel sub-agents over
-A2A, or answers general questions from the HR policy knowledge base; the sub-agents act on
-the employee's own synthetic records through an HR tools MCP server with a propose and
-commit pair for every write. The servers hold nothing between runs; the page carries
-`activeDomain` and `pendingAction` in AG-UI state, and guppi-gpt's session, conversation
-log, and feedback paths are unchanged.
+and renamed (D9). Since phase 8 it is an agent project on the chat.dengler.io platform
+that guppi-gpt became (`../guppi-gpt/docs/proposals/platform.md`): the platform's
+`GuppiGpt` stack owns the page, Google sign-in, CloudFront, WAF, the edge gateway with its
+per-user limits, reply feedback and feature flags, and publishes their identifiers as
+`/guppi/platform/*` SSM parameters; this repository owns everything that is HR (D34).
+
+An orchestrator routes each turn to Profile, Pay, or Travel sub-agents over A2A, or
+answers general questions from the HR policy knowledge base; the sub-agents act on the
+employee's own synthetic records through an HR tools MCP server with a propose and commit
+pair for every write. The servers hold nothing between runs; the page carries
+`activeDomain` and `pendingAction` in AG-UI state through this project's extension.
 
 `docs/design.md` describes the system as built and `docs/demo.md` the four scenarios;
 `docs/decision-log.md` records every choice (D1 on); `docs/plan.md` has the phases, all
-done. guppi-gpt's design document (`docs/guppigpt-design.html`), decision log
-(`docs/guppigpt-decision-log.html`), and diagrams (`docs/guppigpt-architecture.html`)
-stay unchanged as the record of what was inherited (D17). When code and a decision
-disagree, change one of them in the same commit.
+done; `docs/phase-8.md` and `docs/phase-8-report.md` are the move onto the platform.
+guppi-gpt's design document (`docs/guppigpt-design.html`), decision log
+(`docs/guppigpt-decision-log.html`), and diagrams (`docs/guppigpt-architecture.html`) stay
+as the record of what was inherited at the fork; the live platform's documents are in
+guppi-gpt. When code and a decision disagree, change one of them in the same commit.
 
 ## Tech Stack
 
 - Infrastructure: AWS CDK v2 in Python, one stack `HrSuperAgent`, region `us-east-1`, in
-  the same account and `dengler.io` zone as guppi-gpt's `GuppiGpt` stack
-- Agent: Python 3.12, FastAPI, AG-UI over SSE, Strands Agents with the `ag-ui-strands` adapter, arm64 container on AgentCore Runtime
-- Model: Claude Haiku 4.5 through the `us.` cross-region inference profile (`MODEL_ID` in the stack)
-- Edge: CloudFront in front of an AgentCore Gateway runtime target, plus an `/api/feedback` behavior in front of a small API Gateway REST API that puts reply votes straight onto an EventBridge bus; Cognito user pool federated to Google
-- Page: static HTML and vanilla JavaScript in `web/src/`, bundled once by esbuild into `web/dist/` with `@ag-ui/client` as the stream reader, served from S3 through CloudFront
+  the same account as guppi-gpt's `GuppiGpt` platform stack, whose `/guppi/platform/*`
+  parameters it reads at deploy time
+- Agent: Python 3.12, Strands Agents, arm64 container on AgentCore Runtime; the
+  orchestrator's HTTP surface (AG-UI over SSE, validation, keepalive, run log, conversation
+  log) is the platform kit, `guppi-agent` from guppi-gpt at tag `kit-v0.2.0`
+- Model: Sonnet 4.6 for the orchestrator, Haiku 4.5 for the sub-agents, through the `us.`
+  cross-region inference profiles (`ORCHESTRATOR_MODEL_ID` and `MODEL_ID` in the stack)
+- Edge: the platform's CloudFront and edge gateway; this stack adds the runtime target
+  `hr`, so the orchestrator answers at `/api/hr/invocations`
+- Page: the platform's page at `/p/hr/`, configured by `web/manifest.json`, with this
+  project's extension `web/src/ext.js` bundled by esbuild as an ES module into
+  `web/dist/ext.js` and published to `/projects/hr/`
 - Package manager: uv workspace (`infra` and `agent` are members)
-- Secrets: 1Password CLI at deploy time for the Google OAuth client; the origin header value is generated in Secrets Manager by the stack; nothing secret is checked in
+- Secrets: the Dynatrace values are CloudFormation parameters supplied from 1Password at
+  deploy time; the image build reads a GitHub token as a BuildKit secret; nothing secret
+  is checked in
 
 ## Project Structure
 
 ```
 docs/
   handoff.md              # what the MVP is, its sources, how to start
-  plan.md                 # target architecture, the seven phases, the four scenarios
+  plan.md                 # target architecture, the eight phases, the four scenarios
+  phase-8.md              # the brief that moved the project onto the platform
+  phase-8-report.md       # what phase 8 landed, removed and checked
   decision-log.md         # D1 on, one row per decision, status Proposed, Approved or Reversed
-  guppigpt-*.html         # guppi-gpt's design, decision log, and diagrams, kept unchanged (D17)
-  proposals/              # guppi-gpt's backlog proposals, unchanged; new proposals are added beside them
+  guppigpt-*.html         # guppi-gpt's design, decision log, and diagrams as at the fork
+  proposals/              # guppi-gpt's backlog proposals as at the fork; new proposals are added beside them
   dynatrace/dashboard.json  # draft DQL dashboard tiles for the queries in docs/proposals/dynatrace.md
 content/
   hr/                     # synthetic HR policy Markdown, synced by scripts/seed-content.sh (D5)
 infra/
   app.py                  # CDK app entry
-  hr_super_agent_infra/stack.py
+  hr_super_agent_infra/stack.py         # platform parameters, orchestrator runtime and its "hr" target, KB, tools gateway, logs, alarms
   hr_super_agent_infra/hr_tools.py      # HR tools tables, MCP runtime, hr target on the tools gateway
   hr_super_agent_infra/runtime_role.py  # the documented runtime execution role, one per runtime
   hr_super_agent_infra/sub_agents.py    # agents gateway, three A2A runtimes, runtime targets with token passthrough
   tests/                  # assertions against the synthesized template
 agent/
-  src/hr_agent/app.py         # FastAPI app: POST /invocations (SSE), GET /ping, per-run log record with trace id
-  src/hr_agent/agent.py       # per-run MCP client with the user token, Strands agent, AG-UI adapter
-  src/hr_agent/validation.py  # run input validation and front trimming
-  src/hr_agent/keepalive.py   # CUSTOM ping event after 15 silent seconds
-  src/hr_agent/conversation_log.py  # thread record: pseudonym, merge, conditional write to S3
+  src/hr_agent/app.py         # app = create_app(build_strands_agent), the kit's HTTP surface
+  src/hr_agent/agent.py       # build_strands_agent (the test seam) and the knowledge base agent for general questions
   src/hr_agent/__main__.py    # container entrypoint: AGENT_ROLE picks the server (D11)
   src/hr_agent/tools/         # HR tools MCP server: identity.py (X-Hr-User-Token, D19), records.py, store.py (D21), server.py
   src/hr_agent/orchestrator.py  # routing step (Sonnet), routing policy, A2A delegation, AG-UI state (D26, D27)
   src/hr_agent/pending.py       # the pending change: parsing tool results, the prompt paragraph (D23)
   src/hr_agent/agents/          # Profile, Pay, Travel sub-agents: domains.py (cards, tools), server.py (A2A executor, D24)
-  Dockerfile                     # arm64, uvicorn on 8080; built from the repo root so uv.lock is in context
+  Dockerfile                     # arm64; installs git and fetches the private kit with a build secret (D29)
   tests/
 web/
-  package.json            # esbuild, @ag-ui/client, @openfeature/web-sdk, idb; `npm run build` writes dist/, `npm test` runs node --test
-  src/index.html          # the page; no inline script or style (CSP is default-src 'self')
-  src/app.js              # PKCE sign-in by hand, HttpAgent subscriber, plain text rendering
-  src/session.js          # idb-backed session store: refresh token, header claims, rotated on use
-  src/app.css
-  src/history.js          # local chat history: idb wrapper around one "threads" object store, behind the history flag
-  src/feedback.js         # up/down reply control: vote toggle, "hr:feedback" CustomEvent, history write, POST to /api/feedback, behind the feedback flag
-  src/features.js         # OpenFeature static provider; initFeatures() and isEnabled()
-  src/copy.js             # the hint and empty-state wording for each combination of the history and logging flags
-  src/flags-core.js       # pure override parsing and default/override overlay, tested without a DOM
-  src/flags.js            # the /flags.html settings page: rows per flag, browser-wide override controls, reset
-  src/flags.html          # that page, reachable by URL only (no link from the chat page)
-  src/privacy.html        # privacy policy, served at /privacy.html for the Google consent screen
-  src/terms.html          # terms of service, served at /terms.html
-  src/rum.js              # Dynatrace RUM: script injection, OpenFeature hook, behind the rum flag
-  features.json           # committed feature flag defaults, merged into config.json at deploy time
-  vendor/ruxitagentjs.js  # the Dynatrace RUM script itself; gitignored, not committed
-  test/features.test.mjs  # node:test coverage for flags-core.js, run by `npm test`
-  test/feedback.test.mjs  # node:test coverage for feedback.js's DOM-free functions
-  test/flags.test.mjs     # node:test coverage for the flags page helpers in flags-core.js
-  test/legal.test.mjs     # the privacy and terms pages: date, cross links, no inline style or script
-  test/copy.test.js       # node:test coverage for copy.js's wording per flag combination
-  test/rum.test.mjs       # node:test coverage for rum.js's pure property-building functions
-  test/session.test.mjs   # node:test coverage of session.js's pure decision and shaping functions
-  dist/                   # build output plus config.json written by deploy.sh; not committed
+  manifest.json           # the project on the platform: name, label, agent path, features, extension, suggestions; no theme
+  package.json            # esbuild only; `npm run build` writes dist/ext.js, `npm test` runs node --test
+  src/ext.js              # the extension: status lines, the agent tag via ctx.setLabel, the state round trip (D32)
+  src/copy.js             # the wording: toolStatus, agentName, stepStatus, replyLabel, BRAND
+  test/copy.test.js       # node:test coverage for copy.js
+  test/ext.test.js        # the extension against a fake guppi object
+  test/manifest.test.js   # the manifest's fields
+  dist/                   # build output; not committed
 evals/
   utterances.jsonl        # 60 labeled routing utterances (D13)
   route.py                # runs them through the routing step and policy against Bedrock
 scripts/
-  deploy.sh
+  deploy.sh               # cdk deploy, then the manifest and extension to the platform's site bucket
   seed-content.sh         # clone the docs repositories at pinned revisions, sync Markdown to S3
   ingest.sh               # StartIngestionJob and wait
+  browser-check.mjs       # the four scenarios on /p/hr/ in a headless browser, screenshots in .deploy/
 ```
 
 ## Rules
@@ -105,17 +103,19 @@ scripts/
   own AWS activation stack (`GuppiGPT-Dynatrace`, 7 Sep 2026), which sits outside
   `HrSuperAgent`.
 - Secrets never enter files, `cdk.context.json`, or `-c` context values. Values the stack
-  cannot produce (the Google OAuth client) are CloudFormation parameters with `no_echo`
-  supplied by `scripts/deploy.sh` from 1Password; values it can produce (the
-  `X-Origin-Verify` header) live in Secrets Manager and reach the template only as
-  dynamic references.
+  cannot produce (the Dynatrace token) are CloudFormation parameters with `no_echo`
+  supplied by `scripts/deploy.sh` from 1Password. The GitHub token for the image build
+  reaches Docker only as a BuildKit secret from the environment (D29).
+- Never edit guppi-gpt from this repository. Platform changes are made there and reach
+  this stack through the `/guppi/platform/*` parameters or a new kit tag.
 - The agent image installs dependencies from `uv.lock` in a layer before the source is
   copied, so a code change rebuilds only the last layer; `.dockerignore` at the repo root
   limits the build context (and the CDK asset hash) to the agent files and the lockfile.
 - Every change to the stack must keep `uv run -- pytest` green and
   `uv run -- cdk synth -c image_uri=<any ecr uri>` working without Docker.
 - Prose in docs and comments: no em-dashes or en-dashes, no second person.
-- The page renders plain text only: no Markdown parser, no `innerHTML` with model or user text.
+- The page renders plain text only, and the extension writes only plain text (status
+  lines and the label); no Markdown parser, no `innerHTML` with model or user text.
 - Tests replace the seams that reach Bedrock or a gateway: `hr_agent.agent.build_strands_agent`
   (the whole orchestrator, in the app tests), the orchestrator's `router`, `sender`, and
   `general_factory`, the sub-agent executor's `runner`, and the tools server's store and
@@ -129,13 +129,11 @@ scripts/
 - Every choice not already in `docs/decision-log.md` gets a new entry with status
   Proposed, listed in the next message to Sam.
 - Every named AWS resource differs from its `GuppiGpt` counterpart, since both stacks
-  share the account (D18). The zone apex record and Transaction Search stay with
-  `GuppiGpt` (D16).
+  share the account (D18). Transaction Search stays with `GuppiGpt` (D16).
 - Observability that reads state already reaching the browser is never behind a feature
-  flag. `web/features.json` and the OpenFeature provider in `web/src/features.js` mostly
-  gate product features (`docs/proposals/feature-flags.md`); the one exception is `rum`,
-  since turning it on inserts a script element and starts a vendor library running,
-  which is a page behavior change, not a passive read (`docs/proposals/dynatrace.md`).
+  flag. The `features` in `web/manifest.json` mostly gate product features
+  (`docs/proposals/feature-flags.md`); `rum` is the exception, since turning it on starts
+  a vendor library on the page (`docs/proposals/dynatrace.md`).
 
 ## Dependency Management
 
@@ -145,112 +143,118 @@ uv add --package hr-agent httpx  # add a dependency to one member
 uv run -- pytest                    # run all tests
 uv run -- pytest agent/tests -v
 uv run -- ruff check .
-cd web && npm ci && npm run build   # bundle the page into web/dist/
-cd web && npm test                  # node:test coverage for the feature flag overlay and the copy wording
+cd web && npm ci && npm run build   # bundle the extension into web/dist/ext.js
+cd web && npm test                  # node:test coverage for the extension, the wording and the manifest
 ```
 
-Flipping a feature flag: edit `web/features.json`, then run `scripts/deploy.sh --site-only`
-to rebuild the page and republish `web/dist/config.json` with the new defaults; no `cdk
-deploy` and no CloudFormation parameter (`docs/proposals/feature-flags.md`).
+The kit is a git dependency (`[tool.uv.sources]` in `agent/pyproject.toml`); a new kit
+tag is `uv add --package hr-agent "guppi-agent @ git+https://github.com/samdengler/guppi-gpt@<tag>#subdirectory=agent"`
+and a deploy. `uv lock` on the host reads the private repository through the `gh`
+credential helper.
+
+Flipping a feature flag: edit `features` in `web/manifest.json`, then run
+`scripts/deploy.sh --site-only` to republish the manifest; no `cdk deploy` and no
+CloudFormation parameter. The platform merges the manifest's flags over its own
+`config.json` defaults, and browser overrides from `/flags.html` still win.
 
 - Always use `uv add --package <member>` for dependencies, not manual pyproject edits.
 - Run `uv sync --all-packages --dev` after pulling changes.
 
 ## Deploying
 
-`scripts/deploy.sh` reads the Google OAuth client id and secret from 1Password
-(`op://Personal/GuppiGPT Google OAuth/...`, an API Credential item whose `username` is the client id and `credential` is the client secret), runs `cdk deploy` with them as parameters,
-builds the page (`npm ci`, `npm run build` in `web/`), writes `web/dist/config.json` from the stack outputs, syncs `web/dist/` to the site bucket, and
-invalidates CloudFront. When the 1Password read fails the script omits both parameters and
-CloudFormation reuses the stack's existing values. `HR_ALARM_EMAIL`, when set, becomes
-the `AlarmEmail` parameter and subscribes that address to the alarm topic.
+`scripts/deploy.sh` reads the Dynatrace OTLP endpoint and API token from 1Password
+(`op://Personal/GuppiGPT Dynatrace/...`, an API Credential item whose `hostname` is the
+endpoint and `credential` is the token) when it can; when the read fails it passes
+neither and CloudFormation reuses the stack's existing values. It sets `HR_GITHUB_TOKEN`
+from `gh auth token` (unless already set) for the image build, runs `cdk deploy
+HrSuperAgent`, builds `web/` (`npm ci`, `npm run build`), copies `web/manifest.json` and
+`web/dist/ext.js` to `s3://<platform site bucket>/projects/hr/` with
+`Cache-Control: no-cache`, and invalidates `/projects/hr/*` on the platform's
+distribution; the bucket and distribution come from `/guppi/platform/site-bucket-name`
+and `/guppi/platform/distribution-id`. `HR_ALARM_EMAIL`, when set, becomes the
+`AlarmEmail` parameter and subscribes that address to the alarm topic.
 `HR_INVESTIGATOR_ARN`, when set, becomes the `InvestigatorPrincipalArn` parameter and
 narrows the conversation investigator role's trust to that one ARN; left unset, the role
-trusts the account root. `scripts/deploy.sh --site-only` skips `cdk deploy` (so no image build or push) and
-publishes the page from the last outputs file. Every run is
-also written to `.deploy/deploy-<timestamp>.log` with `.deploy/latest.log` pointing at the
+trusts the account root. `scripts/deploy.sh --site-only` skips `cdk deploy` (so no image
+build or push) and only republishes the manifest and the extension. Every run is also
+written to `.deploy/deploy-<timestamp>.log` with `.deploy/latest.log` pointing at the
 newest and a final `deploy exit=<code>` line, so a Claude session can watch a deploy
 started from any terminal. Deploys run on Sam's Mac; the Docker image is built there for
 arm64. A deploy started without a terminal (a `!` command in a Claude session) cannot
 answer cdk's approval prompt for IAM changes and exits 1 before touching the stack; pass
 `--require-approval never` there. `--reuse-parameters` skips 1Password and lets
-CloudFormation reuse the stack's Google OAuth and Dynatrace values, so an unattended
-deploy never waits on a locked vault.
+CloudFormation reuse the stack's Dynatrace values, so an unattended deploy never waits on
+a locked vault.
 
-`-c own_account_singletons=true` makes the stack create the `dengler.io` apex placeholder
-record and the Transaction Search configuration itself. It stays off while `GuppiGpt`
-exists, since a second copy of either fails the deploy (D16).
+`-c own_account_singletons=true` makes the stack create the Transaction Search
+configuration itself. It stays off while `GuppiGpt` exists, since a second copy fails the
+deploy (D16).
 
-The runtime's request header allowlist names `Authorization` and `traceparent`; without
-the first the runtime validates the bearer and drops it, and the agent has no token for
-the tools gateway; without the second the trace the page started ends at the runtime.
-The edge gateway target's allowed request headers name the session id header and
-`traceparent` for the same reason. The runtime container receives `TOOLS_GATEWAY_URL`,
-`MODEL_ID`, `RETRIEVE_TOOL`, `LOG_LEVEL`, `OTEL_PYTHON_EXCLUDED_URLS`,
-`CONVERSATION_LOG_ENABLED`, `CONVERSATION_LOG_BUCKET`, and `CONVERSATION_LOG_KEY_SECRET_ARN`
-from the stack; the container starts under `opentelemetry-instrument` (`agent/Dockerfile`), and the
-runtime supplies the ADOT exporter settings itself. `docs/proposals/traceability.md`
-describes the identifiers and where each one is logged.
+The platform contract. The stack reads `jwt-discovery-url` and `user-pool-client-id`
+(every JWT authorizer here: the orchestrator runtime, the three sub-agent runtimes, the
+agents gateway and the tools gateway, plus the HR tools server's `TOKEN_ISSUER` and
+`TOKEN_ALLOWED_CLIENTS`), `edge-gateway-id` (the target `hr`), `edge-gateway-role-arn`
+(the `InvokeAgentRuntime` grant on the orchestrator, attached to the platform gateway's
+role as this stack's own policy), and `site-url` (the `SiteUrl` output). The platform's
+CloudFront function rewrites `/api/hr/invocations` to `/hr/invocations` on its gateway,
+and `/p/hr/` to its one page, which loads `/projects/hr/manifest.json` and imports the
+extension it names.
+
+The orchestrator runtime's request header allowlist names `Authorization` and
+`traceparent`; without the first the runtime validates the bearer and drops it, and the
+agent has no token for the tools gateway; without the second the trace the page started
+ends at the runtime. The `hr` target's allowed request headers name the session id header
+and `traceparent` for the same reason. The runtime container receives `TOOLS_GATEWAY_URL`,
+`MODEL_ID`, `ROUTER_MODEL_ID`, `RETRIEVE_TOOL`, `ORCHESTRATOR_EXTRA_TOOLS`,
+`AGENTS_GATEWAY_URL`, `LOG_LEVEL`, `OTEL_PYTHON_EXCLUDED_URLS`, `CONVERSATION_LOG_ENABLED`,
+`CONVERSATION_LOG_BUCKET`, and `CONVERSATION_LOG_KEY_SECRET_ARN` from the stack; the
+container starts under `opentelemetry-instrument` (`agent/Dockerfile`), and the runtime
+supplies the ADOT exporter settings itself. `docs/proposals/traceability.md` describes
+the identifiers and where each one is logged.
 
 Conversation logging (`docs/proposals/conversation-logging.md`) is behind two switches,
-both on (inherited from guppi-gpt, where they were turned on 5 Sep 2026). `CONVERSATION_LOG_ENABLED` in `stack.py` decides whether the agent writes one
-record per thread to the conversation log bucket, uses the keyed pseudonym on the run line,
-and tells the model that conversations are logged; `"logging"` in `web/features.json`
-decides whether the page's hint and empty state say so. Flip the runtime switch and deploy
-first, then the page switch, so the page never promises a record that does not exist; turn
-them off in the other order. The bucket, the KMS key, the HMAC secret, and the investigator
-role are created either way, so flipping a switch is one line and a deploy.
+both on. `CONVERSATION_LOG_ENABLED` in `stack.py` decides whether the agent writes one
+record per thread to this stack's conversation log bucket, uses the keyed pseudonym on
+the run line, and tells the model that conversations are logged; `"logging"` in the
+manifest's `features` decides whether the page's hint and empty state say so. Flip the
+runtime switch and deploy first, then the page switch, so the page never promises a
+record that does not exist; turn them off in the other order. The bucket, the KMS key,
+the HMAC secret, and the investigator role are created either way. The investigator role
+may list the platform's user pool, whose users the thread records' subjects now are.
 
-The instrumented container's spans are refused until CloudWatch Transaction Search (the
-span destination and a 1 percent indexing rule) is on for the account; the `GuppiGpt`
-stack owns that setting, and this one creates it only with `own_account_singletons` (D16).
-The web ACL on the edge gateway blocks (`WAF_BLOCK = True` in `stack.py`, inherited from
-guppi-gpt, where a day in COUNT produced no counts); set it to `False` to return to
-counting. The billing
-alarm reads `AWS/Billing EstimatedCharges`, which exists only after billing alerts are
-enabled in the account's billing preferences (a console setting, not in the stack). The two
-gateways' and the runtime's `APPLICATION_LOGS` (and, for the gateways, `TRACES`) are
-delivered to CloudWatch Logs groups under `/aws/vendedlogs/bedrock-agentcore/`, 30 day
-retention, alongside alarms on gateway 4xx rate and 5xx count, runtime 5xx count and p90
-latency, and Bedrock throttling, all notifying the alarm topic (`docs/proposals/operations.md`).
+The instrumented container's spans are refused until CloudWatch Transaction Search is on
+for the account; the `GuppiGpt` stack owns that setting. The billing alarm reads
+`AWS/Billing EstimatedCharges`, which exists only after billing alerts are enabled in the
+account's billing preferences. The two gateways' and every runtime's `APPLICATION_LOGS`
+are delivered to CloudWatch Logs groups under `/aws/vendedlogs/bedrock-agentcore/`, 30 day
+retention, alongside 5xx alarms on each, runtime p90 latency, and Bedrock throttling, all
+notifying the alarm topic (`docs/proposals/operations.md`). The edge gateway's logs, WAF
+alarms and 4xx rate alarm are the platform's.
 
-Dynatrace: `DynatraceBeaconOrigin`, `DynatraceOtlpEndpoint`, and `DynatraceApiToken` are
-stack parameters that default empty, and each Dynatrace path stays dark while its
-parameter is empty. `scripts/deploy.sh` reads the OTLP endpoint and the API token from
-1Password (`op://Personal/GuppiGPT Dynatrace/...`, an API Credential item whose
-`hostname` is the endpoint and `credential` is the token) the same way it reads the
-Google OAuth client, skipping them when the item does not exist. The item exists, so
-this stack exports traces, forwards vended logs through Firehose, and sends feedback
-business events to the same tenant as guppi-gpt; its spans carry the service name
-`hr_super_agent.DEFAULT`. `HR_DYNATRACE_BEACON_ORIGIN`, when set, becomes the
-`DynatraceBeaconOrigin` parameter the same way `HR_ALARM_EMAIL` becomes `AlarmEmail`;
-it is unset. The RUM script itself (`web/vendor/ruxitagentjs.js`, gitignored) is copied
-into the bundle at `/dt/ruxitagentjs.js` before the sync when present; this checkout has
-none, so although the `rum` flag in `web/features.json` is on, the page's request for the
-script gets a 403 and RUM does not run. `docs/proposals/dynatrace.md` has guppi-gpt's
-flip procedure.
+Dynatrace: `DynatraceOtlpEndpoint` and `DynatraceApiToken` are stack parameters that
+default empty, and each Dynatrace path stays dark while either is empty. With both set,
+this stack exports traces and forwards its vended logs through Firehose to the same
+tenant as guppi-gpt; its spans carry the service name `hr_super_agent.DEFAULT`. Real user
+monitoring and reply feedback are the platform's.
 
-Reply votes take their own path, off the chat runtime and off the trace
-(`docs/proposals/feedback.md`). The page posts one to `/api/feedback`, a CloudFront
-behavior listed ahead of `/api/*` because behaviors are matched in the order they appear;
-behind it, an API Gateway REST API validates the body, checks the same Cognito token
-(naming the `openid` scope, without which the authorizer refuses the page's access token),
-and integrates directly with `events:PutEvents` on the `hr-super-agent-feedback` bus. A 30 day
-archive on the bus keeps every vote; the rule that forwards them to Dynatrace as business
-events turns on with the same two parameters as log forwarding. The `feedback` flag in
-`web/features.json` is what puts the control on the page, and it is off.
-
-The knowledge base corpus is refreshed by `scripts/seed-content.sh` (three docs repositories
-at revisions pinned in the script, Markdown only, `aws s3 sync --delete` to `docs/<source>/`
-in the content bucket) followed by `scripts/ingest.sh`. A scheduler runs the same ingestion
-nightly. The tools gateway target is named `docs`, so the MCP tools are `docs___Retrieve` and
-`docs___AgenticRetrieveStream`.
+The knowledge base corpus is refreshed by `scripts/seed-content.sh` (Markdown from
+`content/hr/`, `aws s3 sync --delete` to `docs/` in the content bucket) followed by
+`scripts/ingest.sh`. A scheduler runs the same ingestion nightly. The tools gateway target
+is named `docs`, so the MCP tools are `docs___Retrieve` and `docs___AgenticRetrieveStream`.
 
 Two context keys exist for experiments and default off: `-c bind_runtime_to_gateway=true`
-adds `allowedWorkloadConfiguration` to the runtime authorizer, and
-`-c target_credentials=GATEWAY_IAM_ROLE` makes the gateway sign requests to the runtime
-instead of passing the user token through. Neither works against the deployed JWT runtime
-today; the decision log records why.
+adds `allowedWorkloadConfiguration` naming the platform's edge gateway to the
+orchestrator's authorizer, and `-c target_credentials=GATEWAY_IAM_ROLE` makes the `hr`
+target sign requests to the runtime instead of passing the user token through. Neither
+works against a JWT runtime today; guppi-gpt's decision log records why.
+
+## Checking a deploy
+
+`scripts/browser-check.mjs` runs the four scenarios on `https://chat.dengler.io/p/hr/` in
+headless Chrome with the session from `$HOME/.config/guppi/test-session.json` (written by
+`../guppi-gpt/scripts/test-token.sh`) and saves `.deploy/phase-8-<scenario>.png`. Tokens
+from that script are used only inside command substitution; never print, log, or commit
+one.
 
 ## Local Development
 

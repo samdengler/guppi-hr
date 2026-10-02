@@ -1,17 +1,23 @@
 # hr-agent
 
-FastAPI application implementing the AgentCore Runtime AG-UI contract:
-`POST /invocations` streams AG-UI events as server-sent events, `GET /ping` reports health.
-See the repository AGENTS.md for how it fits the whole system.
+The HR Super Agent's runtimes in one package. The orchestrator implements the AgentCore
+Runtime AG-UI contract through the chat.dengler.io platform kit (`guppi-agent`, a git
+dependency on guppi-gpt pinned to `kit-v0.2.0`): `app.py` is `create_app(build_strands_agent)`,
+so `POST /invocations` (AG-UI events as server-sent events), `GET /ping`, validation,
+keepalive pings, the run log line and the conversation log are the kit's. See the
+repository AGENTS.md for how it fits the whole system.
 
 ## Modules
 
 | Module | Role |
 | --- | --- |
-| `app.py` | The HTTP surface: bearer token, validation, the log record, the SSE response |
-| `agent.py` | One Strands agent per request: Bedrock model, system prompt, the MCP client to the tools gateway with the caller's token |
-| `validation.py` | Thread shape checks and front trimming to the token budget |
-| `keepalive.py` | The `ping` custom event during silent stretches |
+| `app.py` | `create_app` from `guppi_agent` with the orchestrator as the per-request agent |
+| `orchestrator.py` | The routing step, the routing policy, A2A delegation, AG-UI state |
+| `agent.py` | The knowledge base agent for general questions, and `build_strands_agent`, the seam the tests replace |
+| `pending.py` | The pending change between turns |
+| `agents/` | The Profile, Pay and Travel A2A servers |
+| `tools/` | The HR tools MCP server |
+| `__main__.py` | The container entrypoint; `AGENT_ROLE` picks the server |
 
 ## Environment
 
@@ -19,7 +25,7 @@ See the repository AGENTS.md for how it fits the whole system.
 | --- | --- | --- |
 | `TOOLS_GATEWAY_URL` | MCP endpoint of the tools gateway (required) | none |
 | `MODEL_ID` | Bedrock model or inference profile id | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
-| `RETRIEVE_TOOL` | The one gateway tool the agent is given | `docs___Retrieve` |
+| `RETRIEVE_TOOL` | The policy search tool the general agent is given | `docs___Retrieve` |
 | `AWS_REGION` | Bedrock region | `us-east-1` |
 | `LOG_LEVEL` | Python logging level | `INFO` |
 
