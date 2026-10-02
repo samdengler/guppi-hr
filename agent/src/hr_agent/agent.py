@@ -15,8 +15,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ag_ui.core import BaseEvent, RunAgentInput
+from guppi_agent import conversation_log
 
-from hr_agent import conversation_log
 from hr_agent.pending import PENDING_KEY
 
 log = logging.getLogger("hr_agent")

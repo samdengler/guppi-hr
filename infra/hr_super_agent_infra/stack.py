@@ -684,6 +684,10 @@ class HrSuperAgentStack(cdk.Stack):
                 file="agent/Dockerfile",
                 ignore_mode=cdk.IgnoreMode.DOCKER,
                 platform=ecr_assets.Platform.LINUX_ARM64,
+                # The platform kit is a git dependency on the private guppi-gpt repository;
+                # the build reads a GitHub token from this environment variable as a
+                # BuildKit secret, never a build argument (D29). scripts/deploy.sh sets it.
+                build_secrets={"github_token": "env=HR_GITHUB_TOKEN"},
             )
             image_uri = asset.image_uri
 

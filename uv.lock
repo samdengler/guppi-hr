@@ -879,6 +879,20 @@ wheels = [
 ]
 
 [[package]]
+name = "guppi-agent"
+version = "0.1.0"
+source = { git = "https://github.com/samdengler/guppi-gpt?subdirectory=agent&rev=kit-v0.2.0#763fe4203425745f6ad58b336f172c11b6dcc8bc" }
+dependencies = [
+    { name = "ag-ui-protocol" },
+    { name = "ag-ui-strands" },
+    { name = "aws-opentelemetry-distro" },
+    { name = "boto3" },
+    { name = "fastapi" },
+    { name = "strands-agents" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -898,6 +912,7 @@ dependencies = [
     { name = "bedrock-agentcore" },
     { name = "boto3" },
     { name = "fastapi" },
+    { name = "guppi-agent" },
     { name = "mcp" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "strands-agents", extra = ["a2a"] },
@@ -920,6 +935,7 @@ requires-dist = [
     { name = "bedrock-agentcore", specifier = ">=1.0" },
     { name = "boto3", specifier = ">=1.43.87" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "guppi-agent", git = "https://github.com/samdengler/guppi-gpt?subdirectory=agent&rev=kit-v0.2.0" },
     { name = "mcp", specifier = ">=1.29" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
     { name = "strands-agents", extras = ["a2a"], specifier = ">=1.54.0" },

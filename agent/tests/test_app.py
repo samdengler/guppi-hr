@@ -13,11 +13,11 @@ from ag_ui.core import (
     ToolCallEndEvent,
     ToolCallStartEvent,
 )
+from guppi_agent import app as app_module
+from guppi_agent.keepalive import with_keepalive
+from guppi_agent.validation import trim_messages, validate_run
 from hr_agent import agent as agent_module
-from hr_agent import app as app_module
 from hr_agent.app import app
-from hr_agent.keepalive import with_keepalive
-from hr_agent.validation import trim_messages, validate_run
 from httpx import ASGITransport, AsyncClient
 
 TOKEN = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyLTEifQ."  # header.{"sub":"user-1"}.
@@ -113,7 +113,7 @@ async def test_ping(client):
 
 
 async def test_run_streams_the_agent_events_in_order(client, fake_agent, caplog):
-    caplog.set_level("INFO", logger="hr_agent")
+    caplog.set_level("INFO", logger="guppi_agent")
     response = await post(client, run_body("hello there"))
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -217,7 +217,7 @@ async def test_agent_failure_becomes_a_run_error(client, monkeypatch, caplog):
             yield  # pragma: no cover
 
     monkeypatch.setattr(agent_module, "build_strands_agent", Failing)
-    caplog.set_level("INFO", logger="hr_agent")
+    caplog.set_level("INFO", logger="guppi_agent")
     response = await post(client, run_body("hello"))
     events = parse_sse(response.text)
     assert [e["type"] for e in events] == ["RUN_STARTED", "RUN_ERROR"]
@@ -235,7 +235,7 @@ def test_validate_and_trim_directly():
 
 
 async def test_record_marks_missing_trace_and_request_ids(client, fake_agent, caplog):
-    caplog.set_level("INFO", logger="hr_agent")
+    caplog.set_level("INFO", logger="guppi_agent")
     headers = {"authorization": f"Bearer {TOKEN}"}
     await post(client, run_body("hello"), headers=headers)
     (record,) = [json.loads(r.message) for r in caplog.records if r.message.startswith("{")]
