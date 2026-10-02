@@ -81,7 +81,7 @@ and starts a new contact for a token near expiry. Phase 1 can go ahead.
 
 ## Phase 2 and 3 status, 2 October
 
-Built and tested, not yet deployed. `agent/` holds the bridge (`ConnectTurn`, the
+Built, tested and deployed on 2 October. `agent/` holds the bridge (`ConnectTurn`, the
 DynamoDB session store, `app = create_app(build_agent)` on `kit-v0.2.0`) with seven tests
 on fake Connect clients. `infra/guppi_connect_infra/bridge.py` adds the Runtime with the
 platform's JWT authorizer, the session table, the `hr-connect` target on the platform's
@@ -92,6 +92,36 @@ turns through `/api/hr-connect/invocations` with the platform test session's tok
 
 The kit's conversation log is off for the bridge: the platform's log bucket admits only
 the platform runtime's role. Joining it needs a platform change to the bucket policy.
+
+Deployed with `scripts/deploy.sh`: the Runtime is READY, the gateway target `hr-connect`
+is READY beside the platform's `api` and phase 8's `hr`, `/p/hr-connect/` and its
+manifest answer 200, and `/api/hr-connect/invocations` without a token answers 401.
+Later the same day the repository moved into guppi-hr as `connect/`; `cdk diff` from the
+new path showed only the mock Lambda's asset hash (a `__pycache__` the old folder held).
+
+## Open items, 2 October
+
+- [ ] A turn through `/p/hr-connect/` end to end. Not yet seen: the scripted check
+  (`scripts/bridge_check.py`, which mints a platform test token) was refused by the
+  session's auto mode, so Sam runs it or tries the page in the browser. Start with
+  "I need to update my information", which needs only the canvas.
+- [ ] Phase 4: the four scenarios on `/p/hr-connect/` in the browser and the routing eval
+  through the bridge, now that phase 8 has the HR gateways accepting the platform token.
+- [ ] Phase 5: the report, as in the other phases.
+- [ ] The bridge image installs the private guppi-gpt kit without a token and builds only
+  because Docker's uv cache already holds it from the HR image. Give `agent/Dockerfile`
+  the same build secret the HR image uses (guppi-hr D29, `HR_GITHUB_TOKEN` from
+  `gh auth token` in the root `scripts/deploy.sh`).
+- [ ] The kit's conversation log for the bridge (needs the platform bucket policy change
+  above), or keep the run lines in CloudWatch.
+- [ ] Optional, from the spike: press Sync on HrTools in the designer console (the MCP
+  data request type), decide on routing misses u55 and u59, a voice test, and tear the
+  spike resources down when the comparison is over.
+
+For Sam, from guppi-hr phase 8 (`docs/phase-8-report.md`): remove the
+`auth-hr.dengler.io` redirect from the Google OAuth client, delete the retained bucket
+`hrsuperagent-sitebucket397a1860-ahfzxmjr1rik`, check `/p/hr/` in a browser, and review
+D29 to D33.
 
 ## Phases
 
