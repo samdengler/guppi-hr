@@ -114,9 +114,11 @@ def main() -> None:
     parser.add_argument("--quiet", type=float, default=4.0, help="seconds of silence that end a turn")
     parser.add_argument("--limit", type=float, default=45.0, help="max seconds to wait per turn")
     parser.add_argument("--json", help="write the transcript to this file")
+    parser.add_argument("--env", default="development", help="development (mock sub-agents) or production")
     args = parser.parse_args()
 
-    state = json.loads((ROOT / ".deploy" / "acxd.json").read_text())
+    name = "acxd.json" if args.env == "development" else f"acxd-{args.env}.json"
+    state = json.loads((ROOT / ".deploy" / name).read_text())
     if args.token_file:
         token = Path(args.token_file).expanduser().read_text().strip()
     else:

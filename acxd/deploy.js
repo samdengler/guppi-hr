@@ -5,8 +5,9 @@
  * `development`, and write the deployment (with its alias) to ../.deploy/acxd.json for
  * the contact flow script.
  *
- *   node deploy.js            # everything
- *   node deploy.js --no-build # resources only
+ *   node deploy.js                    # everything, deployed to development (mock sub-agents)
+ *   node deploy.js --env production   # deployed to production (hr-super-agent gateways)
+ *   node deploy.js --no-build         # resources only
  */
 
 const fs = require('fs');
@@ -15,7 +16,9 @@ const { makeClient, mask, sdk } = require('./lib/client');
 const u = require('./lib/upsert');
 const R = require('./resources');
 
-const STATE = path.join(__dirname, '..', '.deploy', 'acxd.json');
+const ENV = process.argv.includes('--env') ? process.argv[process.argv.indexOf('--env') + 1] : 'development';
+// development keeps the original state file; production gets its own, so each has a contact flow.
+const STATE = path.join(__dirname, '..', '.deploy', ENV === 'development' ? 'acxd.json' : `acxd-${ENV}.json`);
 
 (async () => {
   const client = makeClient();
@@ -24,8 +27,11 @@ const STATE = path.join(__dirname, '..', '.deploy', 'acxd.json');
     for (const v of R.CONTEXT_VARIABLES) console.log(`context variable ${v.name}: ${await u.upsertContextVariable(client, v)}`);
     for (const d of R.DATA_REQUESTS) console.log(`data request ${d.dataRequestId}: ${await u.upsertDataRequest(client, d)}`);
     for (const f of R.FLOWS) console.log(`flow ${f.flowId}: ${await u.upsertFlow(client, f)}`);
-    const app = await u.upsertApplication(client, R.APPLICATION);
-    console.log(`application ${R.APPLICATION.name}: ${app.action} ${app.applicationId}`);
+    // One deployment per application (LimitExceededException on a second), so each
+    // environment is its own application over the same flows.
+    const appSpec = ENV === 'development' ? R.APPLICATION : { ...R.APPLICATION, name: `${R.APPLICATION.name}-${ENV}` };
+    const app = await u.upsertApplication(client, appSpec);
+    console.log(`application ${appSpec.name}: ${app.action} ${app.applicationId}`);
     if (noBuild) return;
 
     console.log('building ...');
@@ -34,7 +40,7 @@ const STATE = path.join(__dirname, '..', '.deploy', 'acxd.json');
     const d = await u.deploy(client, {
       applicationId: app.applicationId,
       buildId: b.buildId,
-      environment: 'development',
+      environment: ENV,
       languageCodes: ['en-US'],
     });
     console.log(`deployment ${d.action}: ${d.deployment.deploymentId} status=${d.deployment.deploymentStatus} alias=${d.deployment.deploymentAlias}`);
@@ -53,6 +59,7 @@ const STATE = path.join(__dirname, '..', '.deploy', 'acxd.json');
           deploymentId: d.deployment.deploymentId,
           deploymentAlias: d.deployment.deploymentAlias,
           previousAlias: d.previousAlias ?? null,
+          environment: ENV,
           deployedAt: new Date().toISOString(),
         },
         null,

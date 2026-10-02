@@ -9,7 +9,8 @@ application's alias (from .deploy/acxd.json, written by acxd/deploy.js). The blo
 the contact attributes `hrToken` and `employeeId` to ACXD context variables. Escalation
 goes to the instance's BasicQueue; an error says so in the chat and disconnects.
 
-    uv run scripts/contact_flow.py
+    uv run scripts/contact_flow.py                    # development deployment (mock sub-agents)
+    uv run scripts/contact_flow.py --env production   # production deployment (real gateways)
 """
 
 from __future__ import annotations
@@ -133,8 +134,19 @@ def flow_content(application_id: str, alias: str, queue_arn: str) -> dict:
     }
 
 
+def state_file(env: str) -> Path:
+    return ROOT / ".deploy" / ("acxd.json" if env == "development" else f"acxd-{env}.json")
+
+
 def main() -> None:
-    state = json.loads((ROOT / ".deploy" / "acxd.json").read_text())
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--env", default="development")
+    env = parser.parse_args().env
+    path = state_file(env)
+    state = json.loads(path.read_text())
+    flow_name = FLOW_NAME if env == "development" else f"{FLOW_NAME}-{env}"
     connect = boto3.client("connect", region_name=REGION)
     queues = connect.list_queues(InstanceId=INSTANCE_ID, QueueTypes=["STANDARD"])["QueueSummaryList"]
     queue_arn = next(q["Arn"] for q in queues if q["Name"] == "BasicQueue")
@@ -144,7 +156,7 @@ def main() -> None:
         f for f in connect.list_contact_flows(InstanceId=INSTANCE_ID, ContactFlowTypes=["CONTACT_FLOW"])[
             "ContactFlowSummaryList"
         ]
-        if f["Name"] == FLOW_NAME
+        if f["Name"] == flow_name
     ]
     if existing:
         flow_id = existing[0]["Id"]
@@ -153,7 +165,7 @@ def main() -> None:
     else:
         flow_id = connect.create_contact_flow(
             InstanceId=INSTANCE_ID,
-            Name=FLOW_NAME,
+            Name=flow_name,
             Type="CONTACT_FLOW",
             Description="guppi-connect spike: hands a chat to the hr-assistant ACXD application",
             Content=content,
@@ -163,7 +175,7 @@ def main() -> None:
         print(f"created contact flow {flow_id}")
     state["contactFlowId"] = flow_id
     state["alias_bound"] = state["deploymentAlias"]
-    (ROOT / ".deploy" / "acxd.json").write_text(json.dumps(state, indent=2))
+    path.write_text(json.dumps(state, indent=2))
 
 
 if __name__ == "__main__":

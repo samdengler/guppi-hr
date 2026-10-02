@@ -409,7 +409,16 @@ function clarifyFlow() {
 }
 
 const HR_TOOLS = [
-  { name: 'docs___Retrieve', enabled: true, requestSchema: { type: 'object', properties: { text: { type: 'string' } } } },
+  {
+    name: 'docs___Retrieve',
+    enabled: true,
+    // As the tools gateway lists it (guppi-mcp-app .deploy/phase4-gateway-probe.txt).
+    requestSchema: {
+      type: 'object',
+      properties: { retrievalQuery: { type: 'object', properties: { text: { type: 'string' } } } },
+      required: ['retrievalQuery'],
+    },
+  },
   { name: 'hr___get_profile', enabled: true, requestSchema: { type: 'object', properties: {} } },
   { name: 'hr___list_pay_statements', enabled: true, requestSchema: { type: 'object', properties: { count: { type: 'integer' } } } },
   {
@@ -428,6 +437,13 @@ const HR_TOOLS = [
   { name: 'hr___commit_change', enabled: false },
 ];
 
+const TOOL_PROMPTS = {
+  docs___Retrieve: 'Searches the HR policy documents. Input: {"retrievalQuery": {"text": the question}}.',
+  hr___get_profile: "Reads the employee's own profile (name, job, home address, emergency contact).",
+  hr___list_pay_statements: "Lists the employee's recent pay statements. Input: {\"count\": how many}.",
+  hr___open_ticket: 'Opens an HR service desk ticket. Input: {"summary": what the employee needs, "domain": "general"}. Only after the employee agrees.',
+};
+
 function hrToolsDataRequest() {
   const headers = [
     hdr('Authorization', 'Bearer {hrToken:NLX.Context}', { sensitive: true }),
@@ -442,6 +458,10 @@ function hrToolsDataRequest() {
       implementation: 'mcp',
       mcp: {
         method: 'POST',
+        // Top-level url and headers as well as per environment: with environments alone
+        // every call failed "data request could not be prepared" (live, 2026-10-02).
+        url: TOOLS_GATEWAY_URL,
+        headers,
         environments: env(TOOLS_GATEWAY_URL, headers),
         tools: HR_TOOLS,
       },
@@ -449,10 +469,64 @@ function hrToolsDataRequest() {
   };
 }
 
+/**
+ * MCP over a plain HTTP data request: one JSON-RPC tools/call to the tools gateway, the
+ * same headers as the sub-agents send (D19). The canvas decides to search, so this is a
+ * fixed step, not a model's tool call.
+ */
+function policySearchDataRequest() {
+  return {
+    dataRequestId: 'PolicySearch',
+    type: 'object',
+    description: 'tools/call docs___Retrieve on the hr-super-agent tools gateway over HTTP.',
+    webhook: {
+      implementation: 'external',
+      method: 'POST',
+      environments: env(TOOLS_GATEWAY_URL, [
+        hdr('Authorization', 'Bearer {hrToken:NLX.Context}', { sensitive: true }),
+        hdr('X-Hr-User-Token', '{hrToken:NLX.Context}', { sensitive: true }),
+        hdr('X-Hr-Thread-Id', CONV),
+        hdr('Content-Type', 'application/json'),
+        hdr('Accept', 'application/json'),
+      ]),
+    },
+    responseSchema: {
+      type: 'object',
+      properties: {
+        result: {
+          type: 'object',
+          properties: {
+            content: { type: 'array', items: { type: 'object', properties: { type: { type: 'string' }, text: { type: 'string' } } } },
+            isError: { type: 'boolean' },
+          },
+        },
+      },
+    },
+  };
+}
+
+const POLICY_SEARCH_BODY = JSON.stringify({
+  jsonrpc: '2.0',
+  id: CONV,
+  method: 'tools/call',
+  params: { name: 'docs___Retrieve', arguments: { retrievalQuery: { text: UTTERANCE } } },
+});
+
 function policyFlow() {
   const f = new FlowBuilder('PolicyFlow');
   const gj = (i) => [{ left: { type: 'system', name: 'System.gjConditionIndex' }, operator: 'eq', right: { type: 'constant', value: i } }];
-  f.add('start', 'start', { children: ['journey'] })
+  f.add('start', 'start', { children: ['search'] })
+    .add('search', 'data_request', {
+      children: [
+        { to: 'journey', when: [statusIs('success')] },
+        { to: 'journey', when: [statusIs('failure')] },
+        { to: 'journey', when: [statusIs('timeout')] },
+      ],
+      dataRequests: [
+        { dataRequestId: 'PolicySearch', name: 'PolicySearch', headers: {}, payload: POLICY_SEARCH_BODY, alwaysRetrigger: true },
+      ],
+      metadata: { timeout: 20000 },
+    })
     .add('journey', 'generative_journey', {
       children: [
         { to: 'toProfile', when: gj(0), name: 'switchToProfile' },
@@ -469,19 +543,21 @@ function policyFlow() {
           temperature: 0.2,
           prompt: [
             "You answer an airline employee's HR policy questions for the HR assistant.",
-            'Search the HR policy documents with the docs___Retrieve tool before answering, and answer only from what it returns, naming the policy you used.',
+            'Policy search results for the question, retrieved before you started (empty if the search failed): <results>{PolicySearch.result.content.0.text:NLX.Variable}</results>.',
+            'Answer only from those results or from the docs___Retrieve tool, naming the policy you used. If neither has the answer, say so.',
             'You may look up the employee\'s own profile (hr___get_profile) or pay statements (hr___list_pay_statements) when the question needs them.',
             'If the employee wants a human or you cannot answer, offer to open a ticket with hr___open_ticket, and open it only if they agree.',
             'You never change records. If the employee wants to change their home address or emergency contact, use the switchToProfile exit; direct deposit or pay statements, switchToPay; pass travel or buddy passes, switchToTravel; a person, human.',
             'Keep answers to three sentences.',
           ].join(' '),
-          tools: [
-            {
-              type: 'dataRequest',
-              dataRequest: { dataRequestId: 'HrTools', name: 'HrTools', headers: {}, payload: {} },
-              prompt: 'HR tools: docs___Retrieve searches HR policy documents; hr___get_profile and hr___list_pay_statements read the employee\'s records; hr___open_ticket opens an HR service desk ticket.',
-            },
-          ],
+          // One journey tool per enabled MCP tool. As a single tool the MCP data request
+          // reached the model as one "HrTools" tool with no schema, and every call failed
+          // "data request could not be prepared" (live, 2026-10-02).
+          tools: HR_TOOLS.filter((t) => t.enabled).map((t) => ({
+            type: 'dataRequest',
+            dataRequest: { dataRequestId: 'HrTools', name: t.name, action: t.name, headers: {}, payload: {} },
+            prompt: TOOL_PROMPTS[t.name],
+          })),
           exitConditions: [
             { name: 'switchToProfile', prompt: 'The employee wants to change or see their home address or emergency contact.' },
             { name: 'switchToPay', prompt: 'The employee wants to change direct deposit or see pay statements.' },
@@ -552,6 +628,7 @@ function escalationFlow() {
 const DATA_REQUESTS = [
   ...DOMAINS.flatMap((d) => [delegateDataRequest(d, false), delegateDataRequest(d, true)]),
   hrToolsDataRequest(),
+  policySearchDataRequest(),
 ];
 
 const FLOWS = [welcomeFlow(), clarifyFlow(), ...DOMAINS.map(domainFlow), policyFlow(), goodbyeFlow(), escalationFlow()];
