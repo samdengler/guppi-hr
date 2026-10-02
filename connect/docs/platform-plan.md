@@ -135,14 +135,14 @@ bridge's 2.5 s quiet window, so the bridge does see it in the same run.
   the record, committed through the confirmation step, and answered "Done. Your home
   address is now 25 Ponce de Leon Ave". The same two turns then restored 419 Glendale
   Ave, Decatur, GA 30030. Commits through the bridge work on the platform token.
-- [ ] The routing eval, re-run on the development application (mock sub-agents, dummy
-  token) instead of through the bridge. `scripts/route_eval.py` scores a reply by the
-  mocks' `[mock <domain> agent]` tags, which real sub-agents do not add, and its
-  pending-change cases would commit to the real record through the production
-  application. Routing is the canvas's alone and the bridge does not change it; the
-  browser scenarios above cover the bridge. The run finished; its score against the
-  spike's 55 of 60 is still to be recorded (`.deploy/route-eval-rerun.out`).
-- [ ] Phase 5: the report, as in the other phases.
+- [x] The routing eval, re-run on the development application (mock sub-agents, dummy
+  token) instead of through the bridge: 54 of 60, weighted 82 of 91 (90%), against the
+  spike's 55 of 60. `scripts/route_eval.py` scores a reply by the mocks'
+  `[mock <domain> agent]` tags, which real sub-agents do not add, and its pending-change
+  cases would commit to the real record through the production application. Routing is
+  the canvas's alone and the bridge does not change it; the browser scenarios above cover
+  the bridge. Details in `docs/platform-report.md`.
+- [x] Phase 5: the report, `docs/platform-report.md`.
 - [x] The bridge image now takes the github_token build secret as the HR image does
   (guppi-hr D29): `agent/Dockerfile`, `build_secrets` on the image asset, and
   `HR_GITHUB_TOKEN` from `gh auth token` in `scripts/deploy.sh`. Checked on an empty uv
