@@ -2,7 +2,7 @@
 
 Branch `platform-project`. The aim is the Agentic CX designer canvas from the spike,
 served on the platform page at `https://chat.dengler.io/p/hr-connect/` with the platform's
-sign-in, the Sky theme from guppi-mcp-app, and the same HR sub-agents behind it, so the
+sign-in and Sky palette, and the same HR sub-agents behind it, so the
 Strands orchestrator (`/p/hr/`) and the Connect canvas (`/p/hr-connect/`) can be compared
 side by side on one page and one sign-in.
 
@@ -10,8 +10,8 @@ side by side on one page and one sign-in.
 
 | Repository | State | What this plan needs from it |
 | --- | --- | --- |
-| guppi-gpt, `platform` branch | Phases 1 to 4 done: projects at `/p/<name>/`, manifests, themes, suggestions, the extension API, the MCP Apps host. Phase 5a (agent kit `create_app`, `kit-v0.2.0`) briefed, not run | The kit tag, and nothing else; no change to the platform |
-| guppi-mcp-app | A tools-only project; its manifest carries the Sky theme (blue `#2d7ff9` actions on `#f5f9ff`, navy `#1a5ea8` brand) | The theme block, copied into this project's manifest |
+| guppi-gpt, `platform` branch | Phases 1 to 4 done: projects at `/p/<name>/`, manifests, themes, suggestions, the extension API, the MCP Apps host. Sky is the page's default palette since 06140c8 (not yet deployed). Phase 5a (agent kit `create_app`, `kit-v0.2.0`) briefed, not run | The kit tag, and nothing else |
+| guppi-mcp-app | A tools-only project whose manifest introduced Sky (blue `#2d7ff9` actions on `#f5f9ff`, navy `#1a5ea8` brand); now the same as the default | Nothing |
 | hr-super-agent | Standalone at `hr.dengler.io`. Phase 8 (re-home as `/p/hr/` on the platform, every JWT authorizer pointed at the platform's Cognito pool) briefed, waits on 5a | After phase 8 its gateways accept the chat.dengler.io token, which is the token this project forwards |
 | guppi-connect | Spike done: canvas, contact flows, mock, eval; real sub-agents passed with an HR-pool token | Becomes an agent project |
 
@@ -81,9 +81,9 @@ Each phase ends with a deploy and a check, as in the other GUPPI repositories.
    JWT passthrough, and the `InvokeAgentRuntime` grant for the platform's gateway role,
    as phase 8 builds its own. Done when curl with a platform token gets a canvas reply
    through `/api/hr-connect/invocations`.
-3. Manifest and theme. `web/manifest.json`: `name` `hr-connect`, `label` "HR Assistant
-   (Connect)", `agent` `/api/hr-connect/invocations`, the Sky `theme` from guppi-mcp-app,
-   and the four scenario openers as `suggestions`. A small `ext.js` only if the escalation
+3. Manifest. `web/manifest.json`: `name` `hr-connect`, `label` "HR Assistant
+   (Connect)", `agent` `/api/hr-connect/invocations`, no `theme` (the page's default is
+   Sky), and the four scenario openers as `suggestions`. A small `ext.js` only if the escalation
    event needs more than the closing line. Published to `projects/hr-connect/` from the
    deploy script, as guppi-mcp-app does. Done when the page loads themed and signed in.
 4. Canvas on the platform token. The production application's data requests already
