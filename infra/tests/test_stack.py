@@ -7,13 +7,11 @@ from hr_super_agent_infra.stack import HrSuperAgentStack
 
 ACCOUNT = "123456789012"
 REGION = "us-east-1"
-ZONE_CONTEXT_KEY = f"hosted-zone:account={ACCOUNT}:domainName=dengler.io:region={REGION}"
 
 
 def synth(**extra_context) -> Template:
     app = cdk.App(
         context={
-            ZONE_CONTEXT_KEY: {"Id": "/hostedzone/Z0000000000000", "Name": "dengler.io."},
             "image_uri": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/hr-super-agent:test",
             **extra_context,
         }
@@ -29,22 +27,6 @@ def template() -> Template:
     return synth()
 
 
-def test_secret_parameter_is_no_echo(template):
-    template.has_parameter("GoogleClientSecret", {"NoEcho": True})
-
-
-def test_web_client_rotates_refresh_tokens(template):
-    template.has_resource_properties(
-        "AWS::Cognito::UserPoolClient",
-        {
-            "ClientName": "hr-super-agent-web",
-            "RefreshTokenRotation": {"Feature": "ENABLED", "RetryGracePeriodSeconds": 30},
-            # Unchanged: 30 days, expressed in minutes by CloudFormation.
-            "RefreshTokenValidity": 43200,
-        },
-    )
-
-
 @pytest.fixture(scope="module")
 def singleton_template() -> Template:
     return synth(own_account_singletons="true")
@@ -52,46 +34,121 @@ def singleton_template() -> Template:
 
 def test_account_singletons_are_left_to_the_guppi_gpt_stack_by_default(template):
     template.resource_count_is("AWS::XRay::TransactionSearchConfig", 0)
-    apex = [
-        r
-        for r in template.find_resources("AWS::Route53::RecordSet").values()
-        if r["Properties"]["Name"] == "dengler.io."
-    ]
-    assert apex == []
-    domains = template.find_resources("AWS::Cognito::UserPoolDomain")
-    (domain,) = domains.values()
-    assert domain["Properties"]["Domain"] == "auth-hr.dengler.io"
-    assert not any(dep.startswith("ApexPlaceholder") for dep in domain.get("DependsOn", []))
 
 
-def test_apex_placeholder_record(singleton_template):
-    singleton_template.has_resource_properties(
+def test_the_platform_owns_the_page_sign_in_and_edge(template):
+    # Phase 8: the page, sign-in, CloudFront, WAF, the edge gateway and its limits, the
+    # feedback API, and DNS belong to the GuppiGpt platform stack.
+    for resource_type in (
+        "AWS::Cognito::UserPool",
+        "AWS::Cognito::UserPoolClient",
+        "AWS::Cognito::UserPoolDomain",
+        "AWS::CertificateManager::Certificate",
         "AWS::Route53::RecordSet",
-        {"Name": "dengler.io.", "Type": "A", "ResourceRecords": ["192.0.2.1"]},
-    )
-
-
-def test_user_pool_domain_waits_for_apex_record(singleton_template):
-    domains = singleton_template.find_resources("AWS::Cognito::UserPoolDomain")
-    assert len(domains) == 1
-    (domain,) = domains.values()
-    assert domain["Properties"]["Domain"] == "auth-hr.dengler.io"
-    assert any(dep.startswith("ApexPlaceholder") for dep in domain.get("DependsOn", []))
-
-
-def test_site_and_auth_records_use_the_hr_hostnames(template):
-    names = {
-        r["Properties"]["Name"]
-        for r in template.find_resources("AWS::Route53::RecordSet").values()
-    }
-    assert names == {"hr.dengler.io.", "auth-hr.dengler.io."}
-
-
-def test_gateway_has_no_protocol_type_and_uses_cognito_jwt(template):
+        "AWS::CloudFront::Distribution",
+        "AWS::CloudFront::ResponseHeadersPolicy",
+        "AWS::WAFv2::WebACL",
+        "AWS::WAFv2::WebACLAssociation",
+        "AWS::BedrockAgentCore::GatewayRateLimit",
+        "AWS::ApiGateway::RestApi",
+        "AWS::Events::EventBus",
+        "AWS::Events::Archive",
+        "AWS::Events::Rule",
+        "AWS::Events::ApiDestination",
+        "AWS::SQS::Queue",
+    ):
+        template.resource_count_is(resource_type, 0)
     gateways = template.find_resources("AWS::BedrockAgentCore::Gateway")
-    (gateway,) = [g for g in gateways.values() if g["Properties"]["Name"] == "hr-super-agent-edge"]
-    assert "ProtocolType" not in gateway["Properties"]
-    assert gateway["Properties"]["AuthorizerType"] == "CUSTOM_JWT"
+    assert sorted(g["Properties"]["Name"] for g in gateways.values()) == [
+        "hr-super-agent-agents",
+        "hr-super-agent-tools",
+    ]
+    parameters = template.to_json().get("Parameters", {})
+    for removed in ("GoogleClientId", "GoogleClientSecret", "DynatraceBeaconOrigin"):
+        assert removed not in parameters
+    outputs = template.to_json().get("Outputs", {})
+    for removed in (
+        "SiteBucketName",
+        "DistributionId",
+        "UserPoolId",
+        "UserPoolClientId",
+        "AuthDomain",
+        "GatewayUrl",
+        "GatewayArn",
+        "FeedbackApiUrl",
+        "FeedbackBusName",
+        "RumScriptPath",
+        "RumBeaconOrigin",
+    ):
+        assert removed not in outputs
+
+
+def _ssm_parameter_ref(template, name: str) -> dict:
+    """The Ref to the SSM-typed CloudFormation parameter that reads `name` at deploy time."""
+    parameters = template.to_json()["Parameters"]
+    (logical_id,) = [
+        key
+        for key, value in parameters.items()
+        if value.get("Type") == "AWS::SSM::Parameter::Value<String>"
+        and value.get("Default") == name
+    ]
+    return {"Ref": logical_id}
+
+
+def test_every_authorizer_accepts_the_platform_token(template):
+    discovery = _ssm_parameter_ref(template, "/guppi/platform/jwt-discovery-url")
+    client = _ssm_parameter_ref(template, "/guppi/platform/user-pool-client-id")
+    gateways = template.find_resources("AWS::BedrockAgentCore::Gateway")
+    runtimes = template.find_resources("AWS::BedrockAgentCore::Runtime")
+    authorizers = [
+        g["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
+        for g in gateways.values()
+    ] + [
+        r["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
+        for r in runtimes.values()
+        if "AuthorizerConfiguration" in r["Properties"]
+    ]
+    # Two gateways, the orchestrator, and three sub-agents; the HR tools runtime has no
+    # authorizer of its own and verifies the forwarded token itself (D19).
+    assert len(authorizers) == 6
+    for authorizer in authorizers:
+        assert authorizer["DiscoveryUrl"] == discovery
+        assert authorizer["AllowedClients"] == [client]
+
+
+def test_hr_tools_verify_the_platform_issuer_and_client(template):
+    env = _hr_tools_runtime(template)["Properties"]["EnvironmentVariables"]
+    discovery = _ssm_parameter_ref(template, "/guppi/platform/jwt-discovery-url")
+    client = _ssm_parameter_ref(template, "/guppi/platform/user-pool-client-id")
+    assert env["TOKEN_ISSUER"] == {
+        "Fn::Select": [0, {"Fn::Split": ["/.well-known/openid-configuration", discovery]}]
+    }
+    # CDK folds a one-element Fn::Join to the element itself.
+    assert env["TOKEN_ALLOWED_CLIENTS"] == client
+
+
+def test_platform_gateway_role_may_invoke_the_orchestrator(template):
+    role_arn = _ssm_parameter_ref(template, "/guppi/platform/edge-gateway-role-arn")
+    policies = template.find_resources("AWS::IAM::Policy")
+    (policy,) = [
+        p for key, p in policies.items() if key.startswith("PlatformGatewayInvokePolicy")
+    ]
+    # The role name, cut from the ARN the platform publishes.
+    (role,) = policy["Properties"]["Roles"]
+    assert json.dumps(role_arn) in json.dumps(role)
+    (statement,) = policy["Properties"]["PolicyDocument"]["Statement"]
+    assert statement["Action"] == "bedrock-agentcore:InvokeAgentRuntime"
+    resources = json.dumps(statement["Resource"])
+    assert "Runtime" in resources and "runtime-endpoint/*" in resources
+
+
+def test_page_url_is_the_platform_project_path(template):
+    site = _ssm_parameter_ref(template, "/guppi/platform/site-url")
+    outputs = template.to_json()["Outputs"]
+    assert outputs["SiteUrl"]["Value"] == {"Fn::Join": ["", [site, "p/hr/"]]}
+    assert outputs["AgentPath"]["Value"] == "/api/hr/invocations"
+    for kept in ("AgentsGatewayUrl", "ToolsGatewayUrl", "RuntimeArn", "KnowledgeBaseId"):
+        assert kept in outputs
 
 
 def test_runtime_is_agui_and_not_bound_to_gateway_by_default(template):
@@ -113,22 +170,15 @@ def test_runtime_is_agui_and_not_bound_to_gateway_by_default(template):
 
 
 def test_runtime_binds_to_gateway_when_asked():
-    synth(bind_runtime_to_gateway=True).has_resource_properties(
+    bound = synth(bind_runtime_to_gateway=True)
+    gateway_arn = _ssm_parameter_ref(bound, "/guppi/platform/edge-gateway-arn")
+    bound.has_resource_properties(
         "AWS::BedrockAgentCore::Runtime",
         {
             "AuthorizerConfiguration": {
                 "CustomJWTAuthorizer": {
                     "AllowedWorkloadConfiguration": {
-                        "HostingEnvironments": [
-                            {
-                                "Arn": {
-                                    "Fn::GetAtt": [
-                                        Match.string_like_regexp("EdgeGateway.*"),
-                                        "GatewayArn",
-                                    ]
-                                }
-                            }
-                        ]
+                        "HostingEnvironments": [{"Arn": gateway_arn}]
                     }
                 }
             },
@@ -136,45 +186,34 @@ def test_runtime_binds_to_gateway_when_asked():
     )
 
 
+def test_the_gateway_arn_is_read_only_when_binding(template):
+    parameters = template.to_json()["Parameters"]
+    assert all(
+        value.get("Default") != "/guppi/platform/edge-gateway-arn"
+        for value in parameters.values()
+    )
+
+
+def _platform_target(template) -> dict:
+    targets = template.find_resources("AWS::BedrockAgentCore::GatewayTarget")
+    (target,) = [t for key, t in targets.items() if key.startswith("PlatformTarget")]
+    return target
+
+
 def test_target_is_runtime_with_jwt_passthrough(template):
-    template.has_resource_properties(
-        "AWS::BedrockAgentCore::GatewayTarget",
-        {
-            "Name": "api",
-            "CredentialProviderConfigurations": [{"CredentialProviderType": "JWT_PASSTHROUGH"}],
-            "TargetConfiguration": {"Http": {"AgentcoreRuntime": {"Qualifier": "DEFAULT"}}},
-        },
+    target = _platform_target(template)
+    props = target["Properties"]
+    assert props["Name"] == "hr"
+    assert props["GatewayIdentifier"] == _ssm_parameter_ref(
+        template, "/guppi/platform/edge-gateway-id"
     )
-
-
-def test_api_behavior_streams_through_cloudfront(template):
-    template.has_resource_properties(
-        "AWS::CloudFront::Distribution",
-        {
-            "DistributionConfig": {
-                "Aliases": ["hr.dengler.io"],
-                "CacheBehaviors": Match.array_with(
-                    [
-                        Match.object_like(
-                            {
-                                "PathPattern": "/api/*",
-                                "Compress": False,
-                                "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
-                                "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
-                            }
-                        )
-                    ]
-                ),
-                "Origins": Match.array_with(
-                    [
-                        Match.object_like(
-                            {"CustomOriginConfig": Match.object_like({"OriginReadTimeout": 60})}
-                        )
-                    ]
-                ),
-            }
-        },
-    )
+    assert props["CredentialProviderConfigurations"] == [
+        {"CredentialProviderType": "JWT_PASSTHROUGH"}
+    ]
+    runtime = props["TargetConfiguration"]["Http"]["AgentcoreRuntime"]
+    assert runtime["Qualifier"] == "DEFAULT"
+    assert runtime["Arn"]["Fn::GetAtt"][0].startswith("Runtime")
+    assert any(d.startswith("PlatformGatewayInvokePolicy") for d in target["DependsOn"])
 
 
 def test_no_lambda_functions(template):
@@ -237,75 +276,6 @@ def test_nightly_ingestion_is_a_scheduler_universal_target(template):
                 }
             }
         ),
-    )
-
-
-def test_web_acl_has_three_blocking_rules_associated_with_the_edge_gateway(template):
-    acls = template.find_resources("AWS::WAFv2::WebACL")
-    (acl,) = acls.values()
-    assert acl["Properties"]["Scope"] == "REGIONAL"
-    rules = acl["Properties"]["Rules"]
-    assert len(rules) == 3
-    names = {rule["Name"] for rule in rules}
-    assert names == {"CloudFrontOnly", "AWSManagedRulesCommonRuleSet", "RateLimit"}
-    for rule in rules:
-        if rule["Name"] == "AWSManagedRulesCommonRuleSet":
-            assert rule["OverrideAction"] == {"None": {}}
-        else:
-            assert rule["Action"] == {"Block": {}}
-    template.has_resource_properties(
-        "AWS::WAFv2::WebACLAssociation",
-        {
-            "ResourceArn": {
-                "Fn::GetAtt": [Match.string_like_regexp("EdgeGateway.*"), "GatewayArn"]
-            },
-        },
-    )
-
-
-def test_cloudfront_gateway_origin_carries_the_origin_verify_header(template):
-    rendered = json.dumps(template.to_json())
-    assert "X-Origin-Verify" in rendered
-    origins = template.find_resources("AWS::CloudFront::Distribution")
-    (distribution,) = origins.values()
-    # Two custom origins now: the edge gateway and the feedback API. Only the gateway
-    # origin carries the header, since the feedback API checks the caller's token itself.
-    custom_origins = [
-        origin
-        for origin in distribution["Properties"]["DistributionConfig"]["Origins"]
-        if "OriginCustomHeaders" in origin
-    ]
-    (gateway_origin,) = custom_origins
-    (header,) = gateway_origin["OriginCustomHeaders"]
-    assert header["HeaderName"] == "X-Origin-Verify"
-    assert "resolve:secretsmanager" in json.dumps(header["HeaderValue"])
-
-
-def test_response_headers_policy_has_the_csp_and_is_on_the_default_behavior(template):
-    policies = template.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
-    (policy_id, policy) = next(iter(policies.items()))
-    csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
-        "ContentSecurityPolicy"
-    ]["ContentSecurityPolicy"]
-    # DynatraceBeaconOrigin defaults blank, so the CSP the stack renders without that
-    # parameter set is the false branch of the Fn::If (test_csp_adds_the_beacon_origin_
-    # only_when_the_parameter_is_set below checks both branches).
-    assert csp["Fn::If"][2] == (
-        "default-src 'self'; connect-src 'self' https://auth-hr.dengler.io; "
-        "img-src 'self' data:; style-src 'self'; script-src 'self'; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    )
-    template.has_resource_properties(
-        "AWS::CloudFront::Distribution",
-        {
-            "DistributionConfig": Match.object_like(
-                {
-                    "DefaultCacheBehavior": Match.object_like(
-                        {"ResponseHeadersPolicyId": {"Ref": policy_id}}
-                    )
-                }
-            )
-        },
     )
 
 
@@ -431,18 +401,13 @@ def test_runtime_forwards_the_bearer_and_the_trace_context_to_the_container(temp
 
 
 def test_edge_target_forwards_the_session_id_and_the_trace_context(template):
-    template.has_resource_properties(
-        "AWS::BedrockAgentCore::GatewayTarget",
-        {
-            "Name": "api",
-            "MetadataConfiguration": {
-                "AllowedRequestHeaders": [
-                    "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
-                    "traceparent",
-                ]
-            },
-        },
-    )
+    props = _platform_target(template)["Properties"]
+    assert props["MetadataConfiguration"] == {
+        "AllowedRequestHeaders": [
+            "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
+            "traceparent",
+        ]
+    }
 
 
 def test_runtime_role_can_let_xray_write_spans_to_its_own_log_group(template):
@@ -468,44 +433,6 @@ def test_runtime_role_can_let_xray_write_spans_to_its_own_log_group(template):
             }
         ),
     )
-
-
-def test_rum_script_path_and_beacon_origin_outputs(template):
-    outputs = template.to_json()["Outputs"]
-    assert outputs["RumScriptPath"]["Value"] == "/dt/ruxitagentjs.js"
-    assert outputs["RumBeaconOrigin"]["Value"] == {"Ref": "DynatraceBeaconOrigin"}
-    template.has_parameter("DynatraceBeaconOrigin", {"Default": ""})
-
-
-def test_csp_adds_the_beacon_origin_only_when_the_parameter_is_set(template):
-    policies = template.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
-    (policy,) = policies.values()
-    csp = policy["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"][
-        "ContentSecurityPolicy"
-    ]["ContentSecurityPolicy"]
-    if_branches = csp["Fn::If"]
-    assert if_branches[0] == "HasDynatraceBeaconOrigin"
-    # Rendering with the parameter unset (the default): the same CSP the stack had
-    # before Dynatrace, with no beacon origin appended.
-    without_beacon = if_branches[2]
-    assert without_beacon == (
-        "default-src 'self'; connect-src 'self' https://auth-hr.dengler.io; "
-        "img-src 'self' data:; style-src 'self'; script-src 'self'; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    )
-    # Rendering with the parameter set: the beacon origin joined into connect-src.
-    with_beacon = if_branches[1]
-    joined = with_beacon["Fn::Join"][1]
-    rendered = "".join(
-        part if isinstance(part, str) else "<DynatraceBeaconOrigin>" for part in joined
-    )
-    assert rendered == (
-        "default-src 'self'; connect-src 'self' https://auth-hr.dengler.io "
-        "<DynatraceBeaconOrigin>; img-src 'self' data:; style-src 'self'; "
-        "script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    )
-    conditions = template.to_json().get("Conditions", {})
-    assert "HasDynatraceBeaconOrigin" in conditions
 
 
 def test_dynatrace_otlp_parameters_and_condition(template):
@@ -586,15 +513,10 @@ def test_operational_alarms_report_metrics_and_notify_the_alarm_topic(template):
     # plain metric (MetricName/Namespace at the top level) or a math expression (a Metrics
     # list of MetricStat entries), so both shapes are read the same way below.
     expected_metrics = {
-        "EdgeGateway5xxAlarm": {("AWS/Bedrock-AgentCore", "SystemErrors")},
         "ToolsGateway5xxAlarm": {("AWS/Bedrock-AgentCore", "SystemErrors")},
         "Runtime5xxAlarm": {("AWS/Bedrock-AgentCore", "SystemErrors")},
         "RuntimeLatencyP90Alarm": {("AWS/Bedrock-AgentCore", "Latency")},
         "BedrockThrottlingAlarm": {("AWS/Bedrock", "InvocationThrottles")},
-        "EdgeGateway4xxRateAlarm": {
-            ("AWS/Bedrock-AgentCore", "UserErrors"),
-            ("AWS/Bedrock-AgentCore", "Invocations"),
-        },
     }
 
     matched = {}
@@ -617,27 +539,6 @@ def test_operational_alarms_report_metrics_and_notify_the_alarm_topic(template):
             }
         assert found == expected_metrics[prefix]
         assert props["TreatMissingData"] == "notBreaching"
-
-
-def test_edge_gateway_has_per_user_rate_limit_on_the_jwt_sub_claim(template):
-    template.has_resource_properties(
-        "AWS::BedrockAgentCore::GatewayRateLimit",
-        {
-            "DimensionKeys": ["$.context.jwt.sub"],
-            "Entries": [
-                Match.object_like(
-                    {
-                        "Dimensions": {"$.context.jwt.sub": "*"},
-                        "Requests": [{"Rate": 30, "Period": "minute"}],
-                        "Connections": [{"Rate": 2, "Period": "second"}],
-                    }
-                )
-            ],
-            "GatewayIdentifier": {
-                "Fn::GetAtt": [Match.string_like_regexp("EdgeGateway.*"), "GatewayIdentifier"]
-            },
-        },
-    )
 
 
 # ---- Conversation log ----------------------------------------------------------------
@@ -769,7 +670,6 @@ def test_vended_log_groups_have_30_day_retention_under_the_shared_prefix(templat
     groups = template.find_resources("AWS::Logs::LogGroup")
     names = {g["Properties"]["LogGroupName"] for g in groups.values()}
     assert names == {
-        "/aws/vendedlogs/bedrock-agentcore/hr-super-agent-edge",
         "/aws/vendedlogs/bedrock-agentcore/hr-super-agent-tools",
         "/aws/vendedlogs/bedrock-agentcore/hr_super_agent",
         "/aws/vendedlogs/bedrock-agentcore/hr_super_agent_tools",
@@ -792,7 +692,7 @@ def test_vended_log_delivery_sources_cover_application_logs_and_traces(template)
 
     # Every resource gets APPLICATION_LOGS only: a CloudWatch Logs destination for the
     # gateways' TRACES log type was rejected by CloudFormation on 4 Sep 2026.
-    assert len(log_types_by_resource) == 8
+    assert len(log_types_by_resource) == 7
     assert all(v == {"APPLICATION_LOGS"} for v in log_types_by_resource.values())
 
     # Each delivery depends explicitly on its source and its destination, since the
@@ -863,8 +763,8 @@ def test_dynatrace_log_backup_bucket_is_small_and_conditional(template):
     assert backup["Condition"] == "HasDynatraceLogs"
     (rule,) = backup["Properties"]["LifecycleConfiguration"]["Rules"]
     assert rule["ExpirationInDays"] == 7
-    # Not the site, content, or conversation log buckets.
-    assert len(buckets) == 4
+    # Not the content or conversation log buckets.
+    assert len(buckets) == 3
 
 
 def test_dynatrace_firehose_stream_targets_the_dynatrace_http_endpoint(template):
@@ -901,7 +801,7 @@ def test_dynatrace_subscription_filters_target_every_vended_log_group(template):
     dynatrace_filters = {
         k: v for k, v in filters.items() if v.get("Condition") == "HasDynatraceLogs"
     }
-    assert len(dynatrace_filters) == 8
+    assert len(dynatrace_filters) == 7
     (stream_logical_id,) = template.find_resources("AWS::KinesisFirehose::DeliveryStream").keys()
     log_group_refs = set()
     for f in dynatrace_filters.values():
@@ -915,135 +815,6 @@ def test_dynatrace_subscription_filters_target_every_vended_log_group(template):
         ).keys()
     )
     assert log_group_refs == vended_log_group_ids
-
-
-def test_feedback_method_needs_a_cognito_token_and_a_validated_body(template):
-    methods = template.find_resources("AWS::ApiGateway::Method")
-    (method,) = [m for m in methods.values() if m["Properties"]["HttpMethod"] == "POST"]
-    props = method["Properties"]
-    assert props["AuthorizationType"] == "COGNITO_USER_POOLS"
-    assert "AuthorizerId" in props
-    # A user pool authorizer with no scope reads the bearer as an id token; the page holds
-    # the access token, so the method names a scope every issued token claims.
-    assert props["AuthorizationScopes"] == ["openid"]
-    assert "RequestValidatorId" in props
-    assert props["MethodResponses"] == [{"StatusCode": "202"}, {"StatusCode": "400"}]
-    (validator,) = template.find_resources("AWS::ApiGateway::RequestValidator").values()
-    assert validator["Properties"]["ValidateRequestBody"] is True
-    (model,) = template.find_resources("AWS::ApiGateway::Model").values()
-    schema = model["Properties"]["Schema"]
-    assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == {"vote", "runId", "threadId"}
-    assert schema["properties"]["vote"]["enum"] == ["up", "down", "none"]
-
-
-def test_feedback_integration_puts_one_event_on_the_bus_with_no_compute(template):
-    methods = template.find_resources("AWS::ApiGateway::Method")
-    (method,) = [m for m in methods.values() if m["Properties"]["HttpMethod"] == "POST"]
-    integration = method["Properties"]["Integration"]
-    assert integration["Type"] == "AWS"
-    assert integration["IntegrationHttpMethod"] == "POST"
-    assert "apigateway:us-east-1:events:action/PutEvents" in json.dumps(integration["Uri"])
-    assert integration["RequestParameters"] == {
-        "integration.request.header.X-Amz-Target": "'AWSEvents.PutEvents'",
-        "integration.request.header.Content-Type": "'application/x-amz-json-1.1'",
-    }
-    body = integration["RequestTemplates"]["application/json"]
-    assert '"EventBusName":"hr-super-agent-feedback"' in body
-    assert '"Source":"hrsuperagent.feedback"' in body
-    # The one field the request body cannot supply is the time the request arrived. The
-    # caller's Cognito sub claim stays out of the event: the template cannot hash it, and
-    # a vote joins its conversation through threadId rather than through the subject.
-    assert "$context.requestTimeEpoch" in body
-    assert "claims.sub" not in body
-    assert "subject" not in body
-    assert integration["IntegrationResponses"][0]["StatusCode"] == "202"
-    assert integration["IntegrationResponses"][1]["StatusCode"] == "400"
-
-
-def test_feedback_behavior_is_matched_before_the_api_wildcard(template):
-    (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
-    config = distribution["Properties"]["DistributionConfig"]
-    # CloudFront compares the path against these patterns in the order they are listed, so
-    # a vote reaches the feedback API rather than the edge gateway only while this holds.
-    assert [b["PathPattern"] for b in config["CacheBehaviors"]] == ["/api/feedback", "/api/*"]
-    feedback_behavior = config["CacheBehaviors"][0]
-    assert feedback_behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
-    assert feedback_behavior["OriginRequestPolicyId"] == "b689b0a8-53d0-40ab-baf2-68738e2966ac"
-    (origin,) = [o for o in config["Origins"] if o["Id"] == feedback_behavior["TargetOriginId"]]
-    assert origin["OriginPath"] == "/prod"
-    assert "execute-api" in json.dumps(origin["DomainName"])
-    # The API authorizes every request itself, so this origin carries no secret header.
-    assert "OriginCustomHeaders" not in origin
-
-
-def test_feedback_bus_and_archive_keep_every_vote_without_dynatrace(template):
-    (bus,) = template.find_resources("AWS::Events::EventBus").values()
-    assert bus["Properties"]["Name"] == "hr-super-agent-feedback"
-    assert "Condition" not in bus
-    (archive,) = template.find_resources("AWS::Events::Archive").values()
-    assert "Condition" not in archive
-    assert archive["Properties"]["RetentionDays"] == 30
-    assert archive["Properties"]["EventPattern"] == {"source": ["hrsuperagent.feedback"]}
-
-
-def test_feedback_reaches_dynatrace_only_when_the_parameters_are_set(template):
-    # All three resources sit under HasDynatraceLogs, the condition that requires both
-    # DynatraceOtlpEndpoint and DynatraceApiToken, so CloudFormation creates none of them
-    # while either parameter is empty, which is the default.
-    (connection,) = template.find_resources("AWS::Events::Connection").values()
-    assert connection["Condition"] == "HasDynatraceLogs"
-    auth = connection["Properties"]["AuthParameters"]["ApiKeyAuthParameters"]
-    assert auth["ApiKeyName"] == "Authorization"
-    assert auth["ApiKeyValue"]["Fn::Join"][1] == [
-        "Api-Token ",
-        {"Ref": "DynatraceApiToken"},
-    ]
-
-    (destination,) = template.find_resources("AWS::Events::ApiDestination").values()
-    assert destination["Condition"] == "HasDynatraceLogs"
-    endpoint = destination["Properties"]["InvocationEndpoint"]
-    assert endpoint["Fn::Join"][1][-1] == "/api/v2/bizevents/ingest"
-
-    (rule,) = template.find_resources("AWS::Events::Rule").values()
-    assert rule["Condition"] == "HasDynatraceLogs"
-    assert rule["Properties"]["EventPattern"] == {"source": ["hrsuperagent.feedback"]}
-    (target,) = rule["Properties"]["Targets"]
-    assert target["RetryPolicy"] == {"MaximumRetryAttempts": 2}
-    (queue_id,) = template.find_resources("AWS::SQS::Queue").keys()
-    assert target["DeadLetterConfig"]["Arn"] == {"Fn::GetAtt": [queue_id, "Arn"]}
-    body = target["InputTransformer"]["InputTemplate"]
-    assert '"event.type":"hrsuperagent.reply-feedback"' in body
-    assert '"event.provider":"hrsuperagent"' in body
-    for field in ("vote", "run.id", "trace.id", "thread.id", "message.id", "request.id"):
-        assert f'"{field}":<' in body
-    assert "subject" not in body
-
-
-def test_feedback_dead_letter_queue_has_an_alarm_under_the_same_condition(template):
-    (queue_id,) = template.find_resources("AWS::SQS::Queue").keys()
-    alarms = template.find_resources("AWS::CloudWatch::Alarm")
-    (alarm,) = [
-        a
-        for a in alarms.values()
-        if a["Properties"].get("Namespace") == "AWS/SQS"
-        and a["Properties"].get("MetricName") == "ApproximateNumberOfMessagesVisible"
-    ]
-    assert alarm["Condition"] == "HasDynatraceLogs"
-    assert alarm["Properties"]["Dimensions"] == [
-        {"Name": "QueueName", "Value": {"Fn::GetAtt": [queue_id, "QueueName"]}}
-    ]
-    assert alarm["Properties"]["Threshold"] == 1
-    assert alarm["Properties"]["TreatMissingData"] == "notBreaching"
-    (action,) = alarm["Properties"]["AlarmActions"]
-    assert action == {"Ref": next(iter(template.find_resources("AWS::SNS::Topic")))}
-
-
-def test_feedback_outputs_name_the_api_and_the_bus(template):
-    outputs = template.to_json()["Outputs"]
-    assert json.dumps(outputs["FeedbackApiUrl"]["Value"]).endswith('"/api/feedback"]]}')
-    (bus_id,) = template.find_resources("AWS::Events::EventBus").keys()
-    assert outputs["FeedbackBusName"]["Value"] == {"Ref": bus_id}
 
 
 def test_runtime_waits_for_the_runtime_role_policy(template):
@@ -1098,7 +869,7 @@ def test_hr_target_signs_with_the_gateway_role_and_forwards_the_headers(template
     targets = template.find_resources(
         "AWS::BedrockAgentCore::GatewayTarget", {"Properties": {"Name": "hr"}}
     )
-    (target,) = targets.values()
+    (target,) = [t for t in targets.values() if "Mcp" in t["Properties"]["TargetConfiguration"]]
     props = target["Properties"]
     (credential,) = props["CredentialProviderConfigurations"]
     assert credential["CredentialProviderType"] == "GATEWAY_IAM_ROLE"

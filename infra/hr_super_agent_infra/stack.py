@@ -1,18 +1,18 @@
-"""The HrSuperAgent stack.
+"""The HrSuperAgent stack, an agent project on the chat.dengler.io platform.
 
-DNS and certificates, Cognito with Google federation, the agent runtime, the edge
-gateway with a runtime target, the tools gateway in front of the knowledge base,
-CloudFront serving the page and proxying /api/* to the gateway, a regional web ACL on
-the edge gateway, and the billing and WAF alarms.
+The platform stack in guppi-gpt (GuppiGpt) owns the page, sign-in, CloudFront, WAF, the edge
+gateway and its per-user limits, and publishes their identifiers as /guppi/platform/* SSM
+parameters (docs/proposals/platform.md there). This stack reads those parameters and holds
+what is HR's own: the orchestrator runtime and its target named "hr" on the platform's edge
+gateway, the three sub-agent runtimes and their agents gateway, the HR tools server and its
+tables, the tools gateway in front of the knowledge base and the HR tools, nightly
+ingestion, the conversation log, alarms, vended log delivery, and the Dynatrace export.
+Every JWT authorizer accepts the platform user pool's token, so the token the page holds
+on chat.dengler.io is the one checked on every hop.
 
 Resource ordering that matters:
-  apex A record -> user pool custom domain (Cognito refuses the domain without an A record;
-                   the record is GuppiGpt's unless own_account_singletons is set)
-  gateway -> runtime (runtime authorizer names the gateway as its allowed workload)
-  runtime -> gateway role policy -> gateway target
+  runtime -> platform gateway role policy -> "hr" target on the platform edge gateway
   tools gateway -> runtime environment variables (the runtime needs the tools gateway url)
-  feedback API -> CloudFront (its /api/feedback behavior is listed before /api/*, and
-                  CloudFront matches behaviors in the order they appear)
 """
 
 from __future__ import annotations
@@ -21,16 +21,11 @@ import json
 from pathlib import Path
 
 import aws_cdk as cdk
-import jsii
 from aws_cdk import (
     Duration,
-    Fn,
     RemovalPolicy,
     SecretValue,
     Size,
-)
-from aws_cdk import (
-    aws_apigateway as apigateway,
 )
 from aws_cdk import (
     aws_bedrock as bedrock,
@@ -39,31 +34,13 @@ from aws_cdk import (
     aws_bedrockagentcore as agentcore,
 )
 from aws_cdk import (
-    aws_certificatemanager as acm,
-)
-from aws_cdk import (
-    aws_cloudfront as cloudfront,
-)
-from aws_cdk import (
-    aws_cloudfront_origins as origins,
-)
-from aws_cdk import (
     aws_cloudwatch as cloudwatch,
 )
 from aws_cdk import (
     aws_cloudwatch_actions as cloudwatch_actions,
 )
 from aws_cdk import (
-    aws_cognito as cognito,
-)
-from aws_cdk import (
     aws_ecr_assets as ecr_assets,
-)
-from aws_cdk import (
-    aws_events as events,
-)
-from aws_cdk import (
-    aws_events_targets as events_targets,
 )
 from aws_cdk import (
     aws_iam as iam,
@@ -81,12 +58,6 @@ from aws_cdk import (
     aws_logs_destinations as logs_destinations,
 )
 from aws_cdk import (
-    aws_route53 as route53,
-)
-from aws_cdk import (
-    aws_route53_targets as targets,
-)
-from aws_cdk import (
     aws_s3 as s3,
 )
 from aws_cdk import (
@@ -102,10 +73,7 @@ from aws_cdk import (
     aws_sns as sns,
 )
 from aws_cdk import (
-    aws_sqs as sqs,
-)
-from aws_cdk import (
-    aws_wafv2 as wafv2,
+    aws_ssm as ssm,
 )
 from aws_cdk import (
     aws_xray as xray,
@@ -116,23 +84,31 @@ from hr_super_agent_infra.hr_tools import HR_TOOL_PREFIX, TOOLS_RUNTIME_NAME, Hr
 from hr_super_agent_infra.runtime_role import runtime_execution_role
 from hr_super_agent_infra.sub_agents import AGENTS_GATEWAY_NAME, SubAgents, sub_agent_runtime_name
 
-ZONE_NAME = "dengler.io"
-CHAT_HOST = f"hr.{ZONE_NAME}"
-AUTH_HOST = f"auth-hr.{ZONE_NAME}"
-SITE_URL = f"https://{CHAT_HOST}/"
+# ---- Platform contract ---------------------------------------------------------------
+# The identifiers the GuppiGpt platform stack publishes for its projects, read at deploy
+# time with ssm.StringParameter.value_for_string_parameter (guppi-gpt's
+# docs/proposals/platform.md, "Platform contract").
+PLATFORM_PARAMETER_PREFIX = "/guppi/platform"
+PARAM_SITE_URL = f"{PLATFORM_PARAMETER_PREFIX}/site-url"
+PARAM_EDGE_GATEWAY_ID = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-id"
+PARAM_EDGE_GATEWAY_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-arn"
+PARAM_EDGE_GATEWAY_ROLE_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-role-arn"
+PARAM_USER_POOL_CLIENT_ID = f"{PLATFORM_PARAMETER_PREFIX}/user-pool-client-id"
+PARAM_JWT_DISCOVERY_URL = f"{PLATFORM_PARAMETER_PREFIX}/jwt-discovery-url"
+# The project's name on the platform: the page is /p/hr/, the manifest and extension are
+# under /projects/hr/, and the edge gateway target of the same name makes the orchestrator
+# answer at /api/hr/invocations (the platform's CloudFront function rewrites that to
+# /hr/invocations on the gateway).
+PROJECT_NAME = "hr"
+TARGET_NAME = PROJECT_NAME
+OIDC_DISCOVERY_SUFFIX = "/.well-known/openid-configuration"
 
-# RFC 5737 TEST-NET-1: reserved for documentation, never routed. Cognito only needs the
-# parent domain to resolve before it will create the custom domain.
-APEX_PLACEHOLDER_IP = "192.0.2.1"
-
-# The apex placeholder record and Transaction Search exist once per zone and once per
-# account. The GuppiGpt stack in the same account already owns both, so this stack
-# creates them only with -c own_account_singletons=true, for an account without it.
+# Transaction Search exists once per account. The GuppiGpt stack in the same account
+# already owns it, so this stack creates it only with -c own_account_singletons=true, for
+# an account without it (D16).
 OWN_ACCOUNT_SINGLETONS_CONTEXT = "own_account_singletons"
 
 RUNTIME_NAME = "hr_super_agent"
-GATEWAY_NAME = "hr-super-agent-edge"
-TARGET_NAME = "api"  # makes the gateway path /api/invocations, matching the /api/* behavior
 SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 # W3C trace context minted by the page per run (docs/proposals/traceability.md). Both the
 # edge gateway target and the runtime drop request headers they were not told to keep,
@@ -144,8 +120,6 @@ TOOLS_GATEWAY_NAME = "hr-super-agent-tools"
 KB_TARGET_NAME = "docs"  # tools are named docs___Retrieve and docs___AgenticRetrieveStream
 KB_NAME = "hr-super-agent-docs"
 CONTENT_PREFIX = "docs/"  # scripts/seed-content.sh writes docs/<source>/... to the content bucket
-ORIGIN_RESPONSE_TIMEOUT = Duration.seconds(60)
-CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2"  # the same for every CloudFront distribution
 RETRIEVE_TOOL = f"{KB_TARGET_NAME}___Retrieve"
 
 # The orchestrator routes and answers general questions on Sonnet; the sub-agents run on
@@ -164,21 +138,6 @@ RUNTIME_BASE_ENVIRONMENT = {
     "OTEL_PYTHON_EXCLUDED_URLS": "/ping$",
 }
 
-ORIGIN_HEADER_NAME = "X-Origin-Verify"
-
-# Dynatrace RUM, shipped dark behind the `rum` flag (web/features.json). The script
-# itself is not part of this stack: docs/proposals/dynatrace.md documents uploading it
-# to the site bucket at this path (by hand, or the optional deploy.sh step that copies
-# web/vendor/ruxitagentjs.js into web/dist/dt/ before the sync) once Sam has a tenant.
-# A stack constant, not a parameter, because the path is ours to choose and does not
-# depend on any Dynatrace tenant detail.
-RUM_SCRIPT_PATH = "/dt/ruxitagentjs.js"
-
-# The WAF rules ran in COUNT from 3 Sep 2026 until real prompts, including code-heavy
-# replies, produced no counts on any rule; they block since 4 Sep 2026. Set False to
-# return to watching.
-WAF_BLOCK = True
-
 # Conversation logging (docs/proposals/conversation-logging.md). The bucket, the key, the
 # HMAC secret, and the investigator role are always created; this switch decides whether the
 # agent writes thread records, so turning logging on is this line plus a deploy. The page
@@ -190,25 +149,12 @@ THREADS_PREFIX = "threads/"
 # Twice the expected monthly figure (design section 11).
 BILLING_ALARM_USD = 50
 
-# The CloudFront behavior for /api/* gives the gateway origin sixty seconds
-# (ORIGIN_RESPONSE_TIMEOUT below) before it gives up on a response. Half of that is the
+# The platform's CloudFront behavior for /api/* gives the edge gateway origin sixty seconds
+# before it gives up on a response. Half of that is the
 # point past which a run is already close to being cut off by CloudFront, not merely slow.
 RUNTIME_LATENCY_P90_THRESHOLD_MS = 30_000
 
-# WAF stays in COUNT (see WAF_BLOCK), so a 4xx from the edge gateway itself, not the web
-# ACL, means a token expired or a request was malformed; ten percent is a starting point
-# pending real traffic, to be tightened once section 15's WAF watch period is done.
-EDGE_GATEWAY_4XX_RATE_THRESHOLD_PERCENT = 10
-
-# Design section 11: bounds spend per signed-in user while any Google account is
-# admitted (Cognito has no allow-list yet). Conservative starting values; the gateway
-# rate limit dimension keys are documented at
-# https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-rate-limits-dimensions.html
-JWT_SUB_CLAIM_DIMENSION = "$.context.jwt.sub"
-RATE_LIMIT_REQUESTS_PER_MINUTE = 30
-RATE_LIMIT_CONCURRENT_CONNECTIONS = 2
-
-# Vended log group naming and retention for the two gateways and the runtime
+# Vended log group naming and retention for the gateways and runtimes this stack owns
 # (docs/proposals/operations.md).
 VENDED_LOG_PREFIX = "/aws/vendedlogs/bedrock-agentcore"
 VENDED_LOG_RETENTION = logs.RetentionDays.ONE_MONTH
@@ -222,102 +168,6 @@ DYNATRACE_LOGS_INGEST_PATH = "/api/v2/logs/ingest/aws_firehose"
 # The fixed suffix of DynatraceOtlpEndpoint (docs/proposals/dynatrace.md: "no trailing
 # slash, no /v1/traces suffix"), split off to recover the tenant's base URL.
 DYNATRACE_OTLP_SUFFIX = "/api/v2/otlp"
-# Dynatrace business events ingest, on the same tenant host as the two paths above
-# ("Ingest business events via API", docs.dynatrace.com/docs/observe/business-analytics/
-# ba-api-ingest, which redirects to .../observe/business-observability/bo-events-capturing/
-# bo-events-capturing-external-sources): "Endpoint URL: https://{your-environment-id}.live.
-# dynatrace.com/api/v2/bizevents/ingest", method POST, Content-Type application/json for
-# the pure JSON format, and the token attached as "Authorization: Api-Token <token>" with
-# the Ingest bizevents scope. Pure JSON has no mandatory fields; Grail stores every
-# top-level attribute as a top-level field, and event.type and event.provider are the two
-# attributes the ingest guidance asks a caller to set so the events can be told apart.
-DYNATRACE_BIZEVENTS_INGEST_PATH = "/api/v2/bizevents/ingest"
-
-# ---- Reply feedback ------------------------------------------------------------------
-# A vote is a business event, not a turn: it travels its own path (REST API to EventBridge
-# to a Dynatrace business event) rather than through the chat runtime or the trace
-# (docs/proposals/feedback.md).
-FEEDBACK_API_NAME = "hr-super-agent-feedback"
-FEEDBACK_STAGE_NAME = "prod"
-FEEDBACK_PATH = "feedback"  # under /api on the API, so /api/feedback through CloudFront lands on it
-FEEDBACK_BUS_NAME = "hr-super-agent-feedback"
-FEEDBACK_EVENT_SOURCE = "hrsuperagent.feedback"
-FEEDBACK_DETAIL_TYPE = "reply-feedback"
-FEEDBACK_ARCHIVE_RETENTION_DAYS = 30
-# What the Dynatrace business event carries as its two identifying attributes.
-DYNATRACE_FEEDBACK_EVENT_TYPE = "hrsuperagent.reply-feedback"
-DYNATRACE_EVENT_PROVIDER = "hrsuperagent"
-
-# The page mints run ids with crypto.randomUUID (web/src/app.js), so the request validator
-# can hold runId to that shape; the trace id is the 16 byte W3C value as 32 hex digits
-# (docs/proposals/traceability.md).
-UUID_PATTERN = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-TRACE_ID_PATTERN = "^[0-9a-f]{32}$"
-FEEDBACK_ID_MAX_LENGTH = 200
-
-# The body mapping template for the PutEvents integration. Every value comes from the
-# request body the validator already accepted, escaped for JSON with escapeJavaScript.
-# escapeJavaScript also escapes an apostrophe as \', which JSON does not accept, so
-# replaceAll puts it back. A missing optional field leaves its Velocity reference unset
-# (Velocity skips a #set whose right side is null), so each optional field is given an
-# empty string before it is escaped. PutEvents takes Detail as a string rather than an
-# object, which is what the escaped braces below build. receivedAt does not come from the
-# body: it is the epoch millisecond API Gateway received the request. The caller's
-# Cognito sub claim is left out on purpose. The template has no HMAC, so the claim could
-# only travel raw, and a raw subject in Dynatrace is what the conversation log's
-# pseudonym exists to avoid; a vote joins its conversation through threadId, and the
-# thread record in the conversation log bucket holds the pseudonym.
-_FEEDBACK_TEMPLATE_SETUP = r"""
-#set($vote = $util.escapeJavaScript($input.path('$.vote')).replaceAll("\\'", "'"))
-#set($runId = $util.escapeJavaScript($input.path('$.runId')).replaceAll("\\'", "'"))
-#set($threadId = $util.escapeJavaScript($input.path('$.threadId')).replaceAll("\\'", "'"))
-#set($traceId = $input.path('$.traceId'))
-#if(!$traceId)#set($traceId = "")#end
-#set($traceId = $util.escapeJavaScript($traceId).replaceAll("\\'", "'"))
-#set($requestId = $input.path('$.requestId'))
-#if(!$requestId)#set($requestId = "")#end
-#set($requestId = $util.escapeJavaScript($requestId).replaceAll("\\'", "'"))
-#set($messageId = $input.path('$.messageId'))
-#if(!$messageId)#set($messageId = "")#end
-#set($messageId = $util.escapeJavaScript($messageId).replaceAll("\\'", "'"))
-""".lstrip()
-_FEEDBACK_TEMPLATE_DETAIL = (
-    r"{\"vote\":\"$vote\",\"runId\":\"$runId\",\"threadId\":\"$threadId\","
-    r"\"traceId\":\"$traceId\",\"requestId\":\"$requestId\",\"messageId\":\"$messageId\","
-    r"\"receivedAt\":$context.requestTimeEpoch}"
-)
-FEEDBACK_REQUEST_TEMPLATE = (
-    _FEEDBACK_TEMPLATE_SETUP
-    + '{"Entries":[{"Source":"'
-    + FEEDBACK_EVENT_SOURCE
-    + '","DetailType":"'
-    + FEEDBACK_DETAIL_TYPE
-    + '","EventBusName":"'
-    + FEEDBACK_BUS_NAME
-    + '","Detail":"'
-    + _FEEDBACK_TEMPLATE_DETAIL
-    + '"}]}'
-)
-
-
-@jsii.implements(route53.IAliasRecordTarget)
-class CognitoDomainAlias:
-    """Alias to the CloudFront distribution behind a Cognito custom domain.
-
-    The CDK's UserPoolDomainTarget resolves the distribution through an AwsCustomResource,
-    which is a Lambda function. The CloudFormation resource exposes the same value as an
-    attribute, so this target reads it directly and the stack stays Lambda free.
-    """
-
-    def __init__(self, domain: cognito.UserPoolDomain) -> None:
-        cfn_domain = domain.node.default_child
-        assert isinstance(cfn_domain, cognito.CfnUserPoolDomain)
-        self._dns_name = cfn_domain.attr_cloud_front_distribution
-
-    def bind(self, _record, _zone=None) -> route53.AliasRecordTargetConfig:
-        return route53.AliasRecordTargetConfig(
-            dns_name=self._dns_name, hosted_zone_id=CLOUDFRONT_HOSTED_ZONE_ID
-        )
 
 
 def _apply_condition(construct: Construct, condition: cdk.CfnCondition) -> None:
@@ -334,37 +184,10 @@ def _apply_condition(construct: Construct, condition: cdk.CfnCondition) -> None:
             child.cfn_options.condition = condition
 
 
-def _waf_rule_action() -> wafv2.CfnWebACL.RuleActionProperty:
-    """The action for the byte-match and rate-based WAF rules: Count until WAF_BLOCK flips."""
-    if WAF_BLOCK:
-        return wafv2.CfnWebACL.RuleActionProperty(block=wafv2.CfnWebACL.BlockActionProperty())
-    return wafv2.CfnWebACL.RuleActionProperty(count=wafv2.CfnWebACL.CountActionProperty())
-
-
-def _waf_override_action() -> wafv2.CfnWebACL.OverrideActionProperty:
-    """The override for the managed rule group: Count every finding until WAF_BLOCK flips."""
-    if WAF_BLOCK:
-        return wafv2.CfnWebACL.OverrideActionProperty(none={})
-    return wafv2.CfnWebACL.OverrideActionProperty(count={})
-
-
 class HrSuperAgentStack(cdk.Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        google_client_id = cdk.CfnParameter(
-            self,
-            "GoogleClientId",
-            type="String",
-            description="OAuth client id from the guppi-gpt Google Cloud project",
-        )
-        google_client_secret = cdk.CfnParameter(
-            self,
-            "GoogleClientSecret",
-            type="String",
-            no_echo=True,
-            description="OAuth client secret; supplied by scripts/deploy.sh from 1Password",
-        )
         alarm_email = cdk.CfnParameter(
             self,
             "AlarmEmail",
@@ -397,29 +220,10 @@ class HrSuperAgentStack(cdk.Stack):
             ),
         )
 
-        # ---- Dynatrace, shipped dark ----------------------------------------------------
-        # Every value here defaults empty, so every conditional below renders to the
-        # stack's current behavior (no beacon origin in the CSP, no OTLP export env vars)
-        # until Sam supplies real tenant details (docs/proposals/dynatrace.md). Nothing in
-        # this stack depends on a real value.
-        dynatrace_beacon_origin = cdk.CfnParameter(
-            self,
-            "DynatraceBeaconOrigin",
-            type="String",
-            default="",
-            description=(
-                "Origin the self-hosted RUM script sends its beacon to (for example "
-                "https://bfxxxxxx.bf.dynatrace.com), added to the page's connect-src; "
-                "left blank to leave the CSP unchanged"
-            ),
-        )
-        has_dynatrace_beacon_origin = cdk.CfnCondition(
-            self,
-            "HasDynatraceBeaconOrigin",
-            expression=cdk.Fn.condition_not(
-                cdk.Fn.condition_equals(dynatrace_beacon_origin.value_as_string, "")
-            ),
-        )
+        # ---- Dynatrace ------------------------------------------------------------------
+        # Both values default empty, and trace export and log forwarding stay dark while
+        # either is (docs/proposals/dynatrace.md). scripts/deploy.sh supplies them from
+        # 1Password.
         dynatrace_otlp_endpoint = cdk.CfnParameter(
             self,
             "DynatraceOtlpEndpoint",
@@ -472,11 +276,10 @@ class HrSuperAgentStack(cdk.Stack):
         )
         # The tenant's base URL, recovered by splitting the OTLP endpoint on its fixed
         # suffix rather than naming the same tenant in a second parameter. Log forwarding
-        # and the feedback API destination each append their own ingest path to it.
+        # appends its ingest path to it.
         dynatrace_base_url = cdk.Fn.select(
             0, cdk.Fn.split(DYNATRACE_OTLP_SUFFIX, dynatrace_otlp_endpoint.value_as_string)
         )
-        zone = route53.HostedZone.from_lookup(self, "Zone", domain_name=ZONE_NAME)
 
         # ---- Transaction Search ----------------------------------------------------------
         # Account-wide, so created only with own_account_singletons: the instrumented
@@ -554,117 +357,29 @@ class HrSuperAgentStack(cdk.Stack):
         )
         billing_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
-        # ---- DNS and certificates ------------------------------------------------------
-        # Without own_account_singletons the apex record is the one the GuppiGpt stack made.
-        apex_record = None
-        if own_account_singletons:
-            apex_record = route53.ARecord(
-                self,
-                "ApexPlaceholder",
-                zone=zone,
-                target=route53.RecordTarget.from_ip_addresses(APEX_PLACEHOLDER_IP),
-                ttl=Duration.hours(1),
-                comment=(
-                    f"Placeholder so Cognito will issue {AUTH_HOST}; "
-                    "192.0.2.1 is RFC 5737 TEST-NET-1 and never routes"
-                ),
-            )
-        chat_cert = acm.Certificate(
+        # ---- Platform -------------------------------------------------------------------
+        # The platform's user pool and app client: every authorizer below accepts the token
+        # the page holds on chat.dengler.io, and the HR tools server verifies the same token
+        # against the same issuer (D19).
+        discovery_url = ssm.StringParameter.value_for_string_parameter(
+            self, PARAM_JWT_DISCOVERY_URL
+        )
+        jwt_allowed_clients = [
+            ssm.StringParameter.value_for_string_parameter(self, PARAM_USER_POOL_CLIENT_ID)
+        ]
+        token_issuer = cdk.Fn.select(0, cdk.Fn.split(OIDC_DISCOVERY_SUFFIX, discovery_url))
+        # https://cognito-idp.<region>.amazonaws.com/<pool id>/.well-known/... split on "/"
+        # puts the pool id at index 3.
+        platform_user_pool_id = cdk.Fn.select(3, cdk.Fn.split("/", discovery_url))
+        platform_gateway_id = ssm.StringParameter.value_for_string_parameter(
+            self, PARAM_EDGE_GATEWAY_ID
+        )
+        platform_gateway_role = iam.Role.from_role_arn(
             self,
-            "ChatCertificate",
-            domain_name=CHAT_HOST,
-            validation=acm.CertificateValidation.from_dns(zone),
+            "PlatformGatewayRole",
+            ssm.StringParameter.value_for_string_parameter(self, PARAM_EDGE_GATEWAY_ROLE_ARN),
         )
-        auth_cert = acm.Certificate(
-            self,
-            "AuthCertificate",
-            domain_name=AUTH_HOST,
-            validation=acm.CertificateValidation.from_dns(zone),
-        )
-
-        # ---- Cognito -------------------------------------------------------------------
-        user_pool = cognito.UserPool(
-            self,
-            "UserPool",
-            user_pool_name="hr-super-agent",
-            self_sign_up_enabled=False,  # users arrive only through Google federation
-            sign_in_aliases=cognito.SignInAliases(email=True),
-            standard_attributes=cognito.StandardAttributes(
-                email=cognito.StandardAttribute(required=True, mutable=True)
-            ),
-            removal_policy=RemovalPolicy.DESTROY,
-        )
-        google = cognito.UserPoolIdentityProviderGoogle(
-            self,
-            "Google",
-            user_pool=user_pool,
-            client_id=google_client_id.value_as_string,
-            client_secret_value=SecretValue.cfn_parameter(google_client_secret),
-            scopes=["openid", "email", "profile"],
-            attribute_mapping=cognito.AttributeMapping(
-                email=cognito.ProviderAttribute.GOOGLE_EMAIL,
-                fullname=cognito.ProviderAttribute.GOOGLE_NAME,
-            ),
-        )
-        client = user_pool.add_client(
-            "Web",
-            user_pool_client_name="hr-super-agent-web",
-            generate_secret=False,
-            o_auth=cognito.OAuthSettings(
-                flows=cognito.OAuthFlows(authorization_code_grant=True),
-                scopes=[
-                    cognito.OAuthScope.OPENID,
-                    cognito.OAuthScope.EMAIL,
-                    cognito.OAuthScope.PROFILE,
-                ],
-                callback_urls=[SITE_URL],
-                logout_urls=[SITE_URL],
-            ),
-            supported_identity_providers=[cognito.UserPoolClientIdentityProvider.GOOGLE],
-            access_token_validity=Duration.minutes(60),
-            id_token_validity=Duration.minutes(60),
-            refresh_token_validity=Duration.days(30),
-            prevent_user_existence_errors=True,
-        )
-        client.node.add_dependency(google)
-        # Refresh token rotation is not yet an L2 property (aws-cdk-lib 2.268.0); set it on
-        # the underlying CfnUserPoolClient. Rotation issues a new refresh token on every use
-        # so a stolen token is good for one refresh; the grace period covers a client retry
-        # of the same request racing the rotation.
-        cfn_client = client.node.default_child
-        assert isinstance(cfn_client, cognito.CfnUserPoolClient)
-        cfn_client.refresh_token_rotation = cognito.CfnUserPoolClient.RefreshTokenRotationProperty(
-            feature="ENABLED",
-            retry_grace_period_seconds=30,
-        )
-
-        domain = user_pool.add_domain(
-            "Domain",
-            custom_domain=cognito.CustomDomainOptions(domain_name=AUTH_HOST, certificate=auth_cert),
-            managed_login_version=cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
-        )
-        if apex_record is not None:
-            domain.node.add_dependency(apex_record)
-        cognito.CfnManagedLoginBranding(
-            self,
-            "Branding",
-            user_pool_id=user_pool.user_pool_id,
-            client_id=client.user_pool_client_id,
-            use_cognito_provided_values=True,
-        )
-        route53.ARecord(
-            self,
-            "AuthRecord",
-            zone=zone,
-            record_name=AUTH_HOST,
-            target=route53.RecordTarget.from_alias(CognitoDomainAlias(domain)),
-        )
-
-        discovery_url = (
-            f"https://cognito-idp.{self.region}.amazonaws.com/"
-            f"{user_pool.user_pool_id}/.well-known/openid-configuration"
-        )
-        jwt_allowed_clients = [client.user_pool_client_id]
+        site_url = ssm.StringParameter.value_for_string_parameter(self, PARAM_SITE_URL)
 
         # ---- Agent image ---------------------------------------------------------------
         image_uri = self.node.try_get_context("image_uri")
@@ -706,186 +421,6 @@ class HrSuperAgentStack(cdk.Stack):
         for role in (runtime_role, tools_role):
             grant_image(role)
 
-        # ---- Edge gateway --------------------------------------------------------------
-        gateway_role = iam.Role(
-            self,
-            "GatewayRole",
-            assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
-            description="Lets the edge gateway invoke the HR Super Agent runtime",
-        )
-        gateway = agentcore.CfnGateway(
-            self,
-            "EdgeGateway",
-            name=GATEWAY_NAME,
-            description="HR Super Agent edge: JWT check, per-user limits, runtime target",
-            role_arn=gateway_role.role_arn,
-            authorizer_type="CUSTOM_JWT",
-            authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
-                custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
-                    discovery_url=discovery_url,
-                    allowed_clients=jwt_allowed_clients,
-                )
-            ),
-            # protocol_type is left unset on purpose: runtime targets cannot be added to
-            # MCP protocol gateways.
-            exception_level="DEBUG",
-            # waf_configuration is left unset: the CfnGateway default failure mode is
-            # FAIL_CLOSE (AWS WAF docs, "Configuring the AWS WAF failure mode"), which is
-            # the fail-closed behavior design section 11 asks for.
-        )
-
-        # ---- WAF -------------------------------------------------------------------------
-        # The shared value goes into the template only as a secretsmanager dynamic reference
-        # (through unsafe_unwrap() below), never as a literal, so it stays out of both the
-        # WAF rule and the CloudFront origin header in plain text. This is a deploy-time
-        # value the stack itself generates rather than a CloudFormation parameter, which
-        # departs from the AGENTS.md line on secrets; recorded in the decision log.
-        origin_secret = secretsmanager.Secret(
-            self,
-            "OriginVerifySecret",
-            description=f"Value CloudFront sends as the {ORIGIN_HEADER_NAME} header to the gateway",
-            generate_secret_string=secretsmanager.SecretStringGenerator(
-                exclude_punctuation=True, password_length=40
-            ),
-        )
-        origin_secret_value = origin_secret.secret_value.unsafe_unwrap()
-
-        cloudfront_only_rule = wafv2.CfnWebACL.RuleProperty(
-            name="CloudFrontOnly",
-            priority=0,
-            statement=wafv2.CfnWebACL.StatementProperty(
-                not_statement=wafv2.CfnWebACL.NotStatementProperty(
-                    statement=wafv2.CfnWebACL.StatementProperty(
-                        byte_match_statement=wafv2.CfnWebACL.ByteMatchStatementProperty(
-                            field_to_match=wafv2.CfnWebACL.FieldToMatchProperty(
-                                # single_header is typed as Any, so CDK does not translate
-                                # this dict's casing the way it does typed properties: the
-                                # key must already match the CloudFormation shape.
-                                single_header={"Name": ORIGIN_HEADER_NAME}
-                            ),
-                            positional_constraint="EXACTLY",
-                            search_string=origin_secret_value,
-                            text_transformations=[
-                                wafv2.CfnWebACL.TextTransformationProperty(priority=0, type="NONE")
-                            ],
-                        )
-                    )
-                )
-            ),
-            action=_waf_rule_action(),
-            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
-                sampled_requests_enabled=True,
-                cloud_watch_metrics_enabled=True,
-                metric_name="HrSuperAgentCloudFrontOnly",
-            ),
-        )
-        common_rule_set_rule = wafv2.CfnWebACL.RuleProperty(
-            name="AWSManagedRulesCommonRuleSet",
-            priority=1,
-            statement=wafv2.CfnWebACL.StatementProperty(
-                managed_rule_group_statement=wafv2.CfnWebACL.ManagedRuleGroupStatementProperty(
-                    vendor_name="AWS", name="AWSManagedRulesCommonRuleSet"
-                )
-            ),
-            override_action=_waf_override_action(),
-            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
-                sampled_requests_enabled=True,
-                cloud_watch_metrics_enabled=True,
-                metric_name="HrSuperAgentCommonRuleSet",
-            ),
-        )
-        rate_limit_rule = wafv2.CfnWebACL.RuleProperty(
-            name="RateLimit",
-            priority=2,
-            statement=wafv2.CfnWebACL.StatementProperty(
-                rate_based_statement=wafv2.CfnWebACL.RateBasedStatementProperty(
-                    limit=60,
-                    evaluation_window_sec=300,
-                    aggregate_key_type="FORWARDED_IP",
-                    forwarded_ip_config=wafv2.CfnWebACL.ForwardedIPConfigurationProperty(
-                        header_name="X-Forwarded-For", fallback_behavior="NO_MATCH"
-                    ),
-                )
-            ),
-            action=_waf_rule_action(),
-            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
-                sampled_requests_enabled=True,
-                cloud_watch_metrics_enabled=True,
-                metric_name="HrSuperAgentRateLimit",
-            ),
-        )
-        web_acl = wafv2.CfnWebACL(
-            self,
-            "EdgeWebAcl",
-            scope="REGIONAL",
-            default_action=wafv2.CfnWebACL.DefaultActionProperty(
-                allow=wafv2.CfnWebACL.AllowActionProperty()
-            ),
-            visibility_config=wafv2.CfnWebACL.VisibilityConfigProperty(
-                sampled_requests_enabled=True,
-                cloud_watch_metrics_enabled=True,
-                metric_name="HrSuperAgentEdgeWebAcl",
-            ),
-            rules=[cloudfront_only_rule, common_rule_set_rule, rate_limit_rule],
-        )
-        wafv2.CfnWebACLAssociation(
-            self,
-            "EdgeWebAclAssociation",
-            resource_arn=gateway.attr_gateway_arn,
-            web_acl_arn=web_acl.attr_arn,
-        )
-
-        # The gateway-waf devguide page does not list a dimension for these three metrics
-        # (unlike the general invocation metrics, which use "Resource"); GatewayId with the
-        # gateway identifier is an assumption, not something the docs state outright.
-        for metric_name in ("WafBlocks", "WafFailCloses", "WafFailOpens"):
-            waf_alarm = cloudwatch.Alarm(
-                self,
-                f"{metric_name}Alarm",
-                alarm_description=f"{metric_name} on the HR Super Agent edge gateway crossed zero",
-                metric=cloudwatch.Metric(
-                    namespace="AWS/Bedrock-AgentCore",
-                    metric_name=metric_name,
-                    dimensions_map={"GatewayId": gateway.attr_gateway_identifier},
-                    statistic="Sum",
-                    period=Duration.minutes(5),
-                ),
-                threshold=1,
-                evaluation_periods=1,
-                comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-                treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
-            )
-            waf_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
-
-        # ---- Per-user rate limits --------------------------------------------------------
-        # Requests and concurrency share one entry: CreateGatewayRateLimit refuses two rate
-        # limits on the same gateway with the same dimension keys, and a single dimension
-        # key list (just the sub claim) is what "per signed-in user" needs. The "*" value
-        # is the wildcard entry, which gives every distinct caller an independent bucket at
-        # this rate rather than one shared bucket for all users.
-        agentcore.CfnGatewayRateLimit(
-            self,
-            "EdgeGatewayPerUserRateLimit",
-            gateway_identifier=gateway.attr_gateway_identifier,
-            description="Per-user request rate and concurrency, keyed on the JWT sub claim",
-            dimension_keys=[JWT_SUB_CLAIM_DIMENSION],
-            entries=[
-                agentcore.CfnGatewayRateLimit.LimitEntryProperty(
-                    dimensions={JWT_SUB_CLAIM_DIMENSION: "*"},
-                    requests=[
-                        agentcore.CfnGatewayRateLimit.RateConfigProperty(
-                            rate=RATE_LIMIT_REQUESTS_PER_MINUTE, period="minute"
-                        )
-                    ],
-                    connections=[
-                        agentcore.CfnGatewayRateLimit.RateConfigProperty(
-                            rate=RATE_LIMIT_CONCURRENT_CONNECTIONS, period="second"
-                        )
-                    ],
-                )
-            ],
-        )
-
         # ---- Runtime -------------------------------------------------------------------
         protocol = self.node.try_get_context("runtime_protocol") or "AGUI"
         runtime = agentcore.CfnRuntime(
@@ -913,8 +448,8 @@ class HrSuperAgentStack(cdk.Stack):
                 custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=discovery_url,
                     allowed_clients=jwt_allowed_clients,
-                    # Binding the runtime to the gateway is off by default. With it on, the
-                    # runtime demands a transaction token, and the gateway only supplies
+                    # Binding the runtime to the platform's gateway is off by default. With it
+                    # on, the runtime demands a transaction token, and the gateway only supplies
                     # one when it signs the request itself (GATEWAY_IAM_ROLE), which a JWT
                     # runtime then rejects as an authorization method mismatch. Token
                     # passthrough forwards the user JWT with no transaction token, so the
@@ -923,7 +458,9 @@ class HrSuperAgentStack(cdk.Stack):
                         agentcore.CfnRuntime.AllowedWorkloadConfigurationProperty(
                             hosting_environments=[
                                 agentcore.CfnRuntime.HostingEnvironmentProperty(
-                                    arn=gateway.attr_gateway_arn
+                                    arn=ssm.StringParameter.value_for_string_parameter(
+                                        self, PARAM_EDGE_GATEWAY_ARN
+                                    )
                                 )
                             ]
                         )
@@ -941,10 +478,13 @@ class HrSuperAgentStack(cdk.Stack):
         # "Access denied while validating ECR URI" (observed 28 Sep 2026).
         runtime.node.add_dependency(runtime_role)
 
+        # The platform's edge gateway invokes this runtime with the gateway's own role, so
+        # the grant is attached to that role, imported by ARN; the policy is this stack's
+        # and leaves with it.
         invoke_policy = iam.Policy(
             self,
-            "GatewayInvokePolicy",
-            roles=[gateway_role],
+            "PlatformGatewayInvokePolicy",
+            roles=[platform_gateway_role],
             statements=[
                 iam.PolicyStatement(
                     actions=["bedrock-agentcore:InvokeAgentRuntime"],
@@ -956,12 +496,14 @@ class HrSuperAgentStack(cdk.Stack):
             ],
         )
 
+        # Built as the platform builds its own "api" target: the runtime by ARN, the user's
+        # JWT passed through, and the session and trace headers allowed.
         target = agentcore.CfnGatewayTarget(
             self,
-            "RuntimeTarget",
-            gateway_identifier=gateway.attr_gateway_identifier,
+            "PlatformTarget",
+            gateway_identifier=platform_gateway_id,
             name=TARGET_NAME,
-            description="HR Super Agent runtime, token passthrough",
+            description="HR Super Agent orchestrator, token passthrough",
             target_configuration=agentcore.CfnGatewayTarget.TargetConfigurationProperty(
                 http=agentcore.CfnGatewayTarget.HttpTargetConfigurationProperty(
                     agentcore_runtime=agentcore.CfnGatewayTarget.RuntimeTargetConfigurationProperty(
@@ -982,406 +524,6 @@ class HrSuperAgentStack(cdk.Stack):
             ),
         )
         target.node.add_dependency(invoke_policy)
-
-        # ---- Reply feedback --------------------------------------------------------------
-        # A vote on a reply is a business event, not part of the chat, so it does not go
-        # through the chat runtime and it is not attached to the turn's trace. The page
-        # posts it to /api/feedback on the existing CloudFront domain; a REST API with a
-        # Cognito authorizer validates the body and puts one event on a bus of its own,
-        # with no compute in between. A rule forwards the event to Dynatrace as a business
-        # event once the Dynatrace parameters are set, and an archive on the bus keeps
-        # every vote for 30 days either way (docs/proposals/feedback.md).
-        feedback_bus = events.EventBus(self, "FeedbackBus", event_bus_name=FEEDBACK_BUS_NAME)
-        feedback_api_role = iam.Role(
-            self,
-            "FeedbackApiRole",
-            assumed_by=iam.ServicePrincipal("apigateway.amazonaws.com"),
-            description="Lets the feedback REST API put one event on the feedback bus",
-            inline_policies={
-                "PutFeedbackEvent": iam.PolicyDocument(
-                    statements=[
-                        iam.PolicyStatement(
-                            actions=["events:PutEvents"], resources=[feedback_bus.event_bus_arn]
-                        )
-                    ]
-                )
-            },
-        )
-        feedback_api = apigateway.RestApi(
-            self,
-            "FeedbackApi",
-            rest_api_name=FEEDBACK_API_NAME,
-            description="Reply votes from the page, put straight onto the feedback bus",
-            endpoint_types=[apigateway.EndpointType.REGIONAL],
-            deploy_options=apigateway.StageOptions(stage_name=FEEDBACK_STAGE_NAME),
-            # The account-level API Gateway CloudWatch role is an account-wide setting this
-            # stack does not own; execution logging stays off with it.
-            cloud_watch_role=False,
-            # No CORS: the page reaches this API through CloudFront on its own origin, so
-            # the browser never sends a preflight.
-        )
-        feedback_authorizer = apigateway.CognitoUserPoolsAuthorizer(
-            self,
-            "FeedbackAuthorizer",
-            authorizer_name="hr-super-agent-feedback",
-            cognito_user_pools=[user_pool],
-        )
-        feedback_validator = feedback_api.add_request_validator(
-            "FeedbackBodyValidator",
-            request_validator_name="feedback-body",
-            validate_request_body=True,
-            validate_request_parameters=False,
-        )
-        feedback_model = feedback_api.add_model(
-            "FeedbackVoteModel",
-            model_name="FeedbackVote",
-            content_type="application/json",
-            description="One vote on one reply",
-            schema=apigateway.JsonSchema(
-                schema=apigateway.JsonSchemaVersion.DRAFT4,
-                title="FeedbackVote",
-                type=apigateway.JsonSchemaType.OBJECT,
-                required=["vote", "runId", "threadId"],
-                additional_properties=False,
-                properties={
-                    # "none" is a withdrawn vote: the page reports it so the withdrawal is
-                    # itself a record rather than a gap.
-                    "vote": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING, enum=["up", "down", "none"]
-                    ),
-                    "runId": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING, pattern=UUID_PATTERN
-                    ),
-                    "threadId": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING,
-                        min_length=1,
-                        max_length=FEEDBACK_ID_MAX_LENGTH,
-                    ),
-                    "traceId": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING, pattern=TRACE_ID_PATTERN
-                    ),
-                    "requestId": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING, max_length=FEEDBACK_ID_MAX_LENGTH
-                    ),
-                    "messageId": apigateway.JsonSchema(
-                        type=apigateway.JsonSchemaType.STRING, max_length=FEEDBACK_ID_MAX_LENGTH
-                    ),
-                },
-            ),
-        )
-        feedback_integration = apigateway.AwsIntegration(
-            service="events",
-            action="PutEvents",
-            integration_http_method="POST",
-            options=apigateway.IntegrationOptions(
-                credentials_role=feedback_api_role,
-                passthrough_behavior=apigateway.PassthroughBehavior.NEVER,
-                request_parameters={
-                    "integration.request.header.X-Amz-Target": "'AWSEvents.PutEvents'",
-                    "integration.request.header.Content-Type": "'application/x-amz-json-1.1'",
-                },
-                request_templates={"application/json": FEEDBACK_REQUEST_TEMPLATE},
-                integration_responses=[
-                    apigateway.IntegrationResponse(
-                        status_code="202",
-                        selection_pattern="200",
-                        # The page does not read a body, and there is nothing to say back:
-                        # the vote is on the bus.
-                        response_templates={"application/json": ""},
-                    ),
-                    apigateway.IntegrationResponse(
-                        status_code="400",
-                        selection_pattern="4\\d{2}",
-                        response_templates={
-                            "application/json": '{"message":"The vote was rejected."}'
-                        },
-                    ),
-                ],
-            ),
-        )
-        # CloudFront forwards the viewer path unchanged (/api/feedback) under the origin
-        # path (/prod), so the API's resource tree mirrors it; a resource at /feedback alone
-        # answered the doubled path /prod/api/feedback with "Missing Authentication Token"
-        # (observed 5 Sep 2026).
-        feedback_resource = feedback_api.root.add_resource("api").add_resource(FEEDBACK_PATH)
-        feedback_resource.add_method(
-            "POST",
-            feedback_integration,
-            authorization_type=apigateway.AuthorizationType.COGNITO,
-            authorizer=feedback_authorizer,
-            # The page holds the access token, not the id token, and sends it as the bearer
-            # everywhere else. A Cognito authorizer with no authorization scopes reads the
-            # bearer as an id token and rejects an access token, which carries client_id
-            # rather than aud ("Integrate a REST API with an Amazon Cognito user pool",
-            # API Gateway developer guide). Naming a scope switches the authorizer to
-            # access token validation; "openid" is in the scope claim of every token this
-            # app client issues, since the page asks for openid, email, and profile.
-            authorization_scopes=["openid"],
-            request_validator=feedback_validator,
-            request_models={"application/json": feedback_model},
-            method_responses=[
-                apigateway.MethodResponse(status_code="202"),
-                apigateway.MethodResponse(status_code="400"),
-            ],
-        )
-        # The default gateway responses for a rejected token and a body the validator
-        # refused are text; the page and anything else calling this API read JSON.
-        feedback_api.add_gateway_response(
-            "FeedbackUnauthorizedResponse",
-            type=apigateway.ResponseType.UNAUTHORIZED,
-            templates={"application/json": '{"message":$context.error.messageString}'},
-        )
-        feedback_api.add_gateway_response(
-            "FeedbackBadRequestBodyResponse",
-            type=apigateway.ResponseType.BAD_REQUEST_BODY,
-            templates={
-                "application/json": (
-                    '{"message":$context.error.messageString,'
-                    '"detail":"$context.error.validationErrorString"}'
-                )
-            },
-        )
-
-        # Every vote is kept on the bus itself for 30 days, whether or not Dynatrace is
-        # configured, so the signal is not lost while the tenant details are missing and a
-        # replay can refill Dynatrace afterwards. Long term storage is a Firehose stream to
-        # S3, which is more than a vote a day needs (docs/proposals/feedback.md).
-        events.Archive(
-            self,
-            "FeedbackArchive",
-            source_event_bus=feedback_bus,
-            archive_name="hr-super-agent-feedback",
-            description="Reply votes, kept for replay",
-            retention=Duration.days(FEEDBACK_ARCHIVE_RETENTION_DAYS),
-            event_pattern=events.EventPattern(source=[FEEDBACK_EVENT_SOURCE]),
-        )
-
-        # Dynatrace business events, under the same switch as log forwarding: an API
-        # destination posting to the tenant's /api/v2/bizevents/ingest endpoint with the
-        # API token in the Authorization header, and a rule that reshapes the event into
-        # the flat JSON object Grail stores as top-level fields.
-        feedback_connection = events.Connection(
-            self,
-            "DynatraceBizeventsConnection",
-            connection_name="hr-super-agent-dynatrace-bizevents",
-            description="Api-Token header for the Dynatrace business events endpoint",
-            # Connection takes a SecretValue. cfn_parameter would carry the bare token, and
-            # the header needs the "Api-Token " realm in front of it, so the value is the
-            # join of the two; it reaches the template as a Ref to the no_echo parameter.
-            authorization=events.Authorization.api_key(
-                "Authorization",
-                SecretValue.unsafe_plain_text(
-                    cdk.Fn.join("", ["Api-Token ", dynatrace_api_token.value_as_string])
-                ),
-            ),
-        )
-        feedback_destination = events.ApiDestination(
-            self,
-            "DynatraceBizeventsDestination",
-            api_destination_name="hr-super-agent-dynatrace-bizevents",
-            connection=feedback_connection,
-            endpoint=cdk.Fn.join("", [dynatrace_base_url, DYNATRACE_BIZEVENTS_INGEST_PATH]),
-            http_method=events.HttpMethod.POST,
-            rate_limit_per_second=10,
-            description="Dynatrace business events ingest",
-        )
-        # A vote that Dynatrace refuses is worth keeping: the queue holds it for two weeks
-        # rather than letting EventBridge drop it after the retries below.
-        feedback_dlq = sqs.Queue(
-            self,
-            "FeedbackDeadLetterQueue",
-            retention_period=Duration.days(14),
-            enforce_ssl=True,
-        )
-        feedback_rule = events.Rule(
-            self,
-            "FeedbackToDynatrace",
-            rule_name="hr-super-agent-feedback-to-dynatrace",
-            description="Reply votes to Dynatrace as business events",
-            event_bus=feedback_bus,
-            event_pattern=events.EventPattern(source=[FEEDBACK_EVENT_SOURCE]),
-            targets=[
-                events_targets.ApiDestination(
-                    feedback_destination,
-                    # Grail keeps every top-level attribute as a top-level field, so the
-                    # body is flat and dotted names are field names, not nesting.
-                    event=events.RuleTargetInput.from_object(
-                        {
-                            "event.type": DYNATRACE_FEEDBACK_EVENT_TYPE,
-                            "event.provider": DYNATRACE_EVENT_PROVIDER,
-                            "vote": events.EventField.from_path("$.detail.vote"),
-                            "run.id": events.EventField.from_path("$.detail.runId"),
-                            "trace.id": events.EventField.from_path("$.detail.traceId"),
-                            "thread.id": events.EventField.from_path("$.detail.threadId"),
-                            "message.id": events.EventField.from_path("$.detail.messageId"),
-                            "request.id": events.EventField.from_path("$.detail.requestId"),
-                            "received_at": events.EventField.from_path("$.detail.receivedAt"),
-                        }
-                    ),
-                    dead_letter_queue=feedback_dlq,
-                    retry_attempts=2,
-                )
-            ],
-        )
-        # A vote in the dead letter queue is a vote Dynatrace never saw. EventBridge
-        # reports nothing when a target keeps failing, so the queue depth is the signal:
-        # any message at all, and the alarm goes to the same topic as the rest.
-        feedback_dlq_alarm = cloudwatch.Alarm(
-            self,
-            "FeedbackDeadLetterAlarm",
-            alarm_description="A reply vote landed in the feedback dead letter queue",
-            metric=feedback_dlq.metric_approximate_number_of_messages_visible(
-                period=Duration.minutes(5), statistic="Maximum"
-            ),
-            threshold=1,
-            evaluation_periods=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
-        )
-        feedback_dlq_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
-        for construct in (
-            feedback_connection,
-            feedback_destination,
-            feedback_dlq,
-            feedback_rule,
-            feedback_dlq_alarm,
-        ):
-            _apply_condition(construct, has_dynatrace_logs)
-
-        # The origin the /api/feedback behavior below points at: the API's regional
-        # endpoint, with the stage as the origin path so the browser's /api/feedback
-        # reaches /prod/api/feedback. It carries no X-Origin-Verify header, unlike the edge
-        # gateway origin, because this API authorizes every request itself; a caller who
-        # finds the execute-api hostname is refused by the Cognito authorizer.
-        feedback_api_origin = origins.HttpOrigin(
-            f"{feedback_api.rest_api_id}.execute-api.{self.region}.amazonaws.com",
-            origin_path=f"/{FEEDBACK_STAGE_NAME}",
-            protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-        )
-
-        # ---- Site and CloudFront -------------------------------------------------------
-        site_bucket = s3.Bucket(
-            self,
-            "SiteBucket",
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            encryption=s3.BucketEncryption.S3_MANAGED,
-            enforce_ssl=True,
-            removal_policy=RemovalPolicy.RETAIN,
-        )
-        gateway_host = Fn.select(2, Fn.split("/", gateway.attr_gateway_url))
-        gateway_origin = origins.HttpOrigin(
-            gateway_host,
-            protocol_policy=cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-            read_timeout=ORIGIN_RESPONSE_TIMEOUT,
-            keepalive_timeout=Duration.seconds(60),
-            # Lets the CloudFrontOnly WAF rule tell CloudFront's traffic from anyone who
-            # calls the gateway hostname directly; the value is a secretsmanager dynamic
-            # reference (see OriginVerifySecret above), never a literal in the template.
-            custom_headers={ORIGIN_HEADER_NAME: origin_secret_value},
-        )
-        # The beacon origin is a CloudFormation parameter, so its value is unknown at
-        # synth time; Fn::If picks between two whole CSP strings at deploy time rather
-        # than the Python code trying to interpolate it (the same Fn::If-plus-condition
-        # pattern as has_alarm_email above, applied to a property value instead of a
-        # resource's Condition). With DynatraceBeaconOrigin left blank (the default) this
-        # renders to the exact CSP the stack already had.
-        csp_without_dynatrace = (
-            "default-src 'self'; "
-            f"connect-src 'self' https://{AUTH_HOST}; "
-            "img-src 'self' data:; "
-            "style-src 'self'; "
-            "script-src 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self'"
-        )
-        csp_with_dynatrace = (
-            "default-src 'self'; "
-            f"connect-src 'self' https://{AUTH_HOST} {dynatrace_beacon_origin.value_as_string}; "
-            "img-src 'self' data:; "
-            "style-src 'self'; "
-            "script-src 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self'"
-        )
-        content_security_policy = cdk.Token.as_string(
-            cdk.Fn.condition_if(
-                has_dynatrace_beacon_origin.logical_id,
-                csp_with_dynatrace,
-                csp_without_dynatrace,
-            )
-        )
-        security_headers_policy = cloudfront.ResponseHeadersPolicy(
-            self,
-            "SecurityHeadersPolicy",
-            comment="CSP and security headers for the static page",
-            security_headers_behavior=cloudfront.ResponseSecurityHeadersBehavior(
-                content_security_policy=cloudfront.ResponseHeadersContentSecurityPolicy(
-                    content_security_policy=content_security_policy,
-                    override=True,
-                ),
-                strict_transport_security=cloudfront.ResponseHeadersStrictTransportSecurity(
-                    access_control_max_age=Duration.days(365),
-                    include_subdomains=True,
-                    override=True,
-                ),
-                content_type_options=cloudfront.ResponseHeadersContentTypeOptions(override=True),
-                referrer_policy=cloudfront.ResponseHeadersReferrerPolicy(
-                    referrer_policy=cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
-                    override=True,
-                ),
-                frame_options=cloudfront.ResponseHeadersFrameOptions(
-                    frame_option=cloudfront.HeadersFrameOption.DENY, override=True
-                ),
-            ),
-        )
-        distribution = cloudfront.Distribution(
-            self,
-            "Distribution",
-            comment="HR Super Agent",
-            domain_names=[CHAT_HOST],
-            certificate=chat_cert,
-            default_root_object="index.html",
-            minimum_protocol_version=cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
-            http_version=cloudfront.HttpVersion.HTTP2_AND_3,
-            price_class=cloudfront.PriceClass.PRICE_CLASS_100,
-            default_behavior=cloudfront.BehaviorOptions(
-                origin=origins.S3BucketOrigin.with_origin_access_control(site_bucket),
-                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
-                response_headers_policy=security_headers_policy,
-            ),
-            # CloudFront compares the request path against these patterns in the order
-            # they are listed, so the exact feedback path comes before the wildcard that
-            # would otherwise swallow it and send a vote to the edge gateway.
-            additional_behaviors={
-                "/api/feedback": cloudfront.BehaviorOptions(
-                    origin=feedback_api_origin,
-                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-                    allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
-                    cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
-                    origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-                ),
-                "/api/*": cloudfront.BehaviorOptions(
-                    origin=gateway_origin,
-                    viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-                    allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
-                    cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
-                    # Forwarding Host breaks the gateway's TLS and routing.
-                    origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-                    compress=False,
-                ),
-            },
-        )
-        for record_type, record_class in (("A", route53.ARecord), ("AAAA", route53.AaaaRecord)):
-            record_class(
-                self,
-                f"Chat{record_type}Record",
-                zone=zone,
-                record_name=CHAT_HOST,
-                target=route53.RecordTarget.from_alias(targets.CloudFrontTarget(distribution)),
-            )
 
         # ---- Knowledge base ------------------------------------------------------------
         content_bucket = s3.Bucket(
@@ -1580,9 +722,20 @@ class HrSuperAgentStack(cdk.Stack):
                 resources=[conversation_secret.secret_arn],
             )
         )
+        # The subjects in thread records are the platform pool's users now, so resolving
+        # one means listing that pool (D31).
         investigator_role.add_to_policy(
             iam.PolicyStatement(
-                actions=["cognito-idp:ListUsers"], resources=[user_pool.user_pool_arn]
+                actions=["cognito-idp:ListUsers"],
+                resources=[
+                    cdk.Fn.join(
+                        "",
+                        [
+                            f"arn:aws:cognito-idp:{self.region}:{self.account}:userpool/",
+                            platform_user_pool_id,
+                        ],
+                    )
+                ],
             )
         )
 
@@ -1772,7 +925,7 @@ class HrSuperAgentStack(cdk.Stack):
             role=tools_role,
             gateway=tools_gateway,
             gateway_role=tools_gateway_role,
-            token_issuer=f"https://cognito-idp.{self.region}.amazonaws.com/{user_pool.user_pool_id}",
+            token_issuer=token_issuer,
             allowed_clients=jwt_allowed_clients,
             base_environment=RUNTIME_BASE_ENVIRONMENT,
         )
@@ -1864,11 +1017,6 @@ class HrSuperAgentStack(cdk.Stack):
             alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
         _resource_error_alarm(
-            "EdgeGateway5xxAlarm",
-            "5xx (SystemErrors) on the HR Super Agent edge gateway crossed zero",
-            gateway.attr_gateway_arn,
-        )
-        _resource_error_alarm(
             "ToolsGateway5xxAlarm",
             "5xx (SystemErrors) on the HR Super Agent tools gateway crossed zero",
             tools_gateway.attr_gateway_arn,
@@ -1896,42 +1044,6 @@ class HrSuperAgentStack(cdk.Stack):
                 sub_agent_runtime.attr_agent_runtime_arn,
             )
 
-        # UserErrors as a share of Invocations: a math expression rather than a raw count,
-        # since occasional 4xx (an expired token, a malformed request) is expected traffic
-        # and only a rate says whether it is worth looking at.
-        edge_gateway_4xx_rate = cloudwatch.MathExpression(
-            expression="(userErrors / invocations) * 100",
-            using_metrics={
-                "userErrors": cloudwatch.Metric(
-                    namespace="AWS/Bedrock-AgentCore",
-                    metric_name="UserErrors",
-                    dimensions_map={"Resource": gateway.attr_gateway_arn},
-                    statistic="Sum",
-                ),
-                "invocations": cloudwatch.Metric(
-                    namespace="AWS/Bedrock-AgentCore",
-                    metric_name="Invocations",
-                    dimensions_map={"Resource": gateway.attr_gateway_arn},
-                    statistic="Sum",
-                ),
-            },
-            period=Duration.minutes(5),
-            label="EdgeGateway4xxRate",
-        )
-        edge_gateway_4xx_rate_alarm = cloudwatch.Alarm(
-            self,
-            "EdgeGateway4xxRateAlarm",
-            alarm_description=(
-                "4xx (UserErrors) rate on the HR Super Agent edge gateway crossed "
-                f"{EDGE_GATEWAY_4XX_RATE_THRESHOLD_PERCENT}%"
-            ),
-            metric=edge_gateway_4xx_rate,
-            threshold=EDGE_GATEWAY_4XX_RATE_THRESHOLD_PERCENT,
-            evaluation_periods=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
-        )
-        edge_gateway_4xx_rate_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
         # Runtime "Latency" is end-to-end (receipt to final token), the same quantity the
         # gateway table calls "Duration". Threshold: RUNTIME_LATENCY_P90_THRESHOLD_MS above.
@@ -2034,9 +1146,6 @@ class HrSuperAgentStack(cdk.Stack):
             return log_group
 
         vended_log_groups = {
-            "EdgeGateway": _vended_log_delivery(
-                "EdgeGateway", GATEWAY_NAME, gateway.attr_gateway_arn, ["APPLICATION_LOGS"]
-            ),
             "ToolsGateway": _vended_log_delivery(
                 "ToolsGateway",
                 TOOLS_GATEWAY_NAME,
@@ -2236,14 +1345,8 @@ class HrSuperAgentStack(cdk.Stack):
             _apply_condition(construct, has_dynatrace_logs)
 
         # ---- Outputs -------------------------------------------------------------------
-        cdk.CfnOutput(self, "SiteUrl", value=SITE_URL)
-        cdk.CfnOutput(self, "SiteBucketName", value=site_bucket.bucket_name)
-        cdk.CfnOutput(self, "DistributionId", value=distribution.distribution_id)
-        cdk.CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id)
-        cdk.CfnOutput(self, "UserPoolClientId", value=client.user_pool_client_id)
-        cdk.CfnOutput(self, "AuthDomain", value=AUTH_HOST)
-        cdk.CfnOutput(self, "GatewayUrl", value=gateway.attr_gateway_url)
-        cdk.CfnOutput(self, "GatewayArn", value=gateway.attr_gateway_arn)
+        cdk.CfnOutput(self, "SiteUrl", value=cdk.Fn.join("", [site_url, f"p/{PROJECT_NAME}/"]))
+        cdk.CfnOutput(self, "AgentPath", value=f"/api/{PROJECT_NAME}/invocations")
         cdk.CfnOutput(self, "RuntimeArn", value=runtime.attr_agent_runtime_arn)
         cdk.CfnOutput(self, "RuntimeProtocol", value=protocol)
         cdk.CfnOutput(self, "ContentBucketName", value=content_bucket.bucket_name)
@@ -2255,12 +1358,6 @@ class HrSuperAgentStack(cdk.Stack):
         cdk.CfnOutput(self, "ConversationLogBucketName", value=conversation_bucket.bucket_name)
         cdk.CfnOutput(self, "ConversationLogKeySecretArn", value=conversation_secret.secret_arn)
         cdk.CfnOutput(self, "InvestigatorRoleArn", value=investigator_role.role_arn)
-        cdk.CfnOutput(
-            self, "FeedbackApiUrl", value=feedback_api.url_for_path(f"/api/{FEEDBACK_PATH}")
-        )
-        cdk.CfnOutput(self, "FeedbackBusName", value=feedback_bus.event_bus_name)
-        cdk.CfnOutput(self, "RumScriptPath", value=RUM_SCRIPT_PATH)
-        cdk.CfnOutput(self, "RumBeaconOrigin", value=dynatrace_beacon_origin.value_as_string)
 
     def _runtime_role(self) -> iam.Role:
         """Execution role for the orchestrator runtime: the documented base policy plus
