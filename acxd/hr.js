@@ -1,0 +1,513 @@
+'use strict';
+
+/**
+ * The HR super-agent as an Agentic CX designer application (shape D).
+ *
+ * The canvas replaces hr-super-agent's Strands orchestrator and nothing below it:
+ *
+ * - WelcomeFlow greets once and hands each turn to the flow the application recognizes
+ *   ({System.capturedFlow}); anything unrecognized goes to PolicyFlow.
+ * - ClarifyFlow answers the ambiguous "update my information" with one question.
+ * - ProfileFlow, PayFlow and TravelFlow delegate every turn to their sub-agent with one
+ *   A2A message/send (a JSON string template, so nested fields are filled), the
+ *   employee's token in the Authorization header. A follow-up stays in the flow; a turn
+ *   the application recognizes as another domain redirects there (sticky context, D6).
+ * - A reply that carries a pending change goes to a fixed confirmation step. Only its
+ *   "yes" branch sends the pending change back, so nothing commits without it (D7).
+ * - PolicyFlow is a generative journey whose tool is the HrTools MCP data request on the
+ *   tools gateway, with only read and ticket tools enabled.
+ * - EscalationFlow hands the contact back to Connect's Escalation branch.
+ *
+ * Delegate data requests point at the spike's mock sub-agents in `development` and at
+ * hr-super-agent's agents gateway in `production`.
+ */
+
+const { FlowBuilder, statusIs } = require('./lib/nodes');
+const { MOCK_URL, AGENTS_GATEWAY_URL, TOOLS_GATEWAY_URL, env, hdr } = require('./lib/common');
+
+const SONNET = 'anthropic.claude-sonnet-5';
+const CONV = '{System.conversationId:NLX.System}';
+const UTTERANCE = '{System.utterance:NLX.System}';
+
+const DOMAINS = [
+  {
+    name: 'profile',
+    flowId: 'ProfileFlow',
+    title: 'Profile',
+    aiDescription: 'The employee wants to see or change their home address or emergency contact.',
+    utterances: [
+      'Change my home address',
+      'I moved and need to update my address',
+      'Update my emergency contact',
+      'What address do you have on file for me',
+      'Who is my emergency contact',
+      'profile',
+      'my profile',
+    ],
+  },
+  {
+    name: 'pay',
+    flowId: 'PayFlow',
+    title: 'Pay',
+    aiDescription: 'The employee asks about direct deposit, pay statements, paychecks or pay dates.',
+    utterances: [
+      'Change my direct deposit',
+      'Update my bank account for direct deposit',
+      'Show my last pay statements',
+      'When is my next paycheck',
+      'Where does my pay go',
+      'pay',
+      'my pay details',
+    ],
+  },
+  {
+    name: 'travel',
+    flowId: 'TravelFlow',
+    title: 'Travel',
+    aiDescription: 'The employee asks about pass travel, buddy passes or flight benefits.',
+    utterances: [
+      'How many buddy passes do I get',
+      'Can my parents fly on my pass travel',
+      'What are my flight benefits',
+      'How does nonrev travel work',
+      'Who is eligible for pass travel',
+    ],
+  },
+];
+
+const CONTEXT_VARIABLES = [
+  { name: 'welcomeGreeted', schema: { type: 'number' }, disallowExternalModification: false },
+  { name: 'activeDomain', schema: { type: 'string' }, disallowExternalModification: false },
+  ...DOMAINS.flatMap((d) => [
+    { name: `lastUserText${d.title}`, schema: { type: 'string' }, disallowExternalModification: false },
+    { name: `lastReply${d.title}`, schema: { type: 'string' }, disallowExternalModification: false },
+  ]),
+];
+
+const authHeaders = (sessionSuffix) => [
+  hdr('Authorization', 'Bearer {hrToken:NLX.Context}', { sensitive: true }),
+  hdr('Content-Type', 'application/json'),
+  hdr('X-Amzn-Bedrock-AgentCore-Runtime-Session-Id', `${CONV}-${sessionSuffix}`),
+];
+
+const A2A_REPLY_SCHEMA = {
+  type: 'object',
+  properties: {
+    jsonrpc: { type: 'string' },
+    result: {
+      type: 'object',
+      properties: {
+        contextId: { type: 'string' },
+        parts: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { kind: { type: 'string' }, text: { type: 'string' }, data: { type: 'object' } },
+          },
+        },
+      },
+    },
+  },
+};
+
+const delegateId = (d, confirm) => `Delegate${d.title}${confirm ? 'Confirm' : ''}`;
+
+function delegateDataRequest(d, confirm) {
+  return {
+    dataRequestId: delegateId(d, confirm),
+    type: 'object',
+    description: `${d.title} sub-agent over A2A${confirm ? ', confirming a pending change' : ''}.`,
+    webhook: {
+      implementation: 'external',
+      method: 'POST',
+      environments: env(
+        `${MOCK_URL}/a2a/${d.name}/invocations`,
+        authHeaders(d.name),
+        `${AGENTS_GATEWAY_URL}/${d.name}/invocations`,
+      ),
+    },
+    responseSchema: A2A_REPLY_SCHEMA,
+  };
+}
+
+/** The A2A body as a JSON string template: the runtime fills and escapes each placeholder. */
+function delegateBody(d, confirm) {
+  const last = `{${delegateId(d, false)}.result.parts`;
+  const pending = (field) => `${last}.1.data.pendingAction.${field}:NLX.Variable}`;
+  return JSON.stringify({
+    jsonrpc: '2.0',
+    id: CONV,
+    method: 'message/send',
+    params: {
+      message: {
+        role: 'user',
+        messageId: CONV,
+        contextId: CONV,
+        parts: [{ kind: 'text', text: UTTERANCE }],
+        metadata: {
+          employeeId: '{employeeId:NLX.Context}',
+          history: [
+            { role: 'user', content: `{lastUserText${d.title}:NLX.Context}` },
+            { role: 'assistant', content: `{lastReply${d.title}:NLX.Context}` },
+          ],
+          pendingAction: confirm
+            ? {
+                proposalId: pending('proposalId'),
+                field: pending('field'),
+                before: pending('before'),
+                after: pending('after'),
+              }
+            : null,
+        },
+      },
+    },
+  });
+}
+
+const capturedOther = (selfId) => [
+  { left: { type: 'captured_flow' }, operator: 'exists' },
+  { left: { type: 'captured_flow' }, operator: 'neq', right: { type: 'constant', value: selfId } },
+  { left: { type: 'captured_flow' }, operator: 'neq', right: { type: 'constant', value: 'PolicyFlow' } },
+];
+/**
+ * The edges a listen node takes when the turn stays in this flow. A user_input node
+ * with an unconditional edge does not wait for input (AICC sample live notes), so the
+ * "anything else" case is spelled out: no flow recognized, this flow, or the unknown
+ * default (PolicyFlow), which an unmatched utterance still captures.
+ */
+const stayEdges = (selfId, to, name) => [
+  { to, name: `${name}None`, when: [{ left: { type: 'captured_flow' }, operator: 'not_exists' }] },
+  { to, name: `${name}Self`, when: [{ left: { type: 'captured_flow' }, operator: 'eq', right: { type: 'constant', value: selfId } }] },
+  { to, name: `${name}Unknown`, when: [{ left: { type: 'captured_flow' }, operator: 'eq', right: { type: 'constant', value: 'PolicyFlow' } }] },
+];
+const utteranceMatches = (regex) => [
+  { left: { type: 'system', name: 'System.utterance' }, operator: 'matches_regex', right: { type: 'constant', value: regex } },
+];
+const YES = '^\\s*([Yy]es|[Yy]eah|[Yy]ep|[Cc]onfirm|[Oo][Kk]|[Oo]kay|[Ss]ure|[Gg]o ahead|[Pp]lease do|[Dd]o it)\\b';
+const NO = '^\\s*([Nn]o|[Nn]ope|[Cc]ancel|[Dd]on.t|[Ss]top)\\b';
+const setContext = (name, value) => ({ type: 'context', name, modification: 'set', value });
+/** The turn's utterance and the reply just given, kept as the next call's history. */
+const remember = (d, confirm) => [
+  setContext(`lastUserText${d.title}`, { type: 'system', name: 'System.utterance' }),
+  setContext(`lastReply${d.title}`, { type: 'variable', name: `${delegateId(d, confirm)}.result.parts.0.text` }),
+];
+
+function domainFlow(d) {
+  const f = new FlowBuilder(d.flowId);
+  const call = (id, confirm) => ({
+    dataRequestId: delegateId(d, confirm),
+    name: delegateId(d, confirm),
+    headers: {},
+    payload: delegateBody(d, confirm),
+    alwaysRetrigger: true,
+  });
+  const reply = (confirm) => `{${delegateId(d, confirm)}.result.parts.0.text:NLX.Variable}`;
+  const pendingExists = [
+    {
+      left: { type: 'variable', name: `${delegateId(d, false)}.result.parts.1.data.pendingAction.proposalId` },
+      operator: 'exists',
+    },
+  ];
+
+  f.add('start', 'start', {
+    children: ['call'],
+    metadata: { stateModifications: [setContext('activeDomain', { type: 'constant', value: d.name })] },
+  })
+    .add('call', 'data_request', {
+      children: [
+        { to: 'route', when: [statusIs('success')] },
+        { to: 'unreachable', when: [statusIs('failure')] },
+        { to: 'unreachable', when: [statusIs('timeout')] },
+      ],
+      dataRequests: [call('call', false)],
+      metadata: { timeout: 30000 },
+    })
+    .add('route', 'choice', { children: [{ to: 'replyPending', when: pendingExists }, 'reply'] })
+    .add('reply', 'basic', {
+      children: ['toListen'],
+      messages: [reply(false)],
+      metadata: { stateModifications: remember(d, false) },
+    })
+    .add('replyPending', 'basic', {
+      children: ['confirm'],
+      messages: [reply(false)],
+      metadata: { stateModifications: remember(d, false) },
+    })
+    .add('confirm', 'user_input', {
+      children: [
+        { to: 'commit', when: utteranceMatches(YES), name: 'confirmed' },
+        { to: 'declined', when: utteranceMatches(NO), name: 'declined' },
+        { to: 'shift', when: capturedOther(d.flowId), name: 'topicShift' },
+        ...stayEdges(d.flowId, 'call', 'otherReply'),
+      ],
+    })
+    .add('commit', 'data_request', {
+      children: [
+        { to: 'replyCommit', when: [statusIs('success')] },
+        { to: 'unreachable', when: [statusIs('failure')] },
+        { to: 'unreachable', when: [statusIs('timeout')] },
+      ],
+      dataRequests: [call('commit', true)],
+      metadata: { timeout: 30000 },
+    })
+    .add('replyCommit', 'basic', {
+      children: ['toListen'],
+      messages: [reply(true)],
+      metadata: { stateModifications: remember(d, true) },
+    })
+    .add('declined', 'basic', { children: ['toListen'], messages: ["Okay, I won't make that change."] })
+    .add('unreachable', 'basic', {
+      children: ['toListen'],
+      messages: [`Sorry, the ${d.title} agent could not be reached just now.`],
+    })
+    // A second user_input reached in the same turn re-reads that turn's utterance
+    // (AICC sample live notes), so a reply ends the turn with a redirect to this flow's
+    // listen node instead of an edge.
+    .add('toListen', 'redirect', {
+      children: ['end'],
+      metadata: { redirect: { type: 'flow', flowId: d.flowId, nodeId: f.id('listen') } },
+    })
+    .add('listen', 'user_input', {
+      children: [
+        { to: 'shift', when: capturedOther(d.flowId), name: 'topicShift' },
+        ...stayEdges(d.flowId, 'call', 'followUp'),
+      ],
+    })
+    .add('shift', 'redirect', {
+      children: ['end'],
+      metadata: { redirect: { type: 'flow', flowId: '{System.capturedFlow:NLX.System}' } },
+    })
+    .add('end', 'end');
+
+  return {
+    flowId: d.flowId,
+    description: `Delegates each turn to the ${d.title} sub-agent over A2A and confirms writes.`,
+    aiDescription: d.aiDescription,
+    utterances: d.utterances.map((text) => ({ text })),
+    contextVariables: [
+      { name: 'activeDomain', type: 'text' },
+      { name: `lastUserText${d.title}`, type: 'text' },
+      { name: `lastReply${d.title}`, type: 'text' },
+      { name: 'hrToken', type: 'text' },
+      { name: 'employeeId', type: 'text' },
+    ],
+    nodes: f.nodes,
+  };
+}
+
+function welcomeFlow() {
+  const f = new FlowBuilder('WelcomeFlow');
+  f.add('start', 'start', { children: ['guard'] })
+    .add('guard', 'choice', {
+      children: [
+        {
+          to: 'listen',
+          when: [{ left: { type: 'context', name: 'welcomeGreeted' }, operator: 'gte', right: { type: 'constant', value: 1 } }],
+        },
+        'greet',
+      ],
+    })
+    .add('greet', 'basic', {
+      children: ['listen'],
+      messages: [
+        "Hi, I'm the HR assistant. I can help with your home address and emergency contact, your pay and direct deposit, your travel benefits, and HR policy questions.",
+      ],
+      metadata: { stateModifications: [setContext('welcomeGreeted', { type: 'constant', value: 1 })] },
+    })
+    .add('listen', 'user_input', {
+      children: [
+        { to: 'toCaptured', when: [{ left: { type: 'captured_flow' }, operator: 'exists' }], name: 'recognized' },
+        { to: 'toPolicy', when: [{ left: { type: 'captured_flow' }, operator: 'not_exists' }], name: 'unrecognized' },
+      ],
+    })
+    .add('toCaptured', 'redirect', {
+      children: ['end'],
+      metadata: { redirect: { type: 'flow', flowId: '{System.capturedFlow:NLX.System}' } },
+    })
+    .add('toPolicy', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'PolicyFlow' } } })
+    .add('end', 'end');
+  return {
+    flowId: 'WelcomeFlow',
+    untrained: true,
+    description: 'Greets once, then hands each turn to the recognized flow; unrecognized goes to PolicyFlow.',
+    aiDescription: 'System flow; not a routing target.',
+    contextVariables: [{ name: 'welcomeGreeted', type: 'number' }],
+    nodes: f.nodes,
+  };
+}
+
+function clarifyFlow() {
+  const f = new FlowBuilder('ClarifyFlow');
+  f.add('start', 'start', { children: ['ask'] })
+    .add('ask', 'user_input', {
+      messages: [
+        'Do you want to update your profile (home address or emergency contact) or your pay details (direct deposit)?',
+      ],
+      children: [
+        {
+          to: 'toCaptured',
+          when: [
+            { left: { type: 'captured_flow' }, operator: 'exists' },
+            { left: { type: 'captured_flow' }, operator: 'neq', right: { type: 'constant', value: 'ClarifyFlow' } },
+            { left: { type: 'captured_flow' }, operator: 'neq', right: { type: 'constant', value: 'PolicyFlow' } },
+          ],
+          name: 'chosen',
+        },
+        ...stayEdges('ClarifyFlow', 'again', 'unclear'),
+      ],
+    })
+    .add('again', 'basic', { children: ['ask'], messages: ['Please say "profile" or "pay".'] })
+    .add('toCaptured', 'redirect', {
+      children: ['end'],
+      metadata: { redirect: { type: 'flow', flowId: '{System.capturedFlow:NLX.System}' } },
+    })
+    .add('end', 'end');
+  return {
+    flowId: 'ClarifyFlow',
+    description: 'Asks one clarifying question when the employee wants to update information without saying which.',
+    aiDescription: 'The employee wants to update or change their information or details but does not say whether it is their address, contact or pay.',
+    utterances: [
+      'I need to update my information',
+      'Update my details',
+      'I want to change my info',
+      'I need to change some of my information',
+    ].map((text) => ({ text })),
+    nodes: f.nodes,
+  };
+}
+
+const HR_TOOLS = [
+  { name: 'docs___Retrieve', enabled: true, requestSchema: { type: 'object', properties: { text: { type: 'string' } } } },
+  { name: 'hr___get_profile', enabled: true, requestSchema: { type: 'object', properties: {} } },
+  { name: 'hr___list_pay_statements', enabled: true, requestSchema: { type: 'object', properties: { count: { type: 'integer' } } } },
+  {
+    name: 'hr___open_ticket',
+    enabled: true,
+    requestSchema: {
+      type: 'object',
+      properties: { summary: { type: 'string' }, domain: { type: 'string' } },
+      required: ['summary'],
+    },
+  },
+  // Writes stay with the sub-agents: listed so the choice is visible, never enabled.
+  { name: 'hr___propose_address_change', enabled: false },
+  { name: 'hr___propose_emergency_contact_change', enabled: false },
+  { name: 'hr___propose_direct_deposit_change', enabled: false },
+  { name: 'hr___commit_change', enabled: false },
+];
+
+function hrToolsDataRequest() {
+  const headers = [
+    hdr('Authorization', 'Bearer {hrToken:NLX.Context}', { sensitive: true }),
+    hdr('X-Hr-User-Token', '{hrToken:NLX.Context}', { sensitive: true }),
+    hdr('X-Hr-Thread-Id', CONV),
+  ];
+  return {
+    dataRequestId: 'HrTools',
+    type: 'object',
+    description: 'hr-super-agent tools gateway over MCP: policy search, profile, pay statements, tickets.',
+    webhook: {
+      implementation: 'mcp',
+      mcp: {
+        method: 'POST',
+        environments: env(TOOLS_GATEWAY_URL, headers),
+        tools: HR_TOOLS,
+      },
+    },
+  };
+}
+
+function policyFlow() {
+  const f = new FlowBuilder('PolicyFlow');
+  const gj = (i) => [{ left: { type: 'system', name: 'System.gjConditionIndex' }, operator: 'eq', right: { type: 'constant', value: i } }];
+  f.add('start', 'start', { children: ['journey'] })
+    .add('journey', 'generative_journey', {
+      children: [
+        { to: 'toProfile', when: gj(0), name: 'switchToProfile' },
+        { to: 'toPay', when: gj(1), name: 'switchToPay' },
+        { to: 'toTravel', when: gj(2), name: 'switchToTravel' },
+        { to: 'toEscalation', when: gj(3), name: 'human' },
+        { to: 'failed', when: [statusIs('failure')] },
+        { to: 'failed', when: [statusIs('timeout')] },
+      ],
+      metadata: {
+        generativeJourney: {
+          modelType: SONNET,
+          maxSteps: 8,
+          temperature: 0.2,
+          prompt: [
+            "You answer an airline employee's HR policy questions for the HR assistant.",
+            'Search the HR policy documents with the docs___Retrieve tool before answering, and answer only from what it returns, naming the policy you used.',
+            'You may look up the employee\'s own profile (hr___get_profile) or pay statements (hr___list_pay_statements) when the question needs them.',
+            'If the employee wants a human or you cannot answer, offer to open a ticket with hr___open_ticket, and open it only if they agree.',
+            'You never change records. If the employee wants to change their home address or emergency contact, use the switchToProfile exit; direct deposit or pay statements, switchToPay; pass travel or buddy passes, switchToTravel; a person, human.',
+            'Keep answers to three sentences.',
+          ].join(' '),
+          tools: [
+            {
+              type: 'dataRequest',
+              dataRequest: { dataRequestId: 'HrTools', name: 'HrTools', headers: {}, payload: {} },
+              prompt: 'HR tools: docs___Retrieve searches HR policy documents; hr___get_profile and hr___list_pay_statements read the employee\'s records; hr___open_ticket opens an HR service desk ticket.',
+            },
+          ],
+          exitConditions: [
+            { name: 'switchToProfile', prompt: 'The employee wants to change or see their home address or emergency contact.' },
+            { name: 'switchToPay', prompt: 'The employee wants to change direct deposit or see pay statements.' },
+            { name: 'switchToTravel', prompt: 'The employee asks about pass travel, buddy passes or flight benefits.' },
+            { name: 'human', prompt: 'The employee asks to talk to a person.' },
+          ],
+        },
+      },
+    })
+    .add('toProfile', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'ProfileFlow' } } })
+    .add('toPay', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'PayFlow' } } })
+    .add('toTravel', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'TravelFlow' } } })
+    .add('toEscalation', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'EscalationFlow' } } })
+    .add('failed', 'basic', {
+      children: ['toWelcome'],
+      messages: ["I couldn't look that up just now. You can ask again, or ask for a person."],
+    })
+    .add('toWelcome', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'WelcomeFlow' } } })
+    .add('end', 'end');
+  return {
+    flowId: 'PolicyFlow',
+    description: 'Answers HR policy questions with the HrTools MCP data request (read and ticket tools only).',
+    aiDescription: 'The employee asks a general HR policy question, such as leave, holidays, benefits enrollment or workplace rules.',
+    utterances: [
+      'How much vacation do I get',
+      'What is the bereavement leave policy',
+      'When is open enrollment',
+      'What holidays do we get off',
+    ].map((text) => ({ text })),
+    nodes: f.nodes,
+  };
+}
+
+function escalationFlow() {
+  const f = new FlowBuilder('EscalationFlow');
+  f.add('start', 'start', { children: ['escalate'] }).add('escalate', 'escalate', {
+    messages: ['Connecting you to the HR service desk.'],
+  });
+  return {
+    flowId: 'EscalationFlow',
+    description: 'Hands the contact to a person through the Agentic CX block Escalation branch.',
+    aiDescription: 'The employee asks to talk to a person, a human, an agent or the HR service desk.',
+    utterances: [
+      'I need to talk to someone',
+      'Let me talk to a person',
+      'Connect me to an agent',
+      'I want a human',
+      'Transfer me to the HR service desk',
+    ].map((text) => ({ text })),
+    nodes: f.nodes,
+  };
+}
+
+const DATA_REQUESTS = [
+  ...DOMAINS.flatMap((d) => [delegateDataRequest(d, false), delegateDataRequest(d, true)]),
+  hrToolsDataRequest(),
+];
+
+const FLOWS = [welcomeFlow(), clarifyFlow(), ...DOMAINS.map(domainFlow), policyFlow(), escalationFlow()];
+
+module.exports = { DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS };

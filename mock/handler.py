@@ -123,8 +123,12 @@ def a2a(domain: str, headers: dict, body: dict) -> dict:
     if not isinstance(pending, dict) or not pending.get("proposalId"):
         pending = None
     reply, new_pending, committed = sub_agent_reply(domain, text, pending)
+    history = metadata.get("history")
     print(json.dumps({"domain": domain, "text": text[:200], "pending": bool(pending),
-                      "committed": committed, "auth": preview(headers.get("authorization"))}))
+                      "pendingRaw": metadata.get("pendingAction"), "history": history,
+                      "contextId": message.get("contextId"), "employeeId": metadata.get("employeeId"),
+                      "committed": committed, "auth": preview(headers.get("authorization")),
+                      "session": headers.get("x-amzn-bedrock-agentcore-runtime-session-id", "")}))
     return respond(
         200,
         {
