@@ -41,11 +41,11 @@ and is not a Strands agent. The bridge is a `ConnectTurn` object with the same s
 
 | Concern | Choice | Reason |
 | --- | --- | --- |
-| Session | One Connect chat contact per AG-UI thread. A DynamoDB table keyed by user and thread holds the contact id, the participant connection token and the last transcript item seen, with a TTL | The Runtime stays stateless, as every platform agent is; a new microVM finds the conversation |
-| Transport | Per run: `SendMessage` on the participant connection, then poll `GetTranscript` forward from the last item until the canvas has replied and gone quiet | No WebSocket held across runs. The spike's harness used the WebSocket; the polling path is a phase 1 check |
+| Session | One Connect chat contact per AG-UI thread, replaced when the token it was started with nears expiry. A DynamoDB table keyed by user and thread holds the contact id, the participant connection token and the last transcript item seen, with a TTL | The Runtime stays stateless, as every platform agent is; a new microVM finds the conversation |
+| Transport | A new contact opens the customer WebSocket once, which starts the flow, and closes it. Each run then calls `SendMessage` and polls `GetTranscript` until the canvas has replied and gone quiet | No WebSocket held across runs (phase 0) |
 | Events | Each canvas message becomes one `TEXT_MESSAGE` start, content, end; a `STEP_STARTED` "Connect is working" while polling; the kit's keepalive pings cover sub-agent turns of up to 10 s | Fits the page's existing rendering and status line |
 | Escalation | When the contact flow's Escalation branch fires, a `CUSTOM` event `connect/escalated` and a closing line; the thread record is closed | A person's replies across later runs are out of scope for this plan |
-| Identity | The user's chat.dengler.io access token from the request becomes the contact attribute `hrToken`, as in the spike | One token from the page to every HR hop, which phase 8 makes valid |
+| Identity | The user's chat.dengler.io access token from the request becomes the contact attribute `hrToken`, and the bridge blanks it after the canvas's first reply | One token from the page to every HR hop, which phase 8 makes valid, and none left on the contact record (phase 0) |
 | Conversation log | The kit's log, so `/p/hr-connect/` threads land beside the others | Free with the kit |
 
 ## Gate: the token on the contact record
@@ -62,6 +62,22 @@ readable in the contact record for its lifetime. Phase 0 settles this before any
 3. If neither works, the project stops at the mock sub-agents until a short-lived,
    audience-limited token per contact is available (PingFederate token exchange at Delta;
    Cognito has none).
+
+## Phase 0 results, 2 October
+
+`scripts/token_gate.py`, development application, dummy tokens; details in
+`.deploy/token-gate.json`.
+
+| Check | Result |
+| --- | --- |
+| Blank `hrToken` after the first reply | Works. `UpdateContactAttributes` replaced it on the contact record (it then held only "cleared", also after disconnect), and the designer session kept the token it had read: the second sub-agent call still carried it |
+| A changed `hrToken` reaching a running session | Does not happen. The second call carried the original token, not the new one. A refreshed token needs a new contact, so the bridge starts one when the stored token is within a few minutes of expiry; the designer's conversation state starts over, the thread's history in the page does not |
+| Driving the canvas without a WebSocket | Partly. The flow starts only after the customer's WebSocket connects (with credentials alone the transcript stayed empty); after one connect and close, `SendMessage` and `GetTranscript` polling carry the whole conversation |
+| The token in the designer's logs | Not found. None of the 51 `QueryLogs` events for the conversation holds the token's value (the header is marked sensitive) |
+| Token in data request bodies | A field-map payload adds an `nlx_context` object with every context variable, `hrToken` included, to the body; the canvas's JSON string templates do not. Keep every data request on a string template |
+
+The gate passes with one design change: the bridge blanks `hrToken` after the first reply
+and starts a new contact for a token near expiry. Phase 1 can go ahead.
 
 ## Phases
 
