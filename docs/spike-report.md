@@ -1,20 +1,47 @@
 # Spike report: Agentic CX designer as the HR super-agent
 
-Overnight 1 to 2 October 2026. Branch `spike/acxd`, local commits only.
+Overnight 1 to 2 October 2026, with real sub-agent runs the next morning. Branch
+`spike/acxd`, local commits only.
 
 The Agentic CX designer can replace hr-super-agent's Strands orchestrator while the
 Profile, Pay and Travel A2A sub-agents and the HR tools stay as built. Built entirely
 from code through the designer SDK, the canvas routes, delegates over A2A with the
 employee's token in the Authorization header, confirms writes in a fixed step, and
 escalates to a Connect queue. Every scenario passed over real Connect chat against mock
-sub-agents; the routing eval scored 55 of 60. What is not yet proven: a real sub-agent
-turn with a real employee token, and the designer's own MCP data request type.
+sub-agents; the routing eval scored 55 of 60. On the morning of 2 October the production
+application ran the same scenarios against hr-super-agent's real sub-agents and tools
+gateway with Sam's employee token, and every one passed. What is still not working is the
+designer's own MCP data request type; a plain HTTP JSON-RPC call to the tools gateway
+does the job instead.
+
+## Real sub-agents, 2 October morning
+
+Production application (`hr-assistant-production`), Sam's hr-super-agent access token
+minted by `scripts/hr_token.py`, real Profile, Pay and Travel sub-agents, real tools
+gateway.
+
+| Scenario | Result | Sub-agent call |
+| --- | --- | --- |
+| Address change, "yes", "what about my emergency contact?" | The Profile agent proposed from Sam's actual record (25 Ponce de Leon Ave), committed on "yes" through the confirmation step, and answered the follow-up with the emergency contact on file | 5.2 s, 10.3 s (commit), 3.6 s |
+| "I need to update my information", "pay" | One clarifying question, then the real Pay agent | |
+| Buddy passes, "I need to talk to someone" | The Travel agent answered from policy; EscalationFlow transferred the chat to the queue | 5.8 s |
+| "How much PTO do I earn per year?" | PolicySearch (`tools/call docs___Retrieve` over HTTP) returned 200 in 725 ms; the journey answered from it, citing the Paid Time Off and Sick Time policy | 0.7 s |
+| "Show my last pay statements" | The Pay agent listed three real statements | 4.9 s |
+
+Every sub-agent turn finished well inside the 30 s node timeout; the slowest was the
+commit at 10.3 s. The tools gateway accepted a bare JSON-RPC `tools/call` (no
+`initialize`) and answered with plain JSON. The designer's MCP data request still failed
+"could not be prepared" with the real token, so the token was never its problem.
+
+`scripts/hr_token.py` uses `GetTokensFromRefreshToken`: the HR pool rotates refresh
+tokens and `InitiateAuth` refuses them. Each run stores the new refresh token, and the
+browser session's copy stops working after Cognito's grace period.
 
 ## Answers to the open questions in the design doc
 
 | Question | Answer | Evidence |
 | --- | --- | --- |
-| Can the employee's token reach a data request's headers? | Yes. A Connect contact attribute becomes a context variable, and `Authorization: Bearer {hrToken:NLX.Context}` declared on the data request arrives at the endpoint | Echo endpoint saw `Bearer guppi-dummy-…` on every call (ProbeStatic, ProbeDynamic); the real agents and tools gateways answered 401 to the dummy, so the header reached them |
+| Can the employee's token reach a data request's headers? | Yes. A Connect contact attribute becomes a context variable, and `Authorization: Bearer {hrToken:NLX.Context}` declared on the data request arrives at the endpoint | Echo endpoint saw `Bearer guppi-dummy-…`; with Sam's real token both gateways and all three sub-agents accepted it and the tools server committed an address change |
 | Can the canvas send hr-super-agent's A2A `message/send`? | Yes, as a JSON string template payload. Nested placeholders are filled and quotes are escaped correctly | Mock received a well-formed JSON-RPC body with text, contextId, history and pendingAction |
 | Can the canvas read a nested A2A reply? | Yes, with dot paths: `{DelegateProfile.result.parts.0.text:NLX.Variable}`, `...parts.1.data.pendingAction.proposalId` | ReplyProbe flow; every domain flow uses it |
 | Does the canvas keep the identity chain? | Yes for the A2A and HTTP paths: one token from the contact flow to the gateways, `X-Hr-User-Token` and `X-Hr-Thread-Id` as D19 expects | Mock and gateway logs |
@@ -45,7 +72,7 @@ PolicyFlow, GoodbyeFlow, EscalationFlow. Diagnostics (acxd/probes.js): HeaderPro
 ReplyProbe and McpProbe, reached by saying "run the header probe", "run the reply probe"
 or "run the mcp probe".
 
-## Scenarios over Connect chat (mock sub-agents)
+## Scenarios over Connect chat (mock sub-agents, overnight)
 
 | Scenario | Turns | Result |
 | --- | --- | --- |
@@ -115,13 +142,8 @@ No utterance meant for one write domain reached the other.
 
 ## What is left for Sam
 
-1. Copy a refresh token from a signed-in hr.dengler.io session (DevTools, Application,
-   IndexedDB) and run
-   `pbpaste > ~/.config/guppi-connect/hr_refresh_token && chmod 600 ~/.config/guppi-connect/hr_refresh_token`.
-2. `uv run scripts/hr_token.py`, then the real-agent runs:
-   `uv run scripts/chat.py --env production --token-file ~/.config/guppi-connect/hr_access_token "Change my home address to 419 Glendale Ave, Decatur GA 30030" "yes"`.
-   Watch for the 30 s node timeout on real sub-agent turns, and whether PolicySearch's
-   reply from the tools gateway is JSON or an event stream.
+1. Done 2 October: refresh token saved, real-agent runs passed (section above).
+2. Sign in again on hr.dengler.io; the rotated refresh token ended that session.
 3. In the designer console, open the `HrTools` data request and press Sync, then rerun
    the policy question, to see whether the MCP data request type works once synced.
 4. Decide on the five routing misses, and whether escalation should win for u55 and u59.

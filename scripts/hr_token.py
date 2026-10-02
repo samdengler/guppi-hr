@@ -6,7 +6,8 @@
 
 Reads ~/.config/guppi-connect/hr_refresh_token (copied by Sam from a signed-in
 hr.dengler.io session) and writes a fresh access token to
-~/.config/guppi-connect/hr_access_token, both mode 600. The client id is the HR page's
+~/.config/guppi-connect/hr_access_token, both mode 600. The pool rotates refresh tokens,
+so each run also stores the new refresh token, and the browser's copy stops working. The client id is the HR page's
 public Cognito client from hr-super-agent's cdk-outputs.json; the gateways accept only
 that client's tokens. Neither token is printed.
 
@@ -26,18 +27,26 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = Path.home() / ".config" / "guppi-connect"
 
 
+def write_private(path: Path, value: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(value)
+
+
 def main() -> None:
     outputs = next(iter(json.loads((ROOT.parent / "hr-super-agent" / "cdk-outputs.json").read_text()).values()))
     refresh = (CONFIG / "hr_refresh_token").read_text().strip()
-    result = boto3.client("cognito-idp", region_name="us-east-1").initiate_auth(
-        AuthFlow="REFRESH_TOKEN_AUTH",
+    # The HR pool rotates refresh tokens, which InitiateAuth refuses
+    # ("This API does not support refresh token rotation"); GetTokensFromRefreshToken
+    # returns a new refresh token as well, which replaces the old one in the file.
+    result = boto3.client("cognito-idp", region_name="us-east-1").get_tokens_from_refresh_token(
+        RefreshToken=refresh,
         ClientId=outputs["UserPoolClientId"],
-        AuthParameters={"REFRESH_TOKEN": refresh},
     )["AuthenticationResult"]
+    write_private(CONFIG / "hr_access_token", result["AccessToken"])
+    if result.get("RefreshToken"):
+        write_private(CONFIG / "hr_refresh_token", result["RefreshToken"])
     target = CONFIG / "hr_access_token"
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(result["AccessToken"])
     print(f"wrote {target} ({len(result['AccessToken'])} chars, expires in {result['ExpiresIn']} s)")
 
 
