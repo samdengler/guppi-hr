@@ -1,4 +1,4 @@
-# HR Super Agent instructions
+# guppi-hr instructions
 
 ## Project Overview
 
@@ -93,7 +93,14 @@ scripts/
   seed-content.sh         # clone the docs repositories at pinned revisions, sync Markdown to S3
   ingest.sh               # StartIngestionJob and wait
   browser-check.mjs       # the four scenarios on /p/hr/ in a headless browser, screenshots in .deploy/
+connect/                  # the Amazon Connect super-agent (/p/hr-connect/): its own projects, lockfiles and
+                          # stack GuppiConnect, excluded from this uv workspace; see connect/README.md
 ```
+
+`connect/` was the guppi-connect repository until 2 October 2026. Work there runs from
+that folder (`cd connect/agent && uv run -- pytest`, `connect/scripts/deploy.sh`), never
+touches the HR stack, and reads the HR stack's gateway URLs from the root
+`cdk-outputs.json`.
 
 ## Rules
 

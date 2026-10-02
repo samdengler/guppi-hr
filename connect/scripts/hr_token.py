@@ -34,7 +34,7 @@ def write_private(path: Path, value: str) -> None:
 
 
 def main() -> None:
-    outputs = next(iter(json.loads((ROOT.parent / "hr-super-agent" / "cdk-outputs.json").read_text()).values()))
+    outputs = next(iter(json.loads((ROOT.parent / "cdk-outputs.json").read_text()).values()))
     refresh = (CONFIG / "hr_refresh_token").read_text().strip()
     # The HR pool rotates refresh tokens, which InitiateAuth refuses
     # ("This API does not support refresh token rotation"); GetTokensFromRefreshToken

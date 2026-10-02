@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from chat import Chat  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-CORPUS = ROOT.parent / "hr-super-agent" / "evals" / "utterances.jsonl"
+CORPUS = ROOT.parent / "evals" / "utterances.jsonl"
 WRITE_DOMAINS = {"profile", "pay"}
 OUTCOMES = ("profile", "pay", "travel", "general", "clarify", "escalation")
 GREETING = "Hi, I'm the HR assistant"

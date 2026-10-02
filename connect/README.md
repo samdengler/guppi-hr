@@ -1,13 +1,17 @@
-# guppi-connect
+# connect: the Amazon Connect super-agent
 
 The HR assistant with Amazon Connect Customer's Agentic CX designer as its super-agent,
-in place of hr-super-agent's Strands orchestrator. The Profile, Pay and Travel A2A
-sub-agents, the HR tools MCP server and both AgentCore gateways are hr-super-agent's,
-unchanged. It is a project on the chat.dengler.io platform
+in place of the Strands orchestrator in the rest of this repository. The Profile, Pay and
+Travel A2A sub-agents, the HR tools MCP server and both AgentCore gateways are the HR
+stack's, unchanged. It is a project on the chat.dengler.io platform
 ([guppi-gpt](https://github.com/samdengler/guppi-gpt)), live at
-`https://chat.dengler.io/p/hr-connect/`, beside hr-super-agent's own page at
+`https://chat.dengler.io/p/hr-connect/`, beside the orchestrator's page at
 `https://chat.dengler.io/p/hr/`. Both pages run the same four scenarios, so the two
 super-agents can be compared turn by turn.
+
+This folder was the guppi-connect repository until 2 October 2026; its history came with
+it. It keeps its own projects, lockfiles and stack (`GuppiConnect`), and the Connect instance
+and `~/.config/guppi-connect/` keep the old name. Commands below run from this folder.
 
 How a turn travels: the page posts AG-UI to `/api/hr-connect/invocations`; a bridge on
 the platform agent kit (`agent/`) turns each run into a Connect chat turn on a contact
@@ -25,7 +29,7 @@ without an employee token.
 | Document | Contents |
 | --- | --- |
 | [`docs/connect-super-agent.html`](docs/connect-super-agent.html) | The first analysis: Connect's options for an orchestrating agent, four ways to put Connect in front, a comparison with the custom super-agent and ASAPP, gaps, pricing |
-| [`docs/acxd-super-agent.html`](docs/acxd-super-agent.html) | The design this repository built: the designer canvas as the super-agent over the existing sub-agents and tools, with the spike's results |
+| [`docs/acxd-super-agent.html`](docs/acxd-super-agent.html) | The design this folder built: the designer canvas as the super-agent over the existing sub-agents and tools, with the spike's results |
 | [`docs/spike-report.md`](docs/spike-report.md) | What the spike proved over Connect chat, with real and mock sub-agents, and what is still open |
 | [`docs/platform-plan.md`](docs/platform-plan.md) | How the project joined chat.dengler.io: the token gate, the bridge design, the phases |
 
@@ -35,8 +39,8 @@ The HTML documents are self-contained copies of two Claude Docs; open them in a 
 
 - AWS credentials for account 009080466601, us-east-1
 - `~/.config/guppi-connect/acxd_api_key`: the designer API key (mode 600)
-- hr-super-agent checked out beside this repository (its `cdk-outputs.json` supplies the
-  gateway URLs)
+- The HR stack deployed from the repository root (its `cdk-outputs.json` there supplies the
+  gateway URLs); guppi-gpt checked out beside this repository for `scripts/bridge_check.py`
 - Node 20+, uv, AWS CDK
 
 ## Layout

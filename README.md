@@ -1,4 +1,4 @@
-# HR Super Agent
+# guppi-hr
 
 An MVP of an HR employee assistant, shown on the page as "HR Assistant", live at
 `https://chat.dengler.io/p/hr/`. An orchestrator on Amazon Bedrock AgentCore Runtime
@@ -14,10 +14,12 @@ CloudFront, WAF, the edge gateway and its per-user limits, and this repository o
 everything that is HR (D34). [`docs/design.md`](docs/design.md) describes the system as
 built; [`docs/demo.md`](docs/demo.md) walks the four scenarios.
 
-[guppi-connect](https://github.com/samdengler/guppi-connect) puts Amazon Connect's
-Agentic CX designer in the orchestrator's place, over this repository's sub-agents, tools
-and gateways unchanged, at `https://chat.dengler.io/p/hr-connect/`. The four scenarios
-run on both pages.
+The repository holds two super-agents over the same sub-agents, tools and gateways. The
+Strands orchestrator described here serves `/p/hr/`. [`connect/`](connect/) puts Amazon
+Connect's Agentic CX designer in the orchestrator's place and serves
+`https://chat.dengler.io/p/hr-connect/`; its README covers that side. The four scenarios
+run on both pages. The repository was named hr-super-agent until 2 October 2026, when
+guppi-connect moved in as `connect/`.
 
 ## What it does
 
@@ -68,6 +70,7 @@ accepts the platform user pool's token. The stack reads the platform's identifie
 | `content/hr/` | The synthetic HR policy documents the knowledge base indexes |
 | `evals/` | 60 labeled routing utterances and the offline routing evaluation |
 | `scripts/` | `deploy.sh`, `seed-content.sh`, `ingest.sh`, `browser-check.mjs` |
+| `connect/` | The Amazon Connect super-agent: the designer canvas as code, its contact flow, the AG-UI bridge and its own stack `GuppiConnect` |
 
 ## Prerequisites
 

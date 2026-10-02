@@ -19,7 +19,7 @@ from pathlib import Path
 import httpx
 
 SITE = "https://chat.dengler.io"
-TOKEN_SCRIPT = Path(__file__).resolve().parents[2] / "guppi-gpt" / "scripts" / "test-token.sh"
+TOKEN_SCRIPT = Path(__file__).resolve().parents[3] / "guppi-gpt" / "scripts" / "test-token.sh"
 
 
 def platform_token() -> str:

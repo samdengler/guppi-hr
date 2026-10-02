@@ -6,6 +6,8 @@ requires-python = ">=3.12"
 
 [tool.uv.workspace]
 members = ["infra", "agent"]
+# connect/ keeps its own projects and lockfiles (the bridge, its CDK app).
+exclude = ["connect/agent", "connect/infra"]
 
 [dependency-groups]
 dev = [

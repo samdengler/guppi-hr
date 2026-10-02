@@ -10,8 +10,8 @@ const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 const spike = readJson(path.join(__dirname, '..', '..', 'cdk-outputs.json'));
 const MOCK_URL = spike.GuppiConnect.MockUrl.replace(/\/$/, '');
 
-// hr-super-agent's deployed gateways (its own cdk-outputs.json, read-only here).
-const hr = readJson(path.join(__dirname, '..', '..', '..', 'hr-super-agent', 'cdk-outputs.json'));
+// The HR stack's deployed gateways (the repository root's cdk-outputs.json, read-only here).
+const hr = readJson(path.join(__dirname, '..', '..', '..', 'cdk-outputs.json'));
 const hrOutputs = Object.values(hr)[0];
 const AGENTS_GATEWAY_URL = hrOutputs.AgentsGatewayUrl.replace(/\/$/, '');
 const TOOLS_GATEWAY_URL = hrOutputs.ToolsGatewayUrl.replace(/\/$/, '');
