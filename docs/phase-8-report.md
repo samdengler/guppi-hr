@@ -14,6 +14,11 @@ and `state` from `onSend`, with no blockers.
 | Step | Commit | Change |
 | --- | --- | --- |
 | 1 | `fe05cde` | The orchestrator on the kit: `app = create_app(build_strands_agent)`; `keepalive.py`, `validation.py`, `conversation_log.py` deleted after a diff against `kit-v0.2.0` showed them identical apart from the package name; the image installs git and reads a GitHub token as a BuildKit secret (D29, D30) |
+| 2 | `3e0d51b` | The stack on the platform contract: `/guppi/platform/*` from SSM, the platform-owned sections removed, every JWT authorizer and the HR tools issuer on the platform pool, the target `hr` on the platform edge gateway and the `InvokeAgentRuntime` policy on its role (D31); stack tests rewritten (174 Python tests green), `cdk synth -c image_uri=...` green |
+| 3 | `06be59d` | `web/src` page and its tests deleted; `web/manifest.json` (no `theme`), `web/src/ext.js` as an ES module, `copy.js` cut to its pure helpers; 14 `node:test` cases (D32, D33) |
+| 4 | `5eafcc3` | `scripts/deploy.sh`: no Google OAuth read, Dynatrace from 1Password with fallback, `--reuse-parameters` and `--site-only` kept, `HR_GITHUB_TOKEN` from `gh auth token`, manifest and extension to `projects/hr/` with `no-cache`, `/projects/hr/*` invalidated |
+| 5 | `a5123eb` | README, AGENTS.md, design.md, plan.md (phase 8), demo.md, agent/README.md; D34 records the move and marks D9, D10 and D17 Reversed |
+| 6 | this commit | `scripts/deploy.sh --reuse-parameters --require-approval never`: `deploy exit=0` (`.deploy/deploy-20261002-073017.log`, 1433 s of `cdk deploy`) |
 
 ## Resources removed
 
@@ -44,3 +49,16 @@ the orchestrator, sub-agent and HR tools runtimes (new image; authorizers or tok
 settings on the platform pool), the agents and tools gateways (authorizer), the
 investigator role's policy (`ListUsers` on the platform pool). Outputs: `SiteUrl` is
 `https://chat.dengler.io/p/hr/`, `AgentPath` is new.
+
+## Deploy
+
+`HrSuperAgent` reached `UPDATE_COMPLETE` with no failed resource. The image built under
+CDK with the `github_token` build secret and was pushed; the four runtimes took it. The
+cleanup phase deleted every resource listed above; the one `DELETE_SKIPPED` event is
+`SiteBucket397A1860`, the retained site bucket, which still exists. The platform edge
+gateway lists two targets, `api` and `hr`, both `READY`. `hr.dengler.io` and
+`auth-hr.dengler.io` no longer resolve. `AgentsGatewayUrl` and `ToolsGatewayUrl` in
+`cdk-outputs.json` are unchanged:
+`https://hr-super-agent-agents-rfkdgz7314.gateway.bedrock-agentcore.us-east-1.amazonaws.com`
+and `https://hr-super-agent-tools-7bi54dgr6g.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp`.
+Both now accept only the platform pool's token, which is what guppi-connect's plan expects.
