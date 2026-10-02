@@ -9,7 +9,7 @@ only after the employee says yes. All employee data and policies are synthetic.
 
 It began as an iteration of guppi-gpt, merged in with its history and renamed (D9). Since
 phase 8 it is an agent project on the chat.dengler.io platform that guppi-gpt became
-([guppi-gpt `docs/proposals/platform.md`](https://github.com/samdengler/guppi-gpt/blob/platform/docs/proposals/platform.md)): the platform owns the page, Google sign-in,
+([guppi-gpt `docs/proposals/platform.md`](https://github.com/samdengler/guppi-gpt/blob/main/docs/proposals/platform.md)): the platform owns the page, Google sign-in,
 CloudFront, WAF, the edge gateway and its per-user limits, and this repository owns
 everything that is HR (D34). [`docs/design.md`](docs/design.md) describes the system as
 built; [`docs/demo.md`](docs/demo.md) walks the four scenarios.
