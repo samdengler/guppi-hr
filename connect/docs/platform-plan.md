@@ -126,10 +126,10 @@ bridge's 2.5 s quiet window, so the bridge does see it in the same run.
 ## Open items, 2 October
 
 - [x] A turn through `/p/hr-connect/` end to end. Done in the browser (phase 4 above).
-- [ ] Deploy the bridge with `scripts/deploy.sh`. `cdk diff` shows the Runtime image and
-  the mock's asset hash only. The deploy carries the closing line change and the build
-  secret below; the session's auto mode refused it. After the deploy, "I need to talk to
-  someone" on the page should end with the closing line.
+- [x] Deploy the bridge with `scripts/deploy.sh`. Deployed at 17:51 with the closing line
+  change and the build secret; the image built with the github_token secret.
+- [x] Check the closing line on the page. "I need to talk to someone" now ends with the
+  canvas's "Connecting you to the HR service desk." and then the bridge's closing line.
 - [ ] Phase 4, the rest: the address change's "yes" (commit, then change the address
   back to 419 Glendale Ave, Decatur, GA 30030), and the routing eval through the bridge,
   which needs a platform test token (`scripts/bridge_check.py` mints one; auto mode
