@@ -63,9 +63,8 @@ Work in this order.
    pure helpers (`toolStatus`, `agentName`, `stepStatus`, `replyLabel`) and
    `copy.test.js`. Write `web/manifest.json`: `name` `hr`, `label` `HR Assistant`,
    `agent` `/api/hr/invocations`, `features` from `web/features.json` (then delete that
-   file), `extension` `/projects/hr/ext.js`, a `theme` (navy `#003a70` brand, cobalt
-   `#1f5fbf` actions on cool white, with a dark palette; the platform proposal's table
-   lists the keys), and `suggestions` with the four scenarios' opening lines from
+   file), `extension` `/projects/hr/ext.js`, no `theme` (the platform's default palette, Sky,
+   applies to every project since guppi-gpt 06140c8), and `suggestions` with the four scenarios' opening lines from
    `docs/plan.md`. Write `web/src/ext.js`, built by esbuild as an ES module to
    `web/dist/ext.js`: it ports phase 5's page changes onto the extension API. On
    `TOOL_CALL_START` and `TOOL_CALL_END` it sets `guppi.status` from `toolStatus`; on
