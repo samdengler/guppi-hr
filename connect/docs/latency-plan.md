@@ -1,6 +1,6 @@
 # Latency plan for /p/hr/
 
-Status: change 4 built (D39), not yet measured. Changes 1 to 3 built and measured on 3
+Status: change 4 built and measured (D39, results below). Changes 1 to 3 built and measured on 3
 October 2026 (results below): a follow-up's first reply went from 5.8 s to 4.1 s and a new
 chat's from 12.1 s to 8.8 s. Two of them changed on the way, after a test on the
 development flow:
@@ -75,6 +75,27 @@ target answered `initialize` 0.54 s after the client sent the call, and each han
 step took about 0.12 s (`docs/aws-feedback.md`, A6). Keeping the client's session removed
 what the client controls; the rest is inside the gateway, and change 9 below is the only
 way around it in this design.
+
+## Results of change 4
+
+Measured at 05:01 to 05:04 UTC on 3 October, with the page's network timings beside the
+bridge's run lines.
+
+| Turn | First reply at the bridge, before | After | Warm start |
+| --- | --- | --- | --- |
+| New chat, "What is my home address on file?" | 8.8 s | 6.9 s | 3.6 s, at page load |
+| Same chat, "And what is my emergency contact?" | 4.1 s | 4.9 s | none |
+| New chat, "How many buddy passes do I get?" | 9.2 s | 7.3 s | 2.3 s, at "New chat" |
+| New chat, a message 1.1 s after "New chat" | | 6.7 s, waited for the warm start's contact | 2.1 s |
+
+The contact start is off the first message's path. The follow-up's difference is the
+canvas and the sub-agent varying run to run (the Profile agent took 2.8 s against 2.4 s).
+
+The page's own numbers show one more hop: the bridge's handler starts 0.5 to 0.6 s after
+the page sends, through CloudFront, the edge gateway and the runtime
+(`docs/aws-feedback.md`, A7). The first reply on the page is that much later than the
+bridge's `first_delta_ms`, and was before change 4 as well. The full split per hop is in
+`docs/latency-log.md`.
 
 ## Targets
 

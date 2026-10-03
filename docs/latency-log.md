@@ -25,9 +25,19 @@ Status values: **kept** (deployed and measured), **built** (deployed, not yet me
 | L4 | 3 Oct | Send the first message as soon as the canvas's greeting arrives instead of after 1.5 s of quiet | contact start | About 1.5 s on a new chat (see L3) | kept | change 3 |
 | L5 | 3 Oct | Poll the transcript every 0.3 s instead of every 0.6 s | reply relay | About 0.15 s per reply on average (see L3) | kept | part of change 5 |
 | L6 | 3 Oct | Send the first message without waiting for the canvas's greeting | contact start | The canvas never answered: the greeting came 1.5 s after the connect and the message got no reply in 15 s | dropped | change 3 |
-| L7 | 3 Oct | Warm start: when a new thread starts, the page sends a run with no messages on the thread's runtime session, and the bridge starts the Connect contact and waits out the greeting then | bridge microVM and contact start | To be measured; expected to take most of the 4 to 5 s a new chat still adds over a follow-up | built | D39, change 4; guppi-gpt kit-v0.3.0 |
+| L7 | 3 Oct | Warm start: when a new thread starts, the page sends a run with no messages on the thread's runtime session, and the bridge starts the Connect contact and waits out the greeting then | bridge microVM and contact start | The contact start (2.2 to 2.8 s) left the first message's path: a new chat's first reply at the bridge 8.8 s to 6.9 s (address) and 9.2 s to 7.3 s (buddy passes). A message sent 1.1 s after "New chat" waited for the warm start's contact instead of opening a second one | kept | D39, change 4; guppi-gpt kit-v0.3.0 |
 
 ## Time found but not yet cut
+
+Where a turn's time went on 3 October after L1 to L7 (05:01 to 05:04 UTC):
+
+| Hop | New chat, first message | Follow-up |
+| --- | --- | --- |
+| Page to the bridge's handler (CloudFront, edge gateway, runtime; aws-feedback A7) | 0.5 s | 0.6 s |
+| Bridge reads its contact and sends (`SendMessage`) | 0.2 s | 0.15 s |
+| Canvas routing and the agents gateway (C14) | 1.9 to 2.2 s | 1.2 s |
+| Sub-agent (two model calls and one tool or search call) | 4.1 to 4.5 s | 2.8 s |
+| Canvas relays the reply; the bridge's next poll | 0.45 to 0.7 s | 0.65 s |
 
 - The tools gateway adds about 0.8 s to every tool call on a warm target, because it
   runs an MCP `initialize` and `notifications/initialized` on the target before each call
