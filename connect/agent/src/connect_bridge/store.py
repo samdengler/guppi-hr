@@ -14,6 +14,7 @@ together open one contact between them (guppi-hr D39).
 
 from __future__ import annotations
 
+import copy
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,6 +37,8 @@ class Session:
     closed: bool = False
     # Empty for a contact stored before change 5; that contact's runs poll the transcript.
     participant_token: str = ""
+    # Epoch seconds; 0 for a contact stored before Connect chats got a 60-minute duration.
+    started_at: float = 0.0
 
     def remember(self, ids: list[str]) -> None:
         for item_id in ids:
@@ -71,6 +74,7 @@ class DynamoSessionStore:
             token_cleared=bool(item.get("tokenCleared", False)),
             closed=bool(item.get("closed", False)),
             participant_token=str(item.get("participantToken", "")),
+            started_at=float(item.get("startedAt", 0)),
         )
 
     def put(self, session: Session) -> None:
@@ -85,6 +89,7 @@ class DynamoSessionStore:
                 "tokenCleared": session.token_cleared,
                 "closed": session.closed,
                 "participantToken": session.participant_token,
+                "startedAt": int(session.started_at),
                 "ttl": int(time.time()) + ITEM_TTL_SECONDS,
             }
         )
@@ -114,16 +119,17 @@ class DynamoSessionStore:
 
 
 class MemorySessionStore:
-    """For tests and local runs."""
+    """For tests and local runs. Copies on every read and write, as DynamoDB does, so a
+    change a run forgets to save is lost here too (critique finding 13)."""
 
     def __init__(self) -> None:
         self.items: dict[str, Session | Pending] = {}
 
     def get(self, key: str) -> Session | Pending | None:
-        return self.items.get(key)
+        return copy.deepcopy(self.items.get(key))
 
     def put(self, session: Session) -> None:
-        self.items[session.key] = session
+        self.items[session.key] = copy.deepcopy(session)
 
     def claim(self, key: str, until: float, now: float) -> bool:
         current = self.items.get(key)

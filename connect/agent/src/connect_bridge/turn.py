@@ -1,22 +1,27 @@
 """One AG-UI run as one Connect chat turn (docs/platform-plan.md, "Bridge design").
 
-A thread's first run starts a Connect chat contact on the contact flow that holds the
-Agentic CX block, with the caller's token and subject as contact attributes, opens the
-customer's WebSocket once (the flow runs only after it connects), closes it, and skips the
-canvas's greeting. Every run then sends the latest user message with the participant API
-and relays each canvas message as an AG-UI text message until the canvas has been quiet for
-a moment. The messages come over a customer WebSocket the run opens beside its send, from
-a fresh URL for the stored participant token (change 5); when that fails, or for a contact
-stored without the token, the run polls the transcript instead. After the first reply the token attribute is blanked,
-so the employee's token does not stay on the contact record (phase 0); a token close to
-expiry gets a new contact, since a running designer session never sees a changed one.
+A thread's first run, or the page's warm start before it, starts a Connect chat contact on
+the contact flow that holds the Agentic CX block, with the caller's token and subject as
+contact attributes and a 60-minute chat duration. The bridge opens the customer's WebSocket
+once (the flow runs only after it connects), waits for the canvas's greeting, and then
+blanks the token attribute: the designer session keeps the value it read at its start
+(phase 0), so the token is on the contact record for a few seconds at most (D42).
 
-A warm start (the page's run with no messages when a thread starts, kit-v0.3.0) does the
-contact's start ahead of the first message, so that message only sends and polls
-(D39). A run that finds another run starting the contact waits for it, and a stored contact
-that refuses the message is replaced once. A warm start that opened a new contact also sends
-each sub-agent a warm message through the agents gateway, on the runtime session and thread
-the canvas will use, so the first message finds both open (D41).
+Every run sends the latest user message with the participant API and relays each canvas
+message as an AG-UI text message. The canvas ends each turn with a hidden END_OF_TURN line,
+or ends the conversation, which Connect reports as an event; only a generative journey's
+answer, which no node can follow, ends on a short silence instead (D42). Messages come over
+a customer WebSocket the run opens after its send, from a fresh URL for the stored
+participant token (change 5); when that fails the run polls the transcript. Items older
+than the run's own message are a previous turn's and are not shown. The relayed items are
+saved however the run ends.
+
+A warm start does the contact's start ahead of the first message (D39) and warms each
+sub-agent through the agents gateway on the runtime session and thread the canvas will use
+(D41). A run that finds another run starting the contact waits for it. A stored contact
+that refuses the message gets a fresh connection, and then, if it has ended, one new
+contact. The bridge ends the contacts it leaves behind: a replaced one, and the previous
+thread's when the page starts a new one.
 
 Nothing here holds state between runs; the session store does.
 """
@@ -61,23 +66,37 @@ STEP_NAME = "Amazon Connect"
 CLEARED = "cleared"
 # A contact whose token expires within this many seconds is replaced by a new one.
 TOKEN_REFRESH_MARGIN = 300
+# Connect's minimum; the default is 25 hours, which held every page's chat that long
+# against the instance's concurrent-chat quota (critique finding 2).
+CHAT_DURATION_MINUTES = 60
 # The canvas's data request nodes time out at 30 s, so a turn never waits longer.
 TURN_LIMIT = 32.0
-# Each canvas turn arrives as one message, so a short quiet window ends the turn; the
-# contact flow's escalation notice follows the canvas's hand-off line by about 1.5 s, so
-# that line waits longer (docs/latency-plan.md, change 2).
+# The hidden line the canvas sends after the last message of a turn (connect/acxd/hr.js).
+END_OF_TURN = "[flow] end"
+# A generative journey's answer has no END_OF_TURN after it; this much silence ends it.
 QUIET_AFTER_REPLY = 0.8
-ESCALATION_QUIET = 3.0
-ESCALATION_HINT = "Connecting you to the HR service desk"
 POLL_INTERVAL = 0.3
 # The canvas drops a message sent before it greets, so a new contact waits for the
-# greeting, and only for it (change 3).
+# greeting, and only for it (change 3); no greeting in this long is a failed start.
 GREETING_LIMIT = 12.0
-# A run starting a contact claims the thread this long: the API calls plus the greeting.
-START_LIMIT = 20.0
-# SendMessage's errors that say the stored contact cannot take the message; the other two
-# it documents, throttling and an internal error, are not about the contact.
-CONTACT_GONE_CODES = ("AccessDeniedException", "ValidationException")
+# A run starting a contact claims the thread this long, longer than the slowest start:
+# the API calls, a WebSocket connect (10 s at most) and the greeting.
+START_LIMIT = 45.0
+# SendMessage refuses a connection that is no longer the participant's this way; a
+# ValidationException is about the message, and the other two errors it documents,
+# throttling and an internal error, are not about the contact.
+CONTACT_GONE_CODES = ("AccessDeniedException",)
+# SendMessage takes at most this much text/plain content (the participant service model);
+# the kit accepts longer messages, so the bridge says so instead of failing the contact.
+MAX_MESSAGE_CHARS = 1024
+TOO_LONG_LINE = (
+    "That message is too long for the HR assistant: keep it under 1,024 characters, "
+    "or split it into two messages."
+)
+NO_REPLY_LINE = "No answer came back from the HR assistant. Try again in a moment."
+# Shown when the thread's contact was replaced (its token or its chat duration ran out),
+# since the canvas's state, a pending change included, did not carry over (finding 8).
+RESTARTED_LINE = "(The assistant started a new conversation, so it may ask for details again.)"
 # The sub-agents the canvas delegates to; hr.js names each runtime session
 # "{conversationId}-{domain}", and the conversation id is the contact id.
 WARM_DOMAINS = ("profile", "pay", "travel")
@@ -85,7 +104,8 @@ SUB_AGENT_WARM_TIMEOUT = 15.0
 # Connect closes an idle customer WebSocket; a run that waits longer than this sends a
 # heartbeat.
 HEARTBEAT_SECONDS = 10.0
-# The spike's contact flow says this before transferring to a queue.
+# The contact flow says this before its queue transfer, which the canvas no longer takes
+# (EscalationFlow opens a ticket and ends); kept for a contact flow that still does.
 ESCALATION_PREFIX = "[flow] Escalation"
 # Closing lines for a thread whose contact left the canvas. The page renders no CUSTOM
 # event itself, so each also goes out as a text message.
@@ -134,8 +154,12 @@ def last_user_text(run_input: RunAgentInput) -> str:
 
 @dataclass
 class Reply:
-    kind: str  # "text", "escalated" or "ended"
+    kind: str  # "text", "end" (END_OF_TURN), "escalated" or "ended"
     text: str = ""
+
+
+class StartFailed(RuntimeError):
+    """A new contact never greeted; the canvas would drop the message."""
 
 
 class ConnectClients:
@@ -227,49 +251,80 @@ class ConnectTurn:
             yield RunErrorEvent(type=EventType.RUN_ERROR, message="no user message", code="BAD_INPUT")
             return
         yield StepStartedEvent(type=EventType.STEP_STARTED, step_name=STEP_NAME)
+        if len(text) > MAX_MESSAGE_CHARS:
+            self.stats["too_long"] = True
+            for event in text_events(TOO_LONG_LINE):
+                yield event
+            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=STEP_NAME)
+            yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread, run_id=run)
+            return
         session = await asyncio.to_thread(self.session_for, thread)
+        mark_span(session.contact_id)
         try:
-            await asyncio.to_thread(self.send, session, text)
-        except ClientError as error:
-            if error.response.get("Error", {}).get("Code") not in CONTACT_GONE_CODES:
-                raise
-            # A contact that sat unused (a warm start nobody wrote in for a while) may have
-            # ended without the bridge seeing it; one new contact takes the message.
-            log.info("contact %s refused the message; starting a new contact", session.contact_id)
-            session.closed = True
-            await asyncio.to_thread(self.store.put, session)
-            session = await asyncio.to_thread(self.session_for, thread)
-            await asyncio.to_thread(self.send, session, text)
-            self.stats["replaced"] = True
-        # The stream opens after the send, so a new connection can never race it; the
-        # canvas takes longer than the open to answer, and the stream's first read of the
-        # transcript catches anything sooner.
-        stream = await asyncio.to_thread(self.open_stream, session)
-        self.stats["pushed"] = stream is not None
-        replied = False
-        source = self.pushed(session, stream) if stream is not None else self.replies(session)
-        async for reply in source:
-            if reply.kind == "text":
-                replied = True
-            else:
-                session.closed = True
-                yield CustomEvent(type=EventType.CUSTOM, name=f"connect/{reply.kind}", value={"text": reply.text})
-            message_id = uuid.uuid4().hex
-            yield TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=message_id, role="assistant")
-            yield TextMessageContentEvent(
-                type=EventType.TEXT_MESSAGE_CONTENT, message_id=message_id, delta=reply.text
-            )
-            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
-        if replied and not session.token_cleared:
-            await asyncio.to_thread(self.clear_token, session)
-        await asyncio.to_thread(self.store.put, session)
+            if self.stats.get("restarted"):
+                for event in text_events(RESTARTED_LINE):
+                    yield event
+            session, own_id = await asyncio.to_thread(self.deliver, session, thread, text)
+            # The stream opens after the send, so a new connection never races it; the
+            # canvas takes longer than the open to answer, and the relay's first read of
+            # the transcript catches anything sooner.
+            stream = await asyncio.to_thread(self.open_stream, session)
+            self.stats["pushed"] = stream is not None
+            replied = False
+            async for reply in self.relay(session, own_id, stream):
+                if reply.kind == "text":
+                    replied = True
+                else:
+                    session.closed = True
+                    yield CustomEvent(type=EventType.CUSTOM, name=f"connect/{reply.kind}", value={"text": reply.text})
+                for event in text_events(reply.text):
+                    yield event
+            if not replied and not session.closed:
+                self.stats["no_reply"] = True
+                problem("no_reply", session.contact_id)
+                for event in text_events(NO_REPLY_LINE):
+                    yield event
+            if session.closed:
+                await asyncio.to_thread(self.end_contact, session)
+        finally:
+            # The relayed items and the newest connection token are kept however the run
+            # ends, so a later run never shows this turn's replies again (finding 4).
+            self.save(session)
         self.stats.update({"contact": session.contact_id, "replied": replied, "closed": session.closed})
         yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=STEP_NAME)
         yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread, run_id=run)
 
+    def deliver(self, session: Session, thread: str, text: str) -> tuple[Session, str | None]:
+        """Sends the message; returns the session it went to and the message's id.
+
+        A refused connection gets a fresh one on the participant token first; if that is
+        refused too, the contact has ended, and one new contact takes the message."""
+        try:
+            return session, self.send(session, text)
+        except ClientError as error:
+            if error_code(error) not in CONTACT_GONE_CODES:
+                raise
+        if session.participant_token and self.reconnect(session):
+            try:
+                return session, self.send(session, text)
+            except ClientError as error:
+                if error_code(error) not in CONTACT_GONE_CODES:
+                    raise
+        log.info("contact %s refused the message; starting a new contact", session.contact_id)
+        self.end_contact(session)
+        self.save(session)
+        self.stats["replaced"] = True
+        session = self.session_for(thread)
+        return session, self.send(session, text)
+
     async def warm(self, run_input: RunAgentInput) -> None:
         """A warm start: the thread's contact, started and past its greeting, in the store,
-        and each sub-agent warmed while the greeting is awaited."""
+        each sub-agent warmed while the greeting is awaited, and the contact of the thread
+        the page just left ended."""
+        props = run_input.forwarded_props if isinstance(run_input.forwarded_props, dict) else {}
+        previous = props.get("previousThreadId")
+        if isinstance(previous, str) and previous and previous != run_input.thread_id:
+            await asyncio.to_thread(self.end_thread, previous)
         warming: list[concurrent.futures.Future] = []
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(WARM_DOMAINS))
 
@@ -280,6 +335,7 @@ class ConnectTurn:
             self.on_contact = warm_sub_agents
         try:
             session = await asyncio.to_thread(self.session_for, run_input.thread_id)
+            mark_span(session.contact_id)
             self.stats.update({"contact": session.contact_id})
             if warming:
                 done = await asyncio.gather(*(asyncio.wrap_future(f) for f in warming), return_exceptions=True)
@@ -329,11 +385,15 @@ class ConnectTurn:
         key = session_key(self.token, thread_id)
         token_exp = float(claims(self.token).get("exp", self.clock() + 3600))
         deadline = time.monotonic() + START_LIMIT
+        replaced: Session | None = None
         while True:
             found = self.store.get(key)
             now = self.clock()
-            if isinstance(found, Session) and self.usable(found, token_exp, now):
-                return found
+            if isinstance(found, Session):
+                if self.usable(found, token_exp, now):
+                    return found
+                if not found.closed:
+                    replaced = found
             waiting = isinstance(found, Pending) and found.until >= now
             if waiting and time.monotonic() < deadline:
                 self.stats["waited"] = True
@@ -341,6 +401,11 @@ class ConnectTurn:
                 continue
             if time.monotonic() >= deadline or self.store.claim(key, now + START_LIMIT, now):
                 break
+        if replaced is not None:
+            # A live contact this thread is leaving (its token is about to expire): end it
+            # rather than leave it open for the rest of its hour.
+            self.stats["restarted"] = True
+            self.end_contact(replaced)
         try:
             session = self.start_contact(key, token_exp)
         except Exception:
@@ -352,6 +417,9 @@ class ConnectTurn:
 
     def usable(self, session: Session, token_exp: float, now: float) -> bool:
         if session.closed or session.connection_expires_at <= now + 60:
+            return False
+        if session.started_at and now - session.started_at > CHAT_DURATION_MINUTES * 60 - 120:
+            # Connect ends the chat at its duration; a new one before that, not mid-turn.
             return False
         near_expiry = session.token_expires_at - now < TOKEN_REFRESH_MARGIN
         refreshed = token_exp > session.token_expires_at
@@ -368,54 +436,112 @@ class ConnectTurn:
             ParticipantDetails={"DisplayName": "Employee"},
             Attributes={"hrToken": self.token, "employeeId": str(claims(self.token).get("sub", ""))},
             SupportedMessagingContentTypes=["text/plain"],
+            ChatDurationInMinutes=CHAT_DURATION_MINUTES,
         )
         if self.on_contact is not None:
             # The sub-agents need only the contact id, so they warm during the greeting.
             self.on_contact(started["ContactId"])
-        conn = self.clients.participant.create_participant_connection(
-            Type=["WEBSOCKET", "CONNECTION_CREDENTIALS"], ParticipantToken=started["ParticipantToken"]
-        )
-        credentials = conn["ConnectionCredentials"]
-        expiry = credentials.get("Expiry")
-        expires_at = _epoch(expiry) if expiry else self.clock() + 3600
-        # The flow runs only once the customer's WebSocket connects; after that the
-        # participant API alone carries the conversation (phase 0).
-        self.clients.touch_websocket(conn["Websocket"]["Url"])
         session = Session(
             key=key,
             contact_id=started["ContactId"],
-            connection_token=credentials["ConnectionToken"],
-            connection_expires_at=expires_at,
+            connection_token="",
+            connection_expires_at=0.0,
             token_expires_at=token_exp,
             participant_token=started["ParticipantToken"],
+            started_at=self.clock(),
         )
-        self.skip_greeting(session)
+        try:
+            conn = self.clients.participant.create_participant_connection(
+                Type=["WEBSOCKET", "CONNECTION_CREDENTIALS"], ParticipantToken=started["ParticipantToken"]
+            )
+            self.take_credentials(session, conn["ConnectionCredentials"])
+            # The flow runs only once the customer's WebSocket connects; after that the
+            # participant API alone carries the conversation (phase 0).
+            self.clients.touch_websocket(conn["Websocket"]["Url"])
+            self.skip_greeting(session)
+        except Exception:
+            self.end_contact(session)
+            raise
+        finally:
+            # The designer read the token when the flow started; the contact record no
+            # longer needs it, whatever happens next (finding 1).
+            self.clear_token(session)
         log.info("started contact %s", session.contact_id)
         return session
 
     def skip_greeting(self, session: Session) -> None:
         """Waits for the canvas's greeting and marks it seen; the page has its own empty
-        state. The canvas ignores a message sent before it greets."""
+        state. The canvas ignores a message sent before it greets, so a contact that never
+        greets is a failed start (finding 3)."""
         start = time.monotonic()
         while time.monotonic() - start < GREETING_LIMIT:
             if any(classify(item) for item in self.new_items(session)):
                 return
             time.sleep(POLL_INTERVAL)
+        problem("no_greeting", session.contact_id)
+        raise StartFailed(f"contact {session.contact_id} did not greet in {GREETING_LIMIT:.0f} s")
 
-    def send(self, session: Session, text: str) -> None:
-        self.clients.participant.send_message(
+    def send(self, session: Session, text: str) -> str | None:
+        """Sends the message; returns its transcript id."""
+        response = self.clients.participant.send_message(
             ContentType="text/plain", Content=text, ConnectionToken=session.connection_token
         )
+        return (response or {}).get("Id")
 
     def clear_token(self, session: Session) -> None:
-        self.clients.connect.update_contact_attributes(
-            InitialContactId=session.contact_id,
-            InstanceId=self.settings.instance_id,
-            Attributes={"hrToken": CLEARED},
-        )
-        session.token_cleared = True
+        try:
+            self.clients.connect.update_contact_attributes(
+                InitialContactId=session.contact_id,
+                InstanceId=self.settings.instance_id,
+                Attributes={"hrToken": CLEARED},
+            )
+            session.token_cleared = True
+        except Exception as error:  # noqa: BLE001 - logged; the run goes on
+            problem("token_not_cleared", session.contact_id, type(error).__name__)
+            self.stats["token_not_cleared"] = True
+
+    def end_contact(self, session: Session) -> None:
+        """Ends the contact in Connect (an ended one stays ended) and marks it closed."""
+        session.closed = True
+        try:
+            self.clients.connect.stop_contact(ContactId=session.contact_id, InstanceId=self.settings.instance_id)
+            self.stats["ended"] = self.stats.get("ended", 0) + 1
+        except Exception as error:  # noqa: BLE001 - already ended, or not found
+            log.info("stop_contact %s: %s", session.contact_id, type(error).__name__)
+
+    def end_thread(self, thread_id: str) -> None:
+        """Ends the contact of a thread the page has left."""
+        found = self.store.get(session_key(self.token, thread_id))
+        if isinstance(found, Session) and not found.closed:
+            self.end_contact(found)
+            self.save(found)
+
+    def save(self, session: Session) -> None:
+        try:
+            self.store.put(session)
+        except Exception:  # noqa: BLE001 - the next run reads what was saved before
+            log.exception("could not save contact %s", session.contact_id)
 
     # ---- the stream ------------------------------------------------------------------
+
+    @staticmethod
+    def take_credentials(session: Session, credentials: dict) -> None:
+        session.connection_token = credentials["ConnectionToken"]
+        expiry = credentials.get("Expiry")
+        session.connection_expires_at = _epoch(expiry) if expiry else time.time() + 3600
+
+    def reconnect(self, session: Session) -> bool:
+        """A fresh connection token for the stored participant token."""
+        try:
+            conn = self.clients.participant.create_participant_connection(
+                Type=["CONNECTION_CREDENTIALS"], ParticipantToken=session.participant_token
+            )
+        except Exception as error:  # noqa: BLE001 - the participant has left
+            log.info("no new connection for contact %s: %s", session.contact_id, type(error).__name__)
+            return False
+        self.take_credentials(session, conn["ConnectionCredentials"])
+        self.stats["reconnected"] = True
+        return True
 
     def open_stream(self, session: Session) -> Any:
         """A WebSocket for this run's messages, or None to poll instead."""
@@ -427,82 +553,121 @@ class ConnectTurn:
             )
             # A new connection may retire the stored connection token, so the new one
             # replaces it and is saved with the session at the end of the run.
-            credentials = conn["ConnectionCredentials"]
-            session.connection_token = credentials["ConnectionToken"]
-            expiry = credentials.get("Expiry")
-            if expiry:
-                session.connection_expires_at = _epoch(expiry)
+            self.take_credentials(session, conn["ConnectionCredentials"])
             return self.clients.open_websocket(conn["Websocket"]["Url"])
         except Exception as error:  # noqa: BLE001 - polling still works
             log.warning("no WebSocket for contact %s (%s); polling", session.contact_id, type(error).__name__)
             return None
 
-    async def pushed(self, session: Session, ws: Any) -> AsyncIterator[Reply]:
-        """Canvas replies as Connect pushes them, until it goes quiet or the turn limit."""
+    async def relay(self, session: Session, own_id: str | None, ws: Any) -> AsyncIterator[Reply]:
+        """The canvas's replies to the message just sent, until END_OF_TURN, the end of the
+        conversation, a journey answer's silence, or the turn limit."""
+        start = time.monotonic()
+        quiet_until: float | None = None
         try:
-            # Anything that arrived before the subscription took hold.
-            pending = await asyncio.to_thread(self.new_items, session)
-            start = last = time.monotonic()
-            got_reply = False
-            quiet = QUIET_AFTER_REPLY
+            # The first read covers anything that came before the socket was listening,
+            # and finds this run's own message: items before it are a previous turn's.
+            items = await asyncio.to_thread(self.new_items, session)
+            ids = [item.get("Id") for item in items]
+            if own_id and own_id in ids:
+                stale = items[: ids.index(own_id)]
+                if any(classify(item) for item in stale):
+                    self.stats["stale"] = sum(1 for item in stale if classify(item))
+                items = items[ids.index(own_id) + 1 :]
             while True:
-                now = time.monotonic()
-                for item in pending:
+                for item in items:
                     reply = classify(item)
                     if reply is None:
                         continue
-                    got_reply, last, quiet = True, time.monotonic(), quiet_after(reply.text)
+                    if reply.kind == "end":
+                        self.stats["end_of_turn"] = True
+                        return
                     yield reply
                     if reply.kind != "text":
                         return
-                pending = []
+                    quiet_until = time.monotonic() + QUIET_AFTER_REPLY
                 now = time.monotonic()
-                limit = TURN_LIMIT - (now - start)
-                wait = min(limit, quiet - (now - last)) if got_reply else limit
+                wait = TURN_LIMIT - (now - start)
+                if quiet_until is not None:
+                    wait = min(wait, quiet_until - now)
                 if wait <= 0:
                     return
-                frame = await asyncio.to_thread(self.clients.receive, ws, min(wait, HEARTBEAT_SECONDS))
-                if frame is None:
-                    if min(wait, HEARTBEAT_SECONDS) < wait:
-                        await asyncio.to_thread(ws.send, json.dumps({"topic": "aws/heartbeat"}))
-                    continue
-                item = chat_item(frame)
-                if item and item.get("Id") not in session.seen:
-                    session.remember([item["Id"]] if item.get("Id") else [])
-                    pending = [item]
+                if ws is not None:
+                    try:
+                        items = await self.pushed_items(session, ws, wait)
+                        continue
+                    except Exception as error:  # noqa: BLE001 - the rest of the turn polls
+                        problem("socket_failed", session.contact_id, type(error).__name__)
+                        self.stats["socket_failed"] = True
+                        await asyncio.to_thread(close_quietly, ws)
+                        ws = None
+                await self.sleep(min(POLL_INTERVAL, wait))
+                items = await asyncio.to_thread(self.new_items, session)
         finally:
-            await asyncio.to_thread(ws.close)
+            if ws is not None:
+                await asyncio.to_thread(close_quietly, ws)
+
+    async def pushed_items(self, session: Session, ws: Any, wait: float) -> list[dict]:
+        """The next new item Connect pushes within `wait` seconds, as a list (or empty)."""
+        frame = await asyncio.to_thread(self.clients.receive, ws, min(wait, HEARTBEAT_SECONDS))
+        if frame is None:
+            if HEARTBEAT_SECONDS < wait:
+                await asyncio.to_thread(ws.send, json.dumps({"topic": "aws/heartbeat"}))
+            return []
+        item = chat_item(frame)
+        if not item or item.get("Id") in session.seen:
+            return []
+        session.remember([item["Id"]] if item.get("Id") else [])
+        return [item]
 
     # ---- the transcript --------------------------------------------------------------
 
     def new_items(self, session: Session) -> list[dict]:
+        """Transcript items not seen before, oldest first, from the newest 100."""
         items = self.clients.participant.get_transcript(
-            ConnectionToken=session.connection_token, SortOrder="ASCENDING", MaxResults=100
+            ConnectionToken=session.connection_token, SortOrder="DESCENDING", MaxResults=100
         ).get("Transcript", [])
+        items = list(reversed(items))
         fresh = [item for item in items if item.get("Id") not in session.seen]
         session.remember([item["Id"] for item in fresh if item.get("Id")])
         return fresh
 
-    async def replies(self, session: Session) -> AsyncIterator[Reply]:
-        """Canvas replies to the message just sent, until it goes quiet or the turn limit."""
-        start = last = time.monotonic()
-        got_reply = False
-        quiet = QUIET_AFTER_REPLY
-        while time.monotonic() - start < TURN_LIMIT:
-            await self.sleep(POLL_INTERVAL)
-            fresh = await asyncio.to_thread(self.new_items, session)
-            for item in fresh:
-                reply = classify(item)
-                if reply is None:
-                    continue
-                got_reply = True
-                last = time.monotonic()
-                quiet = quiet_after(reply.text)
-                yield reply
-                if reply.kind != "text":
-                    return
-            if got_reply and time.monotonic() - last > quiet:
-                return
+
+def mark_span(contact_id: str) -> None:
+    """The contact id on the run's span: the sub-agents' spans carry it as hr.thread_id,
+    which joins the two traces the canvas splits (aws-feedback TC1, finding 14)."""
+    try:
+        from opentelemetry import trace
+
+        trace.get_current_span().set_attribute("connect.contact_id", contact_id)
+    except Exception:  # noqa: BLE001 - tracing never fails a run
+        pass
+
+
+def problem(kind: str, contact_id: str, detail: str = "") -> None:
+    """One line the stack's alarm counts (connect/infra, BridgeAlarms): the word
+    bridge_problem, then the kind."""
+    log.error("bridge_problem %s contact=%s %s", kind, contact_id, detail)
+
+
+def text_events(text: str) -> list[BaseEvent]:
+    message_id = uuid.uuid4().hex
+    return [
+        TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=message_id, role="assistant"),
+        TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, message_id=message_id, delta=text),
+        TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id),
+    ]
+
+
+def error_code(error: ClientError) -> str:
+    return error.response.get("Error", {}).get("Code", "")
+
+
+def close_quietly(ws: Any) -> None:
+    try:
+        ws.close()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def chat_item(frame: str) -> dict | None:
@@ -518,18 +683,16 @@ def chat_item(frame: str) -> dict | None:
         return None
 
 
-def quiet_after(text: str) -> float:
-    """How long the bridge waits for more after a reply before it ends the turn."""
-    return ESCALATION_QUIET if ESCALATION_HINT in text else QUIET_AFTER_REPLY
-
-
 def classify(item: dict) -> Reply | None:
-    """A transcript item as a reply to relay, or None for the customer's own and the rest."""
+    """A transcript item as a reply to relay, the end of a turn, or None for the
+    customer's own message and the rest."""
     if item.get("Type") == "EVENT" and item.get("ContentType") in ENDED_CONTENT_TYPES:
         return Reply("ended", ENDED_LINE)
     if item.get("Type") != "MESSAGE" or item.get("ParticipantRole") == "CUSTOMER":
         return None
     content = item.get("Content", "")
+    if content.strip() == END_OF_TURN:
+        return Reply("end")
     if content.startswith(ESCALATION_PREFIX):
         return Reply("escalated", ESCALATED_LINE)
     if content.startswith(FLOW_MESSAGE_PREFIX):

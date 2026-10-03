@@ -18,6 +18,7 @@ from aws_cdk import aws_bedrockagentcore as agentcore
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ecr_assets as ecr_assets
 from aws_cdk import aws_iam as iam
+from aws_cdk import aws_kms as kms
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
@@ -41,6 +42,17 @@ class ConnectBridge(Construct):
         stack = Stack.of(self)
         region, account = stack.region, stack.account
 
+        # The table holds participant and connection tokens, which can join an employee's
+        # chat while it lasts, so its key is the stack's own: reading an item needs
+        # kms:Decrypt on it, which a read-only policy does not grant (critique finding 10).
+        key = kms.Key(
+            self,
+            "SessionsKey",
+            alias="alias/guppi-connect-bridge-sessions",
+            description="Encrypts the Connect bridge's session table",
+            enable_key_rotation=True,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
         table = dynamodb.Table(
             self,
             "Sessions",
@@ -48,6 +60,8 @@ class ConnectBridge(Construct):
             partition_key=dynamodb.Attribute(name="pk", type=dynamodb.AttributeType.STRING),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             time_to_live_attribute="ttl",
+            encryption=dynamodb.TableEncryption.CUSTOMER_MANAGED,
+            encryption_key=key,
             removal_policy=RemovalPolicy.DESTROY,
         )
 
@@ -121,7 +135,8 @@ class ConnectBridge(Construct):
         )
         role.add_to_policy(
             iam.PolicyStatement(
-                actions=["connect:UpdateContactAttributes"],
+                # StopContact ends the contacts the bridge leaves behind (critique finding 2).
+                actions=["connect:UpdateContactAttributes", "connect:StopContact"],
                 resources=[f"{instance_arn}/contact/*"],
             )
         )

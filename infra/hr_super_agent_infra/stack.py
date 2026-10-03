@@ -139,7 +139,36 @@ ORCHESTRATOR_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 RUNTIME_BASE_ENVIRONMENT = {
     "LOG_LEVEL": "INFO",
     "OTEL_PYTHON_EXCLUDED_URLS": "/ping$",
+    # Strands puts prompts, model replies, tool arguments and tool results into spans
+    # unless this token is set; an empty list redacts all of them, so account numbers and
+    # addresses never reach the trace backend (critique finding 5). Token counts stay.
+    "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_unredacted_attributes=",
 }
+
+# The JWT claim per-user gateway limits are keyed on (as in guppi-gpt's edge gateway).
+JWT_SUB_CLAIM_DIMENSION = "$.context.jwt.sub"
+
+
+def per_user_rate_limit(
+    scope: Construct, construct_id: str, gateway: agentcore.CfnGateway, *, per_minute: int, connections: int
+) -> agentcore.CfnGatewayRateLimit:
+    """Requests per minute and open connections per signed-in user on one gateway. One
+    entry carries both: a gateway takes one rate limit per set of dimension keys (A2)."""
+    return agentcore.CfnGatewayRateLimit(
+        scope,
+        construct_id,
+        gateway_identifier=gateway.attr_gateway_identifier,
+        description="Per-user request rate and concurrency, keyed on the JWT sub claim",
+        dimension_keys=[JWT_SUB_CLAIM_DIMENSION],
+        entries=[
+            agentcore.CfnGatewayRateLimit.LimitEntryProperty(
+                dimensions={JWT_SUB_CLAIM_DIMENSION: "*"},
+                requests=[agentcore.CfnGatewayRateLimit.RateConfigProperty(rate=per_minute, period="minute")],
+                connections=[agentcore.CfnGatewayRateLimit.RateConfigProperty(rate=connections, period="second")],
+            )
+        ],
+    )
+
 
 # Conversation logging (docs/proposals/conversation-logging.md). The bucket, the key, the
 # HMAC secret, and the investigator role are always created; this switch decides whether the
@@ -859,6 +888,11 @@ class HrSuperAgentStack(cdk.Stack):
             ),
             exception_level="DEBUG",
         )
+        # Per-user limits on both HR gateways (critique finding 17): the edge gateway's
+        # limits never reach a caller that calls these gateways straight with its token.
+        # A sub-agent keeps an MCP session per conversation, and a warm start opens three
+        # at once, so the tools gateway allows more connections than the agents gateway.
+        per_user_rate_limit(self, "ToolsGatewayPerUserRateLimit", tools_gateway, per_minute=240, connections=20)
         kb_target = agentcore.CfnGatewayTarget(
             self,
             "KnowledgeBaseTarget",
@@ -1003,6 +1037,7 @@ class HrSuperAgentStack(cdk.Stack):
         )
         for sub_agent_role in sub_agents.roles.values():
             dynatrace_token_secret.grant_read(sub_agent_role)
+        per_user_rate_limit(self, "AgentsGatewayPerUserRateLimit", sub_agents.gateway, per_minute=120, connections=10)
         cdk.CfnOutput(self, "AgentsGatewayUrl", value=sub_agents.gateway.attr_gateway_url)
         # The Connect bridge's warm start calls each sub-agent through this gateway (D41).
         ssm.StringParameter(

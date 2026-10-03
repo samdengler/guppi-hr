@@ -238,6 +238,23 @@ async def warm_domain(token: str, thread_id: str) -> None:
         pass
 
 
+def mark_span(record: dict[str, Any], domain: str, thread_id: str) -> None:
+    """Puts the thread (the Connect contact id behind the canvas) and the domain on the
+    request's span, and the trace id in the run record, so this trace and the bridge's,
+    which the canvas splits (aws-feedback TC1), join on `hr.thread_id` (critique finding 14)."""
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        span.set_attribute("hr.thread_id", thread_id)
+        span.set_attribute("hr.domain", domain)
+        span_context = span.get_span_context()
+        if span_context.is_valid:
+            record["trace_id"] = f"{span_context.trace_id:032x}"
+    except Exception:  # noqa: BLE001 - tracing never fails a request
+        pass
+
+
 Runner = Callable[..., Awaitable[DomainResult]]
 Warmer = Callable[[str, str], Awaitable[None]]
 
@@ -254,6 +271,7 @@ class DomainExecutor(AgentExecutor):
         headers = state.get("headers") or {}
         metadata = (context.message.metadata if context.message else None) or {}
         record: dict[str, Any] = {"domain": self.domain.name, "context": context.context_id}
+        mark_span(record, self.domain.name, context.context_id or "")
         token = bearer_token(headers)
         try:
             if token is None:

@@ -16,7 +16,12 @@
  *   "yes" branch sends the pending change back, so nothing commits without it (D7).
  * - PolicyFlow is a generative journey whose tool is the HrTools MCP data request on the
  *   tools gateway, with only read and ticket tools enabled.
- * - EscalationFlow hands the contact back to Connect's Escalation branch.
+ * - EscalationFlow opens an HR ticket through the tools gateway, gives the employee its
+ *   id and ends the conversation; nobody staffs a Connect queue (D42).
+ * - Every reply node that ends a turn sends END_OF_TURN after its text, a hidden line the
+ *   bridge ends the turn on instead of waiting for silence (D42). A generative journey's
+ *   own answers cannot be followed by a node, so those turns still end on silence, and
+ *   the journey is told to write nothing before it hands off to a domain flow.
  *
  * Delegate data requests point at the spike's mock sub-agents in `development` and at
  * hr-super-agent's agents gateway in `production`.
@@ -28,6 +33,9 @@ const { MOCK_URL, AGENTS_GATEWAY_URL, TOOLS_GATEWAY_URL, env, hdr } = require('.
 const SONNET = 'anthropic.claude-sonnet-5';
 const CONV = '{System.conversationId:NLX.System}';
 const UTTERANCE = '{System.utterance:NLX.System}';
+// connect_bridge.turn.END_OF_TURN: the bridge hides every "[flow] " line and ends the
+// turn on this one.
+const END_OF_TURN = '[flow] end';
 
 const DOMAINS = [
   {
@@ -189,7 +197,9 @@ const stayEdges = (selfId, to, name) => [
 const utteranceMatches = (regex) => [
   { left: { type: 'system', name: 'System.utterance' }, operator: 'matches_regex', right: { type: 'constant', value: regex } },
 ];
-const YES = '^\\s*([Yy]es|[Yy]eah|[Yy]ep|[Cc]onfirm|[Oo][Kk]|[Oo]kay|[Ss]ure|[Gg]o ahead|[Pp]lease do|[Dd]o it)\\b';
+// A bare confirmation only, like NO: "yes, but make it Apt 4B" or "ok, what's the tax
+// effect?" goes back to the sub-agent without the pending change, which re-proposes.
+const YES = '^\\s*([Yy]es|[Yy]eah|[Yy]ep|[Cc]onfirm|[Oo][Kk]|[Oo]kay|[Ss]ure|[Gg]o ahead|[Pp]lease do|[Dd]o it)( please)?[\\s.!]*$';
 // A bare refusal only: "no, make it 421 instead" goes back to the sub-agent to re-propose.
 const NO = '^\\s*([Nn]o|[Nn]ope|[Cc]ancel|[Nn]ever ?mind|[Dd]on.t do it|[Ss]top)[\\s.!]*$';
 const setContext = (name, value) => ({ type: 'context', name, modification: 'set', value });
@@ -232,12 +242,12 @@ function domainFlow(d) {
     .add('route', 'choice', { children: [{ to: 'replyPending', when: pendingExists }, 'reply'] })
     .add('reply', 'basic', {
       children: ['toListen'],
-      messages: [reply(false)],
+      messages: [reply(false), END_OF_TURN],
       metadata: { stateModifications: remember(d, false) },
     })
     .add('replyPending', 'basic', {
       children: ['confirm'],
-      messages: [reply(false)],
+      messages: [reply(false), END_OF_TURN],
       metadata: { stateModifications: remember(d, false) },
     })
     .add('confirm', 'user_input', {
@@ -262,13 +272,13 @@ function domainFlow(d) {
     })
     .add('replyCommit', 'basic', {
       children: ['toListen'],
-      messages: [reply(true)],
+      messages: [reply(true), END_OF_TURN],
       metadata: { stateModifications: remember(d, true) },
     })
-    .add('declined', 'basic', { children: ['toListen'], messages: ["Okay, I won't make that change."] })
+    .add('declined', 'basic', { children: ['toListen'], messages: ["Okay, I won't make that change.", END_OF_TURN] })
     .add('unreachable', 'basic', {
       children: ['toListen'],
-      messages: [`Sorry, the ${d.title} agent could not be reached just now.`],
+      messages: [`Sorry, the ${d.title} agent could not be reached just now.`, END_OF_TURN],
     })
     // A second user_input reached in the same turn re-reads that turn's utterance
     // (AICC sample live notes), so a reply ends the turn with a redirect to this flow's
@@ -326,9 +336,6 @@ function welcomeFlow() {
     })
     .add('listen', 'user_input', {
       children: [
-        { to: 'toHeaderProbe', when: utteranceMatches('^run the header probe$'), name: 'headerProbe' },
-        { to: 'toReplyProbe', when: utteranceMatches('^run the reply probe$'), name: 'replyProbe' },
-        { to: 'toMcpProbe', when: utteranceMatches('^run the mcp probe$'), name: 'mcpProbe' },
         {
           to: 'help',
           when: [{ left: { type: 'captured_flow' }, operator: 'eq', right: { type: 'constant', value: 'WelcomeFlow' } }],
@@ -344,6 +351,7 @@ function welcomeFlow() {
       children: ['toListen'],
       messages: [
         'I can help with your home address and emergency contact, your pay and direct deposit, your travel benefits, or an HR policy question. What do you need?',
+        END_OF_TURN,
       ],
     })
     .add('toListen', 'redirect', {
@@ -355,9 +363,6 @@ function welcomeFlow() {
       metadata: { redirect: { type: 'flow', flowId: '{System.capturedFlow:NLX.System}' } },
     })
     .add('toPolicy', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'PolicyFlow' } } })
-    .add('toHeaderProbe', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'HeaderProbe' } } })
-    .add('toReplyProbe', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'ReplyProbe' } } })
-    .add('toMcpProbe', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'McpProbe' } } })
     .add('end', 'end');
   return {
     flowId: 'WelcomeFlow',
@@ -375,6 +380,7 @@ function clarifyFlow() {
     .add('ask', 'user_input', {
       messages: [
         'Do you want to update your profile (home address or emergency contact) or your pay details (direct deposit)?',
+        END_OF_TURN,
       ],
       children: [
         {
@@ -550,6 +556,7 @@ function policyFlow() {
             'You may look up the employee\'s own profile (hr___get_profile) or pay statements (hr___list_pay_statements) when the question needs them.',
             'If the employee wants a human or you cannot answer, offer to open a ticket with hr___open_ticket, and open it only if they agree.',
             'You never change records. If the employee wants to change their home address or emergency contact, use the switchToProfile exit; direct deposit or pay statements, switchToPay; pass travel or buddy passes, switchToTravel; a person, human.',
+            'When you take an exit, write nothing before it: the flow you hand to answers the employee.',
             'Keep answers to three sentences.',
           ].join(' '),
           // One journey tool per enabled MCP tool. As a single tool the MCP data request
@@ -575,7 +582,7 @@ function policyFlow() {
     .add('toEscalation', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'EscalationFlow' } } })
     .add('failed', 'basic', {
       children: ['toWelcome'],
-      messages: ["I couldn't look that up just now. You can ask again, or ask for a person."],
+      messages: ["I couldn't look that up just now. You can ask again, or ask for a person.", END_OF_TURN],
     })
     .add('toWelcome', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'WelcomeFlow' } } })
     .add('end', 'end');
@@ -607,14 +614,86 @@ function goodbyeFlow() {
   };
 }
 
+/**
+ * hr___open_ticket over a plain HTTP data request, like PolicySearch: one JSON-RPC
+ * tools/call to the tools gateway with the employee's token. The tools server takes the
+ * employee from the token, so the summary is all the canvas sends.
+ */
+function openTicketDataRequest() {
+  return {
+    dataRequestId: 'OpenTicket',
+    type: 'object',
+    description: 'tools/call hr___open_ticket on the hr-super-agent tools gateway over HTTP.',
+    webhook: {
+      implementation: 'external',
+      method: 'POST',
+      environments: env(TOOLS_GATEWAY_URL, [
+        hdr('Authorization', 'Bearer {hrToken:NLX.Context}', { sensitive: true }),
+        hdr('X-Hr-User-Token', '{hrToken:NLX.Context}', { sensitive: true }),
+        hdr('X-Hr-Thread-Id', CONV),
+        hdr('Content-Type', 'application/json'),
+        hdr('Accept', 'application/json'),
+      ]),
+    },
+    responseSchema: {
+      type: 'object',
+      properties: {
+        result: {
+          type: 'object',
+          properties: {
+            structuredContent: { type: 'object', properties: { ticket_id: { type: 'string' } } },
+            isError: { type: 'boolean' },
+          },
+        },
+      },
+    },
+  };
+}
+
+const OPEN_TICKET_BODY = JSON.stringify({
+  jsonrpc: '2.0',
+  id: CONV,
+  method: 'tools/call',
+  params: {
+    name: 'hr___open_ticket',
+    arguments: { summary: `The employee asked for a person: ${UTTERANCE}`, domain: 'general' },
+  },
+});
+
 function escalationFlow() {
   const f = new FlowBuilder('EscalationFlow');
-  f.add('start', 'start', { children: ['escalate'] }).add('escalate', 'escalate', {
-    messages: ['Connecting you to the HR service desk.'],
-  });
+  const ticketId = [
+    { left: { type: 'variable', name: 'OpenTicket.result.structuredContent.ticket_id' }, operator: 'exists' },
+  ];
+  f.add('start', 'start', { children: ['ticket'] })
+    .add('ticket', 'data_request', {
+      children: [
+        { to: 'route', when: [statusIs('success')] },
+        { to: 'noTicket', when: [statusIs('failure')] },
+        { to: 'noTicket', when: [statusIs('timeout')] },
+      ],
+      dataRequests: [
+        { dataRequestId: 'OpenTicket', name: 'OpenTicket', headers: {}, payload: OPEN_TICKET_BODY, alwaysRetrigger: true },
+      ],
+      metadata: { timeout: 20000 },
+    })
+    .add('route', 'choice', { children: [{ to: 'opened', when: ticketId }, 'noTicket'] })
+    // The conversation ends after either line: the contact flow says goodbye and
+    // disconnects, and the bridge ends the thread on Connect's end event.
+    .add('opened', 'basic', {
+      children: ['end'],
+      messages: [
+        'I opened HR ticket {OpenTicket.result.structuredContent.ticket_id:NLX.Variable} for you. A person on the HR team will follow up within two business days.',
+      ],
+    })
+    .add('noTicket', 'basic', {
+      children: ['end'],
+      messages: ["I couldn't open a ticket just now. Please contact the HR service desk directly."],
+    })
+    .add('end', 'terminate');
   return {
     flowId: 'EscalationFlow',
-    description: 'Hands the contact to a person through the Agentic CX block Escalation branch.',
+    description: 'Opens an HR ticket for a person to follow up, gives its id, and ends the conversation.',
     aiDescription: 'The employee asks to talk to a person, a human, an agent or the HR service desk.',
     utterances: [
       'I need to talk to someone',
@@ -631,8 +710,9 @@ const DATA_REQUESTS = [
   ...DOMAINS.flatMap((d) => [delegateDataRequest(d, false), delegateDataRequest(d, true)]),
   hrToolsDataRequest(),
   policySearchDataRequest(),
+  openTicketDataRequest(),
 ];
 
 const FLOWS = [welcomeFlow(), clarifyFlow(), ...DOMAINS.map(domainFlow), policyFlow(), goodbyeFlow(), escalationFlow()];
 
-module.exports = { DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS };
+module.exports = { DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS, END_OF_TURN };

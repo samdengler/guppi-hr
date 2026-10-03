@@ -6,8 +6,11 @@
 
 The flow sets the contact language, then runs the Agentic CX block with the deployed
 application's alias (from .deploy/acxd.json, written by acxd/deploy.js). The block maps
-the contact attributes `hrToken` and `employeeId` to ACXD context variables. Escalation
-goes to the instance's BasicQueue; an error says so in the chat and disconnects.
+the contact attributes `hrToken` and `employeeId` to ACXD context variables. The
+canvas's EscalationFlow opens a ticket and ends the conversation, so the Escalation branch
+to the instance's BasicQueue is no longer taken; an error says so in the chat and
+disconnects. A production run publishes the flow id and the canvas alias to SSM for the
+bridge stack.
 
     uv run scripts/contact_flow.py                    # development deployment (mock sub-agents)
     uv run scripts/contact_flow.py --env production   # production deployment (real gateways)
@@ -24,6 +27,8 @@ ROOT = Path(__file__).resolve().parents[1]
 INSTANCE_ID = "5665011a-f5fa-40e3-92d0-85ff625d10f6"
 WORKSPACE_ID = "f77cf767-cecf-407a-9671-02b07d536b0f"
 FLOW_NAME = "guppi-connect-hr-assistant"
+CONTACT_FLOW_PARAMETER = "/guppi-hr/connect/contact-flow-id"
+ALIAS_PARAMETER = "/guppi-hr/connect/canvas-alias"
 REGION = "us-east-1"
 
 
@@ -176,6 +181,13 @@ def main() -> None:
     state["contactFlowId"] = flow_id
     state["alias_bound"] = state["deploymentAlias"]
     path.write_text(json.dumps(state, indent=2))
+    if env == "production":
+        # The bridge stack reads these at deploy time, so it needs no local state
+        # (critique finding 15).
+        ssm = boto3.client("ssm", region_name=REGION)
+        for name, value in ((CONTACT_FLOW_PARAMETER, flow_id), (ALIAS_PARAMETER, state["deploymentAlias"])):
+            ssm.put_parameter(Name=name, Value=value, Type="String", Overwrite=True)
+            print(f"published {name}")
 
 
 if __name__ == "__main__":

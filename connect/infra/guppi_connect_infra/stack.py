@@ -8,34 +8,32 @@ The URL has no auth because a data request cannot sign; it never returns a full 
 
 The bridge (bridge.py) is the chat.dengler.io agent project `hr` (until 3 Oct 2026
 `hr-connect`). It needs the
-production contact flow id, which scripts/contact_flow.py records in
-.deploy/acxd-production.json; the context value `contact_flow_id` overrides it.
+production contact flow id, which scripts/contact_flow.py publishes at
+/guppi-hr/connect/contact-flow-id; the context value `contact_flow_id` overrides it.
 """
-
-import json
 
 from pathlib import Path
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, Tags
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
+from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
+from guppi_connect_infra.alarms import BridgeAlarms
 from guppi_connect_infra.bridge import ConnectBridge
 from guppi_connect_infra.dashboard import BridgeDashboard
 
 ROOT = Path(__file__).resolve().parents[2]
 MOCK_DIR = ROOT / "mock"
-PRODUCTION_STATE = ROOT / ".deploy" / "acxd-production.json"
+# Written by scripts/contact_flow.py --env production.
+CONTACT_FLOW_PARAMETER = "/guppi-hr/connect/contact-flow-id"
 
 
-def production_contact_flow_id() -> str:
-    try:
-        return json.loads(PRODUCTION_STATE.read_text())["contactFlowId"]
-    except (OSError, KeyError, ValueError) as exc:
-        raise SystemExit(
-            f"no contact flow id: run scripts/contact_flow.py --env production first ({exc})"
-        ) from exc
+def production_contact_flow_id(scope: Construct) -> str:
+    """The production contact flow id that scripts/contact_flow.py publishes to SSM, read at
+    deploy time, so a fresh clone deploys without local state (critique finding 15)."""
+    return ssm.StringParameter.value_for_string_parameter(scope, CONTACT_FLOW_PARAMETER)
 
 
 class GuppiConnectStack(Stack):
@@ -65,7 +63,15 @@ class GuppiConnectStack(Stack):
         url = mock.add_function_url(auth_type=lambda_.FunctionUrlAuthType.NONE)
         CfnOutput(self, "MockUrl", value=url.url)
 
-        contact_flow_id = self.node.try_get_context("contact_flow_id") or production_contact_flow_id()
+        contact_flow_id = self.node.try_get_context("contact_flow_id") or production_contact_flow_id(self)
         bridge = ConnectBridge(self, "Bridge", contact_flow_id=contact_flow_id)
         dashboard = BridgeDashboard(self, "BridgeDashboard", runtime=bridge.runtime, table=bridge.table)
         CfnOutput(self, "BridgeDashboardUrl", value=dashboard.url)
+        alarms = BridgeAlarms(self, "BridgeAlarms", runtime=bridge.runtime)
+        CfnOutput(self, "AlarmTopicArn", value=alarms.topic.topic_arn)
+        # scripts/deploy.sh sets this log group's retention; AgentCore creates it.
+        CfnOutput(
+            self,
+            "RuntimeLogGroup",
+            value=f"/aws/bedrock-agentcore/runtimes/{bridge.runtime.attr_agent_runtime_id}-DEFAULT",
+        )

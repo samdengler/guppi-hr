@@ -7,6 +7,9 @@
   "capabilities": [
     "warm-start"
   ],
+  "features": {
+    "logging": false
+  },
   "suggestions": [
     {
       "label": "Change my address",

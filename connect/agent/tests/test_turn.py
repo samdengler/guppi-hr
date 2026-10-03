@@ -25,13 +25,18 @@ class FakeConnect:
     def __init__(self) -> None:
         self.started: list[dict] = []
         self.updated: list[dict] = []
+        self.stopped: list[str] = []
 
     def start_chat_contact(self, **kwargs):
         self.started.append(kwargs)
-        return {"ContactId": f"contact-{len(self.started)}", "ParticipantToken": "pt"}
+        n = len(self.started)
+        return {"ContactId": f"contact-{n}", "ParticipantToken": f"pt-{n}"}
 
     def update_contact_attributes(self, **kwargs):
         self.updated.append(kwargs)
+
+    def stop_contact(self, ContactId, **kwargs):
+        self.stopped.append(ContactId)
 
 
 class FakeParticipant:
@@ -59,11 +64,15 @@ class FakeParticipant:
     def send_message(self, Content, **kwargs):
         self.sent.append(Content)
         self._add(Type="MESSAGE", ParticipantRole="CUSTOMER", Content=Content)
+        own = self.items[-1]["Id"]
         for reply in self.script.get(Content, []):
             self._add(**reply)
+        return {"Id": own}
 
-    def get_transcript(self, **kwargs):
-        return {"Transcript": list(self.items)}
+    def get_transcript(self, SortOrder="ASCENDING", MaxResults=15, **kwargs):
+        # As Connect pages it: the first MaxResults items in the order asked for.
+        items = list(self.items) if SortOrder == "ASCENDING" else list(reversed(self.items))
+        return {"Transcript": items[:MaxResults]}
 
 
 class FakeSocket:
@@ -309,12 +318,17 @@ async def test_a_new_contact_sends_the_message_as_soon_as_the_greeting_arrives()
     assert texts == ["Hi from Connect."]
 
 
-def test_a_turn_ends_soon_after_its_reply_except_for_the_escalation_line():
-    assert turn_module.quiet_after("Your address on file is 1 Main St.") == turn_module.QUIET_AFTER_REPLY
-    assert turn_module.QUIET_AFTER_REPLY <= 1.0 or turn_module.QUIET_AFTER_REPLY == 0.0
-    # The contact flow's escalation notice follows the canvas's line by about 1.5 s.
-    assert turn_module.quiet_after("Connecting you to the HR service desk.") == turn_module.ESCALATION_QUIET
-    assert turn_module.ESCALATION_QUIET >= 3.0
+async def test_the_canvass_end_of_turn_line_ends_the_turn_and_is_never_shown(monkeypatch):
+    # A long quiet window: only the marker can end this turn early.
+    monkeypatch.setattr(turn_module, "QUIET_AFTER_REPLY", 30.0)
+    participant = FakeParticipant({"hello": [bot("Your address is 1 Main St."), bot(turn_module.END_OF_TURN)]})
+    clients = FakeClients(participant)
+    turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep)
+    started = time.monotonic()
+    events = await collect(turn, "hello")
+    assert time.monotonic() - started < 1.0
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Your address is 1 Main St."]
+    assert turn.usage()["connect_end_of_turn"] is True
 
 
 def test_the_websocket_closes_once_connect_acknowledges_with_no_fixed_wait(monkeypatch):
@@ -424,52 +438,96 @@ def client_error(code: str):
     return ClientError({"Error": {"Code": code, "Message": code}}, "SendMessage")
 
 
-class EndedOnce(FakeParticipant):
-    """The first contact's connection refuses messages, as an ended contact would."""
+class EndedParticipant(FakeParticipant):
+    """Contacts whose participant has left refuse messages and new connections alike; a
+    retired connection token is refused while its participant can still reconnect."""
 
-    def __init__(self, script, code: str = "AccessDeniedException") -> None:
+    def __init__(self, script) -> None:
         super().__init__(script)
-        self.code = code
-        self.connections = 0
+        self.ended: set[str] = set()
+        self.retired: set[str] = set()
+        self.owner: dict[str, str] = {}  # connection token -> participant token
         self.refused = 0
 
-    def create_participant_connection(self, **kwargs):
-        self.connections += 1
+    def create_participant_connection(self, ParticipantToken="pt-1", **kwargs):
+        if ParticipantToken in self.ended:
+            raise client_error("AccessDeniedException")
         conn = super().create_participant_connection(**kwargs)
-        conn["ConnectionCredentials"]["ConnectionToken"] = f"ct-{self.connections}"
+        token = f"ct-{len(self.owner) + 1}"
+        self.owner[token] = ParticipantToken
+        conn["ConnectionCredentials"]["ConnectionToken"] = token
         return conn
 
-    def send_message(self, Content, ConnectionToken, **kwargs):
-        if ConnectionToken == "ct-1":
+    def send_message(self, Content, ConnectionToken="", **kwargs):
+        if self.owner.get(ConnectionToken) in self.ended or ConnectionToken in self.retired:
             self.refused += 1
-            raise client_error(self.code)
-        super().send_message(Content)
+            raise client_error("AccessDeniedException")
+        return super().send_message(Content)
 
 
-async def test_a_contact_that_refuses_the_message_is_replaced_once():
-    participant = EndedOnce({"hello": [bot("Hi there.")]})
+async def test_an_ended_contact_is_stopped_and_replaced_once():
+    participant = EndedParticipant({"hello": [bot("Hi there.")]})
     clients = FakeClients(participant)
     store = MemorySessionStore()
     token = jwt()
     await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
+    participant.ended.add("pt-1")
     turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
     events = await collect(turn, "hello")
     assert participant.refused == 1 and len(clients.connect.started) == 2
+    assert "contact-1" in clients.connect.stopped
     assert [e.delta for e in events if hasattr(e, "delta")] == ["Hi there."]
     assert turn.usage()["connect_replaced"] is True
 
 
-async def test_throttling_is_not_taken_for_an_ended_contact():
-    participant = EndedOnce({"hello": [bot("Hi there.")]}, code="ThrottlingException")
+async def test_a_retired_connection_token_gets_a_fresh_one_on_the_same_contact():
+    participant = EndedParticipant({"hello": [bot("Hi there.")]})
     clients = FakeClients(participant)
     store = MemorySessionStore()
     token = jwt()
     await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
+    participant.retired.add(store.get(session_key(token, "t1")).connection_token)
+    turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "hello")
+    assert len(clients.connect.started) == 1 and clients.connect.stopped == []
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Hi there."]
+    assert turn.usage()["connect_reconnected"] is True
+
+
+async def test_a_message_the_service_refuses_is_not_taken_for_an_ended_contact():
+    class Refusing(FakeParticipant):
+        def send_message(self, Content, **kwargs):
+            raise client_error("ValidationException")
+
+    clients = FakeClients(Refusing({}))
+    store = MemorySessionStore()
     from botocore.exceptions import ClientError
 
     with pytest.raises(ClientError):
-        await collect(ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep), "hello")
-    assert len(clients.connect.started) == 1
+        await collect(ConnectTurn(jwt(), store, SETTINGS, clients, sleep=no_sleep), "hello")
+    assert len(clients.connect.started) == 1 and clients.connect.stopped == []
+
+
+async def test_a_message_over_connects_limit_is_answered_without_sending():
+    participant = FakeParticipant({})
+    clients = FakeClients(participant)
+    turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "x" * 1500)
+    assert [e.delta for e in events if hasattr(e, "delta")] == [turn_module.TOO_LONG_LINE]
+    assert participant.sent == [] and clients.connect.started == []
+
+
+async def test_throttling_is_not_taken_for_an_ended_contact():
+    class Throttled(FakeParticipant):
+        def send_message(self, Content, **kwargs):
+            raise client_error("ThrottlingException")
+
+    clients = FakeClients(Throttled({}))
+    from botocore.exceptions import ClientError
+
+    with pytest.raises(ClientError):
+        await collect(ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep), "hello")
+    assert len(clients.connect.started) == 1 and clients.connect.stopped == []
 
 
 def test_the_dynamo_store_claims_only_when_no_live_claim_is_held():
@@ -609,7 +667,9 @@ async def test_a_contact_stored_without_a_participant_token_polls():
     store = MemorySessionStore()
     token = jwt()
     await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
-    store.get(session_key(token, "t1")).participant_token = ""
+    stored = store.get(session_key(token, "t1"))
+    stored.participant_token = ""
+    store.put(stored)
     turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
     events = await collect(turn, "hello")
     assert [e.delta for e in events if hasattr(e, "delta")] == ["Polled."]
@@ -622,7 +682,9 @@ async def test_a_quiet_stream_sends_heartbeats_until_the_turn_limit(monkeypatch)
     clients = FakeClients(FakeParticipant({}))
     turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep)
     events = await collect(turn, "anyone there?")
-    assert "TEXT_MESSAGE_CONTENT" not in types(events)
+    # No reply: the run says so instead of leaving an empty answer (finding 3).
+    assert [e.delta for e in events if hasattr(e, "delta")] == [turn_module.NO_REPLY_LINE]
+    assert turn.usage()["connect_no_reply"] is True
     assert any("aws/heartbeat" in frame for frame in clients.sockets[0].sent)
 
 
@@ -641,3 +703,132 @@ def test_a_new_contact_is_announced_before_its_connection_and_greeting():
     turn.on_contact = lambda contact_id: seen.append((contact_id, participant.connections))
     turn.start_contact("k", time.time() + 3600)
     assert seen == [("contact-1", 0)]
+
+
+# ---- the critique's failure paths (connect-hardening) ---------------------------------
+
+
+async def test_the_token_leaves_the_contact_right_after_the_greeting():
+    clients = FakeClients(FakeParticipant({}))
+    turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep)
+    await turn.warm(warm_input())
+    # A warm start nobody writes in leaves no token on the record (finding 1).
+    assert [u["Attributes"] for u in clients.connect.updated] == [{"hrToken": "cleared"}]
+    assert clients.connect.started[0]["ChatDurationInMinutes"] == 60
+
+
+async def test_a_contact_that_never_greets_is_a_failed_start(monkeypatch):
+    monkeypatch.setattr(turn_module, "GREETING_LIMIT", 0.01)
+    clients = FakeClients(FakeParticipant({}, greeting=None))
+    store = MemorySessionStore()
+    token = jwt()
+    with pytest.raises(turn_module.StartFailed):
+        await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
+    # The contact is ended, its token cleared, and the claim released for the next run.
+    assert clients.connect.stopped == ["contact-1"]
+    assert clients.connect.updated[0]["Attributes"] == {"hrToken": "cleared"}
+    assert store.get(session_key(token, "t1")) is None
+
+
+async def test_a_late_reply_from_the_previous_turn_is_not_shown_as_this_ones(monkeypatch):
+    monkeypatch.setattr(turn_module, "QUIET_AFTER_REPLY", 0.0)
+    participant = FakeParticipant({"one": [bot("Answer one.")], "two": [bot("Answer two.")]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    await collect(ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep), "one")
+    # A second message the canvas sends after the first turn ended.
+    participant._add(**bot("A late extra line for turn one."))
+    turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "two")
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Answer two."]
+    assert turn.usage()["connect_stale"] == 1
+
+
+class BreakingClients(FakeClients):
+    """The socket opens, then fails on its first read, as a reset connection does."""
+
+    def receive(self, ws, timeout):
+        raise ConnectionResetError("reset")
+
+
+async def test_a_socket_that_fails_mid_turn_falls_back_to_polling(monkeypatch):
+    monkeypatch.setattr(turn_module, "QUIET_AFTER_REPLY", 0.05)
+    participant = LateParticipant({"hello": [bot("Polled after the reset.")]})
+    clients = BreakingClients(participant)
+
+    async def deliver_late(_seconds):
+        for reply in participant.later:
+            participant._add(**reply)
+        participant.later = []
+
+    turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=deliver_late)
+    events = await collect(turn, "hello")
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Polled after the reset."]
+    assert turn.usage()["connect_socket_failed"] is True
+    assert clients.sockets[0].closed
+
+
+async def test_relayed_items_are_saved_even_when_the_run_fails(monkeypatch):
+    monkeypatch.setattr(turn_module, "QUIET_AFTER_REPLY", 30.0)
+    participant = FakeParticipant({"one": [bot("Answer one.")]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+
+    class Boom(Exception):
+        pass
+
+    def broken_receive(ws, timeout):
+        raise Boom()
+
+    clients.receive = broken_receive
+    clients.open_websocket = lambda url: FakeSocket(participant)
+
+    async def boom_sleep(_seconds):
+        raise Boom()
+
+    turn = ConnectTurn(token, store, SETTINGS, clients, sleep=boom_sleep)
+    with pytest.raises(Boom):
+        await collect(turn, "one")
+    # "Answer one." was relayed before the failure, and the store knows it.
+    seen = store.get(session_key(token, "t1")).seen
+    assert any(item["Id"] in seen for item in participant.items if item.get("Content") == "Answer one.")
+
+
+async def test_a_new_thread_ends_the_contact_of_the_one_the_page_left():
+    clients = FakeClients(FakeParticipant({}))
+    store = MemorySessionStore()
+    token = jwt()
+    await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input("t1"))
+    second = warm_input("t2")
+    second.forwarded_props["previousThreadId"] = "t1"
+    await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(second)
+    assert clients.connect.stopped == ["contact-1"]
+    assert store.get(session_key(token, "t1")).closed
+
+
+async def test_a_token_near_expiry_restarts_the_conversation_and_says_so():
+    participant = FakeParticipant({"hello": [bot("Hi there.")]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    old = jwt(exp=time.time() + 200)
+    await ConnectTurn(old, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
+    fresh = jwt(exp=time.time() + 3600)
+    turn = ConnectTurn(fresh, store, SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "hello")
+    texts = [e.delta for e in events if hasattr(e, "delta")]
+    assert texts == [turn_module.RESTARTED_LINE, "Hi there."]
+    assert clients.connect.stopped == ["contact-1"] and len(clients.connect.started) == 2
+
+
+async def test_a_contact_near_its_chat_duration_is_replaced_before_connect_ends_it():
+    participant = FakeParticipant({"hello": [bot("Hi there.")]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    now = [time.time()]
+    await ConnectTurn(token, store, SETTINGS, clients, clock=lambda: now[0], sleep=no_sleep).warm(warm_input())
+    now[0] += 59 * 60
+    await collect(ConnectTurn(token, store, SETTINGS, clients, clock=lambda: now[0], sleep=no_sleep), "hello")
+    assert len(clients.connect.started) == 2 and clients.connect.stopped == ["contact-1"]

@@ -2,8 +2,9 @@
 # Deploy the GuppiConnect stack (the mock Lambda and the bridge: its Runtime, session table
 # and the hr target on the platform's edge gateway), then publish web/ to the
 # platform's site bucket under projects/hr/ and invalidate that prefix. The bridge
-# needs the production contact flow id from .deploy/acxd-production.json, which
-# scripts/contact_flow.py --env production writes. Extra arguments go to `cdk deploy`.
+# reads the production contact flow id from SSM (/guppi-hr/connect/contact-flow-id),
+# which scripts/contact_flow.py --env production publishes. Extra arguments go to
+# `cdk deploy`; GUPPI_ALARM_EMAIL, when set, subscribes that address to the alarms.
 # `--site-only` skips cdk deploy and only publishes web/.
 set -euo pipefail
 
@@ -47,7 +48,17 @@ else
   fi
   export HR_GITHUB_TOKEN
   cd "$ROOT/infra"
-  uv run cdk deploy GuppiConnect --outputs-file "$OUTPUTS" "$@"
+  # The alarm topic's email subscription, from the environment only; without it the
+  # stack keeps the address it has (CDK reuses a parameter's previous value).
+  params=()
+  if [[ -n "${GUPPI_ALARM_EMAIL:-}" ]]; then
+    params+=(--parameters "AlarmEmail=$GUPPI_ALARM_EMAIL")
+  fi
+  uv run cdk deploy GuppiConnect --outputs-file "$OUTPUTS" "${params[@]}" "$@"
+  # AgentCore creates the runtime's log group without a retention; keep 30 days.
+  log_group="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["GuppiConnect"]["RuntimeLogGroup"])' "$OUTPUTS")"
+  aws logs put-retention-policy --log-group-name "$log_group" --retention-in-days 30
+  echo "retention 30 days: $log_group"
 fi
 
 cd "$ROOT"

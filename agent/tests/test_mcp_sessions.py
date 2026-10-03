@@ -102,3 +102,42 @@ async def test_the_pool_keeps_at_most_its_limit_closing_the_least_recent():
         async with pool.lease(("tok", thread), token_expires_at=clock() + 3600):
             pass
     assert [c.stopped for c in opener.opened] == [True, False, False]
+
+
+async def test_concurrent_leases_of_one_key_open_one_session():
+    import asyncio
+    import threading
+
+    gate = threading.Event()
+
+    class SlowOpener(Opener):
+        def __call__(self, key):
+            gate.wait(1)
+            return super().__call__(key)
+
+    opener, clock = SlowOpener(), Clock()
+    pool = sessions(opener, clock)
+
+    async def use():
+        async with pool.lease(("tok", "t1"), token_expires_at=clock() + 3600) as (client, _tools):
+            return client
+
+    first = asyncio.create_task(use())
+    second = asyncio.create_task(use())
+    await asyncio.sleep(0.05)
+    gate.set()
+    a, b = await asyncio.gather(first, second)
+    assert a is b and len(opener.opened) == 1
+
+
+async def test_an_idle_session_closes_at_another_conversations_lease():
+    opener, clock = Opener(), Clock()
+    pool = sessions(opener, clock, idle_seconds=300)
+    async with pool.lease(("tok", "t1"), token_expires_at=clock() + 3600):
+        pass
+    async with pool.lease(("tok", "t2"), token_expires_at=clock() + 3600):
+        pass
+    clock.now += 301
+    async with pool.lease(("tok", "t2"), token_expires_at=clock() + 3600):
+        pass
+    assert opener.opened[0].stopped

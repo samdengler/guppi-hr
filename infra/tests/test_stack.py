@@ -37,8 +37,9 @@ def test_account_singletons_are_left_to_the_guppi_gpt_stack_by_default(template)
 
 
 def test_the_platform_owns_the_page_sign_in_and_edge(template):
-    # Phase 8: the page, sign-in, CloudFront, WAF, the edge gateway and its limits, the
-    # feedback API, and DNS belong to the GuppiGpt platform stack.
+    # Phase 8: the page, sign-in, CloudFront, WAF, the edge gateway, the feedback API,
+    # and DNS belong to the GuppiGpt platform stack. The only rate limits here are on the
+    # HR stack's own gateways (test_both_hr_gateways_have_a_per_user_rate_limit).
     for resource_type in (
         "AWS::Cognito::UserPool",
         "AWS::Cognito::UserPoolClient",
@@ -49,7 +50,6 @@ def test_the_platform_owns_the_page_sign_in_and_edge(template):
         "AWS::CloudFront::ResponseHeadersPolicy",
         "AWS::WAFv2::WebACL",
         "AWS::WAFv2::WebACLAssociation",
-        "AWS::BedrockAgentCore::GatewayRateLimit",
         "AWS::ApiGateway::RestApi",
         "AWS::Events::EventBus",
         "AWS::Events::Archive",
@@ -1077,3 +1077,16 @@ def test_the_agents_gateway_url_is_published_for_the_connect_bridge(template):
     assert len(params) == 1
     value = next(iter(params.values()))["Properties"]["Value"]
     assert "GatewayUrl" in json.dumps(value)
+
+
+def test_both_hr_gateways_have_a_per_user_rate_limit(template):
+    limits = template.find_resources("AWS::BedrockAgentCore::GatewayRateLimit")
+    assert len(limits) == 2
+    for limit in limits.values():
+        assert limit["Properties"]["DimensionKeys"] == ["$.context.jwt.sub"]
+
+
+def test_every_strands_runtime_redacts_span_content(template):
+    for runtime in template.find_resources("AWS::BedrockAgentCore::Runtime").values():
+        env = runtime["Properties"].get("EnvironmentVariables", {})
+        assert env.get("OTEL_SEMCONV_STABILITY_OPT_IN") == "gen_ai_unredacted_attributes="

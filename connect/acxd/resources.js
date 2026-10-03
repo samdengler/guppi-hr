@@ -3,13 +3,14 @@
 /**
  * Everything the spike creates in the ACXD workspace, as data. `deploy.js` upserts it.
  *
- * hr.js is the HR super-agent canvas; probes.js keeps the experiments that settled how
- * headers, payloads and A2A replies work. Both live in one application, `hr-assistant`,
- * whose welcome flow is WelcomeFlow; the probes are reachable by saying their names.
+ * hr.js is the HR super-agent canvas, in one application, `hr-assistant`, whose welcome
+ * flow is WelcomeFlow. probes.js keeps the experiments that settled how headers, payloads
+ * and A2A replies work; they are no longer deployed, since flows are shared by the
+ * development and production applications and a probe sent the employee's token to the
+ * spike's public mock (critique finding 19).
  */
 
 const hr = require('./hr');
-const probes = require('./probes');
 
 const CONTEXT_VARIABLES = [
   { name: 'hrToken', schema: { type: 'string' }, disallowExternalModification: false },
@@ -17,8 +18,8 @@ const CONTEXT_VARIABLES = [
   ...hr.CONTEXT_VARIABLES,
 ];
 
-const DATA_REQUESTS = [...hr.DATA_REQUESTS, ...probes.DATA_REQUESTS];
-const FLOWS = [...hr.FLOWS, ...probes.FLOWS];
+const DATA_REQUESTS = hr.DATA_REQUESTS;
+const FLOWS = hr.FLOWS;
 
 const APPLICATION = {
   name: 'hr-assistant',

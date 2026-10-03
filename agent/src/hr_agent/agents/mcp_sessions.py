@@ -6,7 +6,10 @@ session's setup and `tools/list` (connect/docs/latency-plan.md). A session's hea
 the caller's token and the thread id, so a session is kept per (token, thread id) and never
 serves another caller or conversation. It closes after five idle minutes (under the
 runtime's fifteen), a minute before the token expires, on any error in a run that used it,
-and when the pool is full (least recently used first).
+and when the pool is full (least recently used first). Every lease sweeps the pool, so an
+idle session closes at the next request for any conversation, not only its own. Opening is
+locked per key, so a warm start and a first message that arrive together share one session
+(critique finding 21).
 """
 
 from __future__ import annotations
@@ -54,6 +57,7 @@ class McpSessions:
         self._clock = clock
         self._wall = wall
         self._sessions: dict[Key, _Session] = {}
+        self._opening: dict[Key, asyncio.Lock] = {}
 
     def _usable(self, session: _Session) -> bool:
         return (
@@ -71,23 +75,35 @@ class McpSessions:
             log.warning("could not close an MCP session cleanly", exc_info=True)
 
     async def _sweep(self) -> None:
-        for key in [k for k, s in self._sessions.items() if not self._usable(s)]:
+        for key in [k for k, s in self._sessions.items() if not self._usable(s) and not s.lock.locked()]:
             await self._close(key)
+        for key in [k for k in self._opening if k not in self._sessions and not self._opening[k].locked()]:
+            del self._opening[key]
         while len(self._sessions) >= self._max:
             oldest = min(self._sessions, key=lambda k: self._sessions[k].last_used)
             await self._close(oldest)
 
-    @asynccontextmanager
-    async def lease(self, key: Key, *, token_expires_at: float):
-        """The session for `key` and its tool list, opened if there is none."""
-        session = self._sessions.get(key)
-        if session is None or not self._usable(session):
+    async def _get_or_open(self, key: Key, token_expires_at: float) -> _Session:
+        opening = self._opening.setdefault(key, asyncio.Lock())
+        async with opening:
+            session = self._sessions.get(key)
+            if session is not None and self._usable(session):
+                return session
             if session is not None:
                 await self._close(key)
             await self._sweep()
             client, tools = await asyncio.to_thread(self._open, key)
             session = _Session(client, tools, token_expires_at, self._clock())
             self._sessions[key] = session
+            return session
+
+    @asynccontextmanager
+    async def lease(self, key: Key, *, token_expires_at: float):
+        """The session for `key` and its tool list, opened if there is none."""
+        session = self._sessions.get(key)
+        if session is not None and self._usable(session):
+            await self._sweep()
+        session = await self._get_or_open(key, token_expires_at)
         async with session.lock:
             try:
                 yield session.client, session.tools
