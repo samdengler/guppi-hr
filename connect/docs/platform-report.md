@@ -83,16 +83,16 @@ No utterance meant for one write domain reached the other.
 
 ## Open
 
-- The kit's conversation log for the bridge. The platform's log bucket admits only the
-  platform runtime's role, and this plan does not change the platform. The
-  recommendation is to keep the bridge's run lines in CloudWatch; Sam decides.
+- The bridge's run lines stay in CloudWatch, read by the dashboard `guppi-connect-bridge`
+  (decided 2 October, evening).
+- Span export from the bridge and the HR orchestrator answers 403 (see the plan's open
+  items).
 - Optional items from the spike: press Sync on HrTools in the designer console (the MCP
   data request type), decide on routing misses u55 and u59, a voice test, and tear the
   spike resources down when the comparison is over.
 
 ## For Sam
 
-- Decide on the conversation log (above).
 - The two auto mode allow rules added to `~/.claude/settings.json` on 2 October cover
   test chat messages on `/p/hr-connect/` and `/p/hr/`, and the one address commit and
   restore. Remove the second when it is no longer wanted; backups sit beside the file as

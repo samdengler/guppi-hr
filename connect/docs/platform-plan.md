@@ -148,8 +148,16 @@ bridge's 2.5 s quiet window, so the bridge does see it in the same run.
   `HR_GITHUB_TOKEN` from `gh auth token` in `scripts/deploy.sh`. Checked on an empty uv
   cache: the build fails without the secret and passes with it, and the token's value
   is in no layer of the saved image.
-- [ ] The kit's conversation log for the bridge (needs the platform bucket policy change
-  above), or keep the run lines in CloudWatch.
+- [x] The bridge's run lines stay in CloudWatch (Sam, 2 October). The dashboard
+  `guppi-connect-bridge` (`infra/guppi_connect_infra/dashboard.py`, stack output
+  `BridgeDashboardUrl`) reads them with Logs Insights (turns and time per turn, how turns
+  ended, recent turns, errors) beside the Runtime's AgentCore metrics, the Connect
+  instance's chats and BasicQueue, and the session table.
+- [ ] Span export is refused: the bridge's log group holds "Failed to export span batch
+  code: 403, reason: Forbidden" (about 140 in a day), and the HR orchestrator's holds the
+  same (about 44). The bridge's role lacks the `logs:PutResourcePolicy` grant the HR role
+  has, but the HR orchestrator fails too, so that grant is not the whole answer. Traces
+  for both are incomplete until this is found.
 - [ ] Optional, from the spike: press Sync on HrTools in the designer console (the MCP
   data request type), decide on routing misses u55 and u59, a voice test, and tear the
   spike resources down when the comparison is over.

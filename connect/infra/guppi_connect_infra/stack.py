@@ -21,6 +21,7 @@ from aws_cdk import aws_logs as logs
 from constructs import Construct
 
 from guppi_connect_infra.bridge import ConnectBridge
+from guppi_connect_infra.dashboard import BridgeDashboard
 
 ROOT = Path(__file__).resolve().parents[2]
 MOCK_DIR = ROOT / "mock"
@@ -64,4 +65,6 @@ class GuppiConnectStack(Stack):
         CfnOutput(self, "MockUrl", value=url.url)
 
         contact_flow_id = self.node.try_get_context("contact_flow_id") or production_contact_flow_id()
-        ConnectBridge(self, "Bridge", contact_flow_id=contact_flow_id)
+        bridge = ConnectBridge(self, "Bridge", contact_flow_id=contact_flow_id)
+        dashboard = BridgeDashboard(self, "BridgeDashboard", runtime=bridge.runtime, table=bridge.table)
+        CfnOutput(self, "BridgeDashboardUrl", value=dashboard.url)

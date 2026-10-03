@@ -203,6 +203,9 @@ class ConnectBridge(Construct):
         )
         target.node.add_dependency(invoke_policy)
 
+        self.runtime = runtime
+        self.table = table
+
         CfnOutput(stack, "BridgeRuntimeArn", value=runtime.attr_agent_runtime_arn)
         CfnOutput(stack, "BridgeSessionTable", value=table.table_name)
         CfnOutput(stack, "BridgeTargetName", value=TARGET_NAME)
