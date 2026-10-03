@@ -62,6 +62,14 @@ class GuppiConnectStack(Stack):
         )
         url = mock.add_function_url(auth_type=lambda_.FunctionUrlAuthType.NONE)
         CfnOutput(self, "MockUrl", value=url.url)
+        # The canvas's development environment reads it here (connect/acxd/lib/common.js).
+        ssm.StringParameter(
+            self,
+            "MockUrlParameter",
+            parameter_name="/guppi-hr/connect/mock-url",
+            string_value=url.url,
+            description="The spike's mock sub-agents, for the canvas's development environment",
+        )
 
         contact_flow_id = self.node.try_get_context("contact_flow_id") or production_contact_flow_id(self)
         bridge = ConnectBridge(self, "Bridge", contact_flow_id=contact_flow_id)

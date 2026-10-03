@@ -97,6 +97,7 @@ PARAM_USER_POOL_CLIENT_ID = f"{PLATFORM_PARAMETER_PREFIX}/user-pool-client-id"
 PARAM_JWT_DISCOVERY_URL = f"{PLATFORM_PARAMETER_PREFIX}/jwt-discovery-url"
 # What this stack publishes for the Connect bridge (connect/), which deploys after it.
 AGENTS_GATEWAY_URL_PARAMETER = "/guppi-hr/agents-gateway-url"
+TOOLS_GATEWAY_URL_PARAMETER = "/guppi-hr/tools-gateway-url"
 # The project's name on the platform: the page is /p/hr-diy/, the manifest and extension
 # are under /projects/hr-diy/, and the edge gateway target of the same name makes the
 # orchestrator answer at /api/hr-diy/invocations (the platform's CloudFront function
@@ -1428,6 +1429,14 @@ class HrSuperAgentStack(cdk.Stack):
         cdk.CfnOutput(self, "KnowledgeBaseId", value=knowledge_base.attr_knowledge_base_id)
         cdk.CfnOutput(self, "DataSourceId", value=data_source.attr_data_source_id)
         cdk.CfnOutput(self, "ToolsGatewayUrl", value=tools_gateway.attr_gateway_url)
+        # The canvas (connect/acxd/lib/common.js) reads it here instead of a local file.
+        ssm.StringParameter(
+            self,
+            "ToolsGatewayUrlParameter",
+            parameter_name=TOOLS_GATEWAY_URL_PARAMETER,
+            string_value=tools_gateway.attr_gateway_url,
+            description="The HR tools gateway URL, for the Connect canvas",
+        )
         cdk.CfnOutput(self, "IngestionScheduleName", value=ingestion.schedule_name)
         cdk.CfnOutput(self, "AlarmTopicArn", value=alarm_topic.topic_arn)
         cdk.CfnOutput(self, "ConversationLogBucketName", value=conversation_bucket.bucket_name)

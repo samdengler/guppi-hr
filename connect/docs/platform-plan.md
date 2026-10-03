@@ -41,12 +41,12 @@ and is not a Strands agent. The bridge is a `ConnectTurn` object with the same s
 
 | Concern | Choice | Reason |
 | --- | --- | --- |
-| Session | One Connect chat contact per AG-UI thread, replaced when the token it was started with nears expiry. A DynamoDB table keyed by user and thread holds the contact id, the participant connection token and the last transcript item seen, with a TTL | The Runtime stays stateless, as every platform agent is; a new microVM finds the conversation |
-| Transport | A new contact opens the customer WebSocket once, which starts the flow, and closes it. Each run then calls `SendMessage` and polls `GetTranscript` until the canvas has replied and gone quiet | No WebSocket held across runs (phase 0) |
+| Session | One Connect chat contact per AG-UI thread, with a 60-minute chat duration, replaced when the token it was started with nears expiry or the chat nears its end, and ended when the page starts another thread (D42, D44). A DynamoDB table on its own KMS key, keyed by user and thread, holds the contact id, the participant and connection tokens and the transcript items seen, with a TTL | The Runtime stays stateless, as every platform agent is; a new microVM finds the conversation |
+| Transport | A new contact opens the customer WebSocket once, which starts the flow, and closes it. Each run then calls `SendMessage` and opens a WebSocket from a fresh connection for the run (change 5), polling `GetTranscript` only when the socket fails | No connection held across runs |
 | Events | Each canvas message becomes one `TEXT_MESSAGE` start, content, end; a `STEP_STARTED` "Connect is working" while polling; the kit's keepalive pings cover sub-agent turns of up to 10 s | Fits the page's existing rendering and status line |
-| Escalation | When the contact flow's Escalation branch fires, a `CUSTOM` event `connect/escalated` and a closing line; the thread record is closed | A person's replies across later runs are out of scope for this plan |
-| Identity | The user's chat.dengler.io access token from the request becomes the contact attribute `hrToken`, and the bridge blanks it after the canvas's first reply | One token from the page to every HR hop, which phase 8 makes valid, and none left on the contact record (phase 0) |
-| Conversation log | The kit's log, so `/p/hr-connect/` threads land beside the others | Free with the kit |
+| Escalation | The canvas opens an HR ticket, gives its id and ends the conversation (D43); Connect's end event closes the thread. The contact flow's queue branch is no longer taken | Nobody staffs a queue, and the page cannot show an agent's replies |
+| Identity | The user's chat.dengler.io access token from the request becomes the contact attribute `hrToken`, and the bridge blanks it right after the canvas's greeting, on every path (D42). Corrected 3 Oct: until then it was blanked after the first reply, which left it on warm-only and failed contacts (critique finding 1) | One token from the page to every HR hop, which phase 8 makes valid. The designer keeps the value it read at start; a pilot needs a token exchange or proxy instead (D20, D42) |
+| Conversation log | None: the kit's log is off for the bridge and Connect stores no transcripts, so the page says nothing is saved (`features.logging: false` in the manifest) | The platform's log bucket admits only the platform runtime's role |
 
 ## Gate: the token on the contact record
 

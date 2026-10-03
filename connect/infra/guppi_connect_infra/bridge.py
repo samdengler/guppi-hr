@@ -11,6 +11,7 @@ The kit's conversation log stays off: the platform's log bucket admits only the 
 runtime's role, so the bridge's run lines go to its CloudWatch log group instead.
 """
 
+import json
 from pathlib import Path
 
 from aws_cdk import CfnOutput, RemovalPolicy, Stack
@@ -23,6 +24,8 @@ from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 AGENT_DIR = Path(__file__).resolve().parents[2] / "agent"
+# The canvas's domains (connect/acxd/hr.js checks it), which the warm start addresses.
+DOMAINS_FILE = Path(__file__).resolve().parents[2] / "acxd" / "domains.json"
 RUNTIME_NAME = "guppi_connect_bridge"
 # The project is "hr" on the platform since 3 Oct 2026 (it was "hr-connect"; guppi-hr D37).
 TARGET_NAME = "hr"
@@ -175,6 +178,7 @@ class ConnectBridge(Construct):
                 "AGENTS_GATEWAY_URL": ssm.StringParameter.value_for_string_parameter(
                     self, "/guppi-hr/agents-gateway-url"
                 ),
+                "WARM_DOMAINS": ",".join(json.loads(DOMAINS_FILE.read_text())),
                 # Traces go to the platform's Dynatrace tenant, beside the HR runtimes the
                 # canvas calls, with the platform's token read from its secret at start
                 # (connect_bridge.otel_headers; guppi-hr D36).

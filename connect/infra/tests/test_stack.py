@@ -85,3 +85,11 @@ def test_the_alarm_email_is_a_parameter_and_never_in_the_template(template):
     sub = next(iter(template.find_resources("AWS::SNS::Subscription").values()))
     assert sub["Condition"]
     assert sub["Properties"]["Endpoint"] == {"Ref": "AlarmEmail"}
+
+
+def test_the_warm_start_domains_come_from_the_canvas_list(template):
+    from pathlib import Path
+
+    names = json.loads((Path(__file__).resolve().parents[2] / "acxd" / "domains.json").read_text())
+    runtime = next(iter(template.find_resources("AWS::BedrockAgentCore::Runtime").values()))["Properties"]
+    assert runtime["EnvironmentVariables"]["WARM_DOMAINS"] == ",".join(names)

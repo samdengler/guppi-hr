@@ -120,6 +120,21 @@ Baseline after the hardening (`hardened-warm`, 3 October 11:58 UTC, 10 rounds):
 
 A turn now finishes 0.1 to 0.2 s after its reply (the canvas's end-of-turn line, D42).
 
+After the sub-agent snapshot (L15, L16; `snapshot-warm`, 3 October 12:25 UTC, 10 rounds):
+
+| Question | Median first reply |
+| --- | --- |
+| New chat: "What is my home address on file?" | 2.63 s |
+| Follow-up: "And what is my emergency contact?" | 2.64 s |
+| New chat: "How many buddy passes do I get?" | 4.27 s |
+| Follow-up: "Can my parents use them?" | 4.13 s |
+| All new chats | 3.71 s (p90 4.35 s) |
+| All follow-ups | 3.38 s (p90 4.21 s) |
+
+Both targets below are met for profile and pay reads; travel answers, which write
+longer replies from passages, sit about 1.5 s above them. Without a warm start a new
+chat's median was 9.05 s (`hardened-nowarm`).
+
 ## Targets
 
 Median first reply: 3 s for a follow-up and 5 s for a new chat; a turn ends within 1 s

@@ -832,3 +832,18 @@ async def test_a_contact_near_its_chat_duration_is_replaced_before_connect_ends_
     now[0] += 59 * 60
     await collect(ConnectTurn(token, store, SETTINGS, clients, clock=lambda: now[0], sleep=no_sleep), "hello")
     assert len(clients.connect.started) == 2 and clients.connect.stopped == ["contact-1"]
+
+
+async def test_a_canvas_error_is_shown_logged_and_closes_the_thread(caplog):
+    participant = FakeParticipant(
+        {"hello": [bot("[flow] The Agentic CX block returned an error."), {"Type": "EVENT", "ContentType": "application/vnd.amazonaws.connect.event.participant.left"}]}
+    )
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "hello")
+    assert [e.delta for e in events if hasattr(e, "delta")] == [turn_module.CANVAS_ERROR_LINE]
+    assert turn.usage()["connect_canvas_error"] is True
+    assert "bridge_problem canvas_error" in caplog.text
+    assert store.get(session_key(token, "t1")).closed

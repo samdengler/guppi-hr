@@ -37,6 +37,11 @@ const UTTERANCE = '{System.utterance:NLX.System}';
 // turn on this one.
 const END_OF_TURN = '[flow] end';
 
+// The domain names live in domains.json, which the bridge's stack also reads for the warm
+// start's session names ("{conversationId}-{domain}"); the check below keeps the two from
+// drifting apart (critique finding 15).
+const DOMAIN_NAMES = require('./domains.json');
+
 const DOMAINS = [
   {
     name: 'profile',
@@ -88,6 +93,10 @@ const DOMAINS = [
     ],
   },
 ];
+
+if (JSON.stringify(DOMAINS.map((d) => d.name)) !== JSON.stringify(DOMAIN_NAMES)) {
+  throw new Error(`hr.js domains ${DOMAINS.map((d) => d.name)} differ from domains.json ${DOMAIN_NAMES}`);
+}
 
 const CONTEXT_VARIABLES = [
   { name: 'welcomeGreeted', schema: { type: 'number' }, disallowExternalModification: false },

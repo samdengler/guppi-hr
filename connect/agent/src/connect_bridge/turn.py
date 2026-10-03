@@ -98,8 +98,11 @@ NO_REPLY_LINE = "No answer came back from the HR assistant. Try again in a momen
 # since the canvas's state, a pending change included, did not carry over (finding 8).
 RESTARTED_LINE = "(The assistant started a new conversation, so it may ask for details again.)"
 # The sub-agents the canvas delegates to; hr.js names each runtime session
-# "{conversationId}-{domain}", and the conversation id is the contact id.
-WARM_DOMAINS = ("profile", "pay", "travel")
+# "{conversationId}-{domain}", and the conversation id is the contact id. The stack sets
+# WARM_DOMAINS from connect/acxd/domains.json, the list hr.js checks itself against.
+WARM_DOMAINS = tuple(
+    d for d in os.environ.get("WARM_DOMAINS", "profile,pay,travel").split(",") if d.strip()
+)
 SUB_AGENT_WARM_TIMEOUT = 15.0
 # Connect closes an idle customer WebSocket; a run that waits longer than this sends a
 # heartbeat.
@@ -114,6 +117,13 @@ ESCALATED_LINE = (
     "A new message here starts over with the assistant."
 )
 ENDED_LINE = "The conversation ended. A new message here starts a new one."
+# The contact flow says this when the Agentic CX block fails, then disconnects
+# (scripts/contact_flow.py); before, the bridge hid it and the run looked fine.
+CANVAS_ERROR_PREFIX = "[flow] The Agentic CX block returned an error"
+CANVAS_ERROR_LINE = (
+    "The HR assistant ran into an error and ended this conversation. "
+    "A new message here starts a new one."
+)
 FLOW_MESSAGE_PREFIX = "[flow]"
 ENDED_CONTENT_TYPES = (
     "application/vnd.amazonaws.connect.event.chat.ended",
@@ -154,7 +164,7 @@ def last_user_text(run_input: RunAgentInput) -> str:
 
 @dataclass
 class Reply:
-    kind: str  # "text", "end" (END_OF_TURN), "escalated" or "ended"
+    kind: str  # "text", "end" (END_OF_TURN), "escalated", "error" or "ended"
     text: str = ""
 
 
@@ -276,6 +286,9 @@ class ConnectTurn:
                     replied = True
                 else:
                     session.closed = True
+                    if reply.kind == "error":
+                        self.stats["canvas_error"] = True
+                        problem("canvas_error", session.contact_id)
                     yield CustomEvent(type=EventType.CUSTOM, name=f"connect/{reply.kind}", value={"text": reply.text})
                 for event in text_events(reply.text):
                     yield event
@@ -695,6 +708,8 @@ def classify(item: dict) -> Reply | None:
         return Reply("end")
     if content.startswith(ESCALATION_PREFIX):
         return Reply("escalated", ESCALATED_LINE)
+    if content.startswith(CANVAS_ERROR_PREFIX):
+        return Reply("error", CANVAS_ERROR_LINE)
     if content.startswith(FLOW_MESSAGE_PREFIX):
         return None
     return Reply("text", content)
