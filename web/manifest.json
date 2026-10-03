@@ -1,6 +1,7 @@
 {
   "name": "hr",
   "label": "HR Assistant",
+  "description": "A Strands orchestrator routes each question to Profile, Pay and Travel sub-agents; every change is confirmed before it commits.",
   "agent": "/api/hr/invocations",
   "features": {
     "history": false,
