@@ -917,36 +917,6 @@ class HrSuperAgentStack(cdk.Stack):
         kb_target.node.add_dependency(tools_gateway_role)
         kb_target.node.add_dependency(data_source)
 
-        # ---- HR tools (phase 2) ----------------------------------------------------------
-        hr_tools = HrTools(
-            self,
-            "HrTools",
-            image_uri=image_uri,
-            role=tools_role,
-            gateway=tools_gateway,
-            gateway_role=tools_gateway_role,
-            token_issuer=token_issuer,
-            allowed_clients=jwt_allowed_clients,
-            base_environment=RUNTIME_BASE_ENVIRONMENT,
-        )
-
-        # ---- Sub-agents (phase 3) --------------------------------------------------------
-        sub_agents = SubAgents(
-            self,
-            "SubAgents",
-            image_uri=image_uri,
-            grant_image=grant_image,
-            discovery_url=discovery_url,
-            allowed_clients=jwt_allowed_clients,
-            tools_gateway_url=tools_gateway.attr_gateway_url,
-            model_id=MODEL_ID,
-            hr_tool_prefix=HR_TOOL_PREFIX,
-            base_environment=RUNTIME_BASE_ENVIRONMENT,
-            session_header=SESSION_HEADER,
-            trace_header=TRACE_HEADER,
-        )
-        cdk.CfnOutput(self, "AgentsGatewayUrl", value=sub_agents.gateway.attr_gateway_url)
-
         # Dynatrace trace export, shipped dark. The runtime's own OTEL_EXPORTER_OTLP_*
         # values are injected by the AgentCore platform when AGENT_OBSERVABILITY_ENABLED
         # is set (see RUNTIME_BASE_ENVIRONMENT above); OTEL's env var scheme carries only
@@ -964,16 +934,17 @@ class HrSuperAgentStack(cdk.Stack):
                 cdk.Aws.NO_VALUE,
             )
         )
-        # The API token reaches the orchestrator through Secrets Manager, never its
+        # The API token reaches every HR runtime through Secrets Manager, never its
         # environment, where GetAgentRuntime would show it to anyone allowed to read the
-        # runtime (D35). The secret always exists so the role's grant has something to
+        # runtime (D35); since D36 the tools server and the sub-agents export there too, so
+        # one trace covers the orchestrator, the sub-agent it delegates to, and the tools. The secret always exists so the role's grant has something to
         # name; its value is the token once both parameters are set. The image's launcher
         # (hr_agent.otel_headers) reads it and sets OTEL_EXPORTER_OTLP_TRACES_HEADERS inside
         # the process before opentelemetry-instrument starts.
         dynatrace_token_secret = secretsmanager.Secret(
             self,
             "DynatraceTokenSecret",
-            description="Dynatrace API token for the orchestrator's trace export (D35)",
+            description="Dynatrace API token for the HR runtimes' trace export (D35, D36)",
             secret_string_value=SecretValue.unsafe_plain_text(
                 cdk.Token.as_string(
                     cdk.Fn.condition_if(
@@ -985,6 +956,7 @@ class HrSuperAgentStack(cdk.Stack):
             ),
         )
         dynatrace_token_secret.grant_read(runtime_role)
+        dynatrace_token_secret.grant_read(tools_role)
         dynatrace_token_secret_arn = cdk.Token.as_string(
             cdk.Fn.condition_if(
                 has_dynatrace_otlp.logical_id,
@@ -992,6 +964,43 @@ class HrSuperAgentStack(cdk.Stack):
                 cdk.Aws.NO_VALUE,
             )
         )
+
+        trace_environment = {
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": dynatrace_traces_endpoint,
+            "DYNATRACE_TOKEN_SECRET_ARN": dynatrace_token_secret_arn,
+        }
+
+        # ---- HR tools (phase 2) ----------------------------------------------------------
+        hr_tools = HrTools(
+            self,
+            "HrTools",
+            image_uri=image_uri,
+            role=tools_role,
+            gateway=tools_gateway,
+            gateway_role=tools_gateway_role,
+            token_issuer=token_issuer,
+            allowed_clients=jwt_allowed_clients,
+            base_environment={**RUNTIME_BASE_ENVIRONMENT, **trace_environment},
+        )
+
+        # ---- Sub-agents (phase 3) --------------------------------------------------------
+        sub_agents = SubAgents(
+            self,
+            "SubAgents",
+            image_uri=image_uri,
+            grant_image=grant_image,
+            discovery_url=discovery_url,
+            allowed_clients=jwt_allowed_clients,
+            tools_gateway_url=tools_gateway.attr_gateway_url,
+            model_id=MODEL_ID,
+            hr_tool_prefix=HR_TOOL_PREFIX,
+            base_environment={**RUNTIME_BASE_ENVIRONMENT, **trace_environment},
+            session_header=SESSION_HEADER,
+            trace_header=TRACE_HEADER,
+        )
+        for sub_agent_role in sub_agents.roles.values():
+            dynatrace_token_secret.grant_read(sub_agent_role)
+        cdk.CfnOutput(self, "AgentsGatewayUrl", value=sub_agents.gateway.attr_gateway_url)
 
         # The tools gateway now exists, so the runtime's environment can point at it.
         runtime.environment_variables = {
@@ -1005,8 +1014,7 @@ class HrSuperAgentStack(cdk.Stack):
             "CONVERSATION_LOG_ENABLED": "true" if CONVERSATION_LOG_ENABLED else "false",
             "CONVERSATION_LOG_BUCKET": conversation_bucket.bucket_name,
             "CONVERSATION_LOG_KEY_SECRET_ARN": conversation_secret.secret_arn,
-            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": dynatrace_traces_endpoint,
-            "DYNATRACE_TOKEN_SECRET_ARN": dynatrace_token_secret_arn,
+            **trace_environment,
         }
 
         # ---- Operational alarms ----------------------------------------------------------

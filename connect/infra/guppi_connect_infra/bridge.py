@@ -154,9 +154,20 @@ class ConnectBridge(Construct):
                 "CONTACT_FLOW_ID": contact_flow_id,
                 "SESSION_TABLE": table.table_name,
                 "CONVERSATION_LOG_ENABLED": "false",
+                # Traces go to the platform's Dynatrace tenant, beside the HR runtimes the
+                # canvas calls, with the platform's token read from its secret at start
+                # (connect_bridge.otel_headers; guppi-hr D36).
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": platform_parameter(self, "dynatrace-traces-endpoint"),
+                "DYNATRACE_TOKEN_SECRET_ARN": platform_parameter(self, "dynatrace-token-secret-arn"),
             },
         )
         runtime.node.add_dependency(role)
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[platform_parameter(self, "dynatrace-token-secret-arn")],
+            )
+        )
 
         gateway_role = iam.Role.from_role_arn(
             self,

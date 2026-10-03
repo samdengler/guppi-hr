@@ -72,6 +72,7 @@ class SubAgents(Construct):
         )
 
         self.runtimes: dict[str, agentcore.CfnRuntime] = {}
+        self.roles: dict[str, iam.Role] = {}
         for name in SUB_AGENT_NAMES:
             title = name.capitalize()
             runtime_name = sub_agent_runtime_name(name)
@@ -128,6 +129,7 @@ class SubAgents(Construct):
             )
             runtime.node.add_dependency(role)
             self.runtimes[name] = runtime
+            self.roles[name] = role
 
             runtime_arn = runtime.attr_agent_runtime_arn
             self.gateway_role.add_to_policy(

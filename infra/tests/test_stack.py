@@ -737,6 +737,30 @@ def test_dynatrace_token_reaches_the_runtime_only_through_secrets_manager(templa
     assert f'"Ref": "{logical_id}"' in policies
 
 
+def test_every_hr_runtime_exports_traces_to_dynatrace_through_the_secret(template):
+    # D36: the tools server and the sub-agents send their traces where the orchestrator's
+    # go, so one trace covers a whole turn; each role can read the token's secret.
+    (secret_id,) = [
+        k for k in template.find_resources("AWS::SecretsManager::Secret") if k.startswith("DynatraceTokenSecret")
+    ]
+    runtimes = template.find_resources("AWS::BedrockAgentCore::Runtime")
+    assert len(runtimes) == 5
+    policies = template.find_resources("AWS::IAM::Policy")
+    for runtime in runtimes.values():
+        env = runtime["Properties"]["EnvironmentVariables"]
+        assert env["DYNATRACE_TOKEN_SECRET_ARN"]["Fn::If"][1] == {"Ref": secret_id}
+        assert env["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]["Fn::If"][0] == "HasDynatraceOtlp"
+        role_ref = runtime["Properties"]["RoleArn"]["Fn::GetAtt"][0]
+        role_policies = [
+            p for p in policies.values()
+            if {"Ref": role_ref} in p["Properties"].get("Roles", [])
+        ]
+        assert any(
+            json.dumps({"Ref": secret_id}) in json.dumps(p["Properties"]["PolicyDocument"])
+            for p in role_policies
+        ), role_ref
+
+
 def test_dynatrace_monitoring_role_is_gone(template):
     # The role-based Dynatrace AWS integration was removed on 7 Sep 2026: Dynatrace's own
     # push-based activation stack, deployed outside this repo, polls CloudWatch on its own.

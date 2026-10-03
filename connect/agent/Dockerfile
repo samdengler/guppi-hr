@@ -31,4 +31,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 EXPOSE 8080
 # opentelemetry-instrument comes with the kit (aws-opentelemetry-distro), as in guppi-gpt.
-CMD ["opentelemetry-instrument", "uvicorn", "connect_bridge.app:app", "--host", "0.0.0.0", "--port", "8080"]
+# connect_bridge.otel_headers puts the platform's Dynatrace trace header in place from
+# Secrets Manager first, then execs the command (guppi-hr D35, D36).
+CMD ["python", "-m", "connect_bridge.otel_headers", "opentelemetry-instrument", "uvicorn", "connect_bridge.app:app", "--host", "0.0.0.0", "--port", "8080"]
