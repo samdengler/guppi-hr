@@ -1091,3 +1091,4 @@ def test_every_strands_runtime_redacts_span_content(template):
         env = runtime["Properties"].get("EnvironmentVariables", {})
         assert env.get("OTEL_SEMCONV_STABILITY_OPT_IN") == "gen_ai_unredacted_attributes="
         assert env.get("OTEL_PYTHON_DISABLED_INSTRUMENTATIONS") == "aws_mcp"
+        assert env.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "false"

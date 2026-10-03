@@ -148,6 +148,10 @@ RUNTIME_BASE_ENVIRONMENT = {
     # (a profile, an account number) on its span, with no switch to leave them out
     # (aws-feedback A9); Strands' own execute_tool spans keep the timing, redacted.
     "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS": "aws_mcp",
+    # Under AgentCore the AWS distro turns this on by default, and the Bedrock
+    # instrumentation then writes every prompt and reply as an OpenTelemetry log record
+    # (the runtime log group's otel-rt-logs stream, aws-feedback A10).
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "false",
 }
 
 # The JWT claim per-user gateway limits are keyed on (as in guppi-gpt's edge gateway).
