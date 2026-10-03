@@ -29,6 +29,8 @@ UPSTREAM_AUDIENCE = os.environ["UPSTREAM_AUDIENCE"]  # api://guppi
 CLIENTS = json.loads(os.environ["CLIENTS"])  # {client_id: {"secret_sha256": .., "scopes": [..]}}
 # Each scope maps to the audience a token for it is issued to.
 SCOPE_AUDIENCE = json.loads(os.environ["SCOPE_AUDIENCE"])
+# Spike only: lets a test ask for tokens carrying `scope` or `scp` alone (form field `shape`).
+ALLOW_SHAPE = os.environ.get("ALLOW_SHAPE") == "1"
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
 ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
 LIFETIME = 3600
@@ -161,6 +163,8 @@ def token(event) -> dict:
         client_id = client_from(event, form)
     except PermissionError:
         return respond(401, {"error": "invalid_client"})
+    if form.get("grant_type") == "client_credentials" and ALLOW_SHAPE:
+        return client_token(event, client_id, form)
     if form.get("grant_type") != TOKEN_EXCHANGE:
         return respond(400, {"error": "unsupported_grant_type"})
     own = issuer(event)
@@ -179,6 +183,7 @@ def token(event) -> dict:
     act = {"sub": client_id}
     if "act" in subject:
         act["act"] = subject["act"]
+    shape = form.get("shape", "both") if ALLOW_SHAPE else "both"
     claims = {
         "iss": own,
         "sub": str(subject.get("uid") or subject["sub"]),
@@ -191,12 +196,16 @@ def token(event) -> dict:
         "exp": min(int(subject["exp"]), now + LIFETIME),
         "jti": uuid.uuid4().hex,
     }
+    if shape == "scope":
+        del claims["scp"]
+    elif shape == "scp":
+        del claims["scope"]
     return respond(200, {
         "access_token": sign(claims),
         "issued_token_type": ACCESS_TOKEN_TYPE,
         "token_type": "Bearer",
         "expires_in": claims["exp"] - now,
-        "scope": claims["scope"],
+        "scope": " ".join(requested),
     })
 
 
@@ -220,5 +229,91 @@ def handler(event, _context):
     if method == "GET" and path == "/jwks.json":
         return respond(200, {"keys": [own_jwk()]})
     if method == "POST" and path == "/token":
-        return token(event)
+        result = token(event)
+        # Spike: what a caller sent (field names only) and what it got, never a value.
+        raw = event.get("body") or ""
+        if event.get("isBase64Encoded"):
+            raw = base64.b64decode(raw).decode()
+        form = urllib.parse.parse_qs(raw)
+        print(json.dumps({"route": "/token", "fields": sorted(form), "grant_type": form.get("grant_type"),
+                          "subject_token_type": form.get("subject_token_type"), "scope": form.get("scope"),
+                          "audience": form.get("audience"), "resource": form.get("resource"),
+                          "basic_auth": (event.get("headers") or {}).get("authorization", "").lower().startswith("basic "),
+                          "user_agent": (event.get("headers") or {}).get("user-agent"),
+                          "status": result["statusCode"],
+                          "error": json.loads(result["body"]).get("error") if result["statusCode"] != 200 else None}))
+        return result
+    if path in ("/mcp", "/echo") or path.startswith("/echo/"):
+        return echo_or_mcp(event, own, path)
     return respond(404, {"error": "not_found"})
+
+
+def bearer_claims(event, own: str) -> dict | None:
+    """Claims of this issuer's bearer token on a spike route, or None. Logs no token."""
+    header = (event.get("headers") or {}).get("authorization", "")
+    if not header.lower().startswith("bearer "):
+        return None
+    try:
+        claims = verify_subject(header[7:], own)
+    except (ValueError, KeyError, json.JSONDecodeError):
+        return None
+    return claims if claims.get("iss") == own else None
+
+
+def summary(claims: dict) -> dict:
+    return {k: claims.get(k) for k in ("aud", "scope", "scp", "client_id", "act")} | {
+        "sub_is_okta_uid": str(claims.get("sub", "")).startswith("00u"), "ttl": claims["exp"] - int(time.time())}
+
+
+def echo_or_mcp(event, own: str, path: str) -> dict:
+    """Spike targets: /echo answers with the bearer token's claims (an HTTP target), /mcp is
+    a minimal MCP server with one tool, whoami, that does the same (an MCP server target)."""
+    claims = bearer_claims(event, own)
+    method = event["requestContext"]["http"]["method"]
+    unverified = None
+    auth = (event.get("headers") or {}).get("authorization", "")
+    if auth.lower().startswith("bearer ") and auth.count(".") == 2:
+        try:
+            raw_claims = json.loads(unb64u(auth[7:].split(".")[1]))
+            unverified = {"iss_is_okta": raw_claims.get("iss") == UPSTREAM_ISSUER, "aud": raw_claims.get("aud")}
+        except (ValueError, json.JSONDecodeError):
+            unverified = "unparseable"
+    print(json.dumps({"route": path, "method": method, "authorized": bool(claims), "bearer": unverified,
+                      "headers": sorted((event.get("headers") or {}).keys()),
+                      "claims": summary(claims) if claims else None}))
+    if not claims:
+        return {"statusCode": 401, "headers": {"www-authenticate": "Bearer"}, "body": ""}
+    if path.startswith("/echo"):
+        return respond(200, {"route": path, "claims": summary(claims)})
+    if method != "POST":
+        return {"statusCode": 405, "body": ""}
+    raw = event.get("body") or ""
+    if event.get("isBase64Encoded"):
+        raw = base64.b64decode(raw).decode()
+    request = json.loads(raw or "{}")
+    rpc = request.get("method")
+    if "id" not in request:
+        return {"statusCode": 202, "body": ""}
+    if rpc == "initialize":
+        result = {"protocolVersion": request.get("params", {}).get("protocolVersion", "2025-06-18"),
+                  "capabilities": {"tools": {}}, "serverInfo": {"name": "obo-spike", "version": "0"}}
+    elif rpc == "tools/list":
+        result = {"tools": [{"name": "whoami", "description": "Returns the claims of the token this server received.",
+                             "inputSchema": {"type": "object", "properties": {}}}]}
+    elif rpc == "tools/call":
+        result = {"content": [{"type": "text", "text": json.dumps(summary(claims))}], "isError": False}
+    else:
+        return respond(200, {"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32601, "message": "method not found"}})
+    return respond(200, {"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+def client_token(event, client_id: str, form: dict) -> dict:
+    """Spike only: a client credentials token naming the client alone (no employee), to see
+    what a gateway does with it."""
+    requested = form.get("scope", "").split()
+    if not requested or any(s not in CLIENTS[client_id]["scopes"] for s in requested):
+        return respond(400, {"error": "invalid_scope"})
+    now = int(time.time())
+    claims = {"iss": issuer(event), "sub": client_id, "aud": SCOPE_AUDIENCE[requested[0]], "scope": " ".join(requested),
+              "scp": requested, "client_id": client_id, "iat": now, "exp": now + 3600, "jti": uuid.uuid4().hex}
+    return respond(200, {"access_token": sign(claims), "token_type": "Bearer", "expires_in": 3600, "scope": claims["scope"]})

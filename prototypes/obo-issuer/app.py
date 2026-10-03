@@ -30,10 +30,13 @@ function = lambda_.Function(
         "KEY_ID": key.key_id,
         "UPSTREAM_ISSUER": app.node.try_get_context("upstream_issuer"),
         "UPSTREAM_AUDIENCE": "api://guppi",
+        "ALLOW_SHAPE": "1",
         # SHA-256 of each client's secret, never the secret (run.py generates them).
         "CLIENTS": app.node.try_get_context("clients"),
         "SCOPE_AUDIENCE": json.dumps({
-            "hr.agents": "api://hr-agents",
+            "hr.agents": "api://hr-agents", "hr.agents.other": "api://hr-agents",
+            "hr.tools.profile.read": "api://hr-tools", "hr.tools.profile.write": "api://hr-tools",
+            "hr.tools.pay.read": "api://hr-tools", "hr.tools.pay.write": "api://hr-tools",
             "hr.tools.policy": "api://hr-tools", "hr.tools.profile": "api://hr-tools", "hr.tools.pay": "api://hr-tools",
         }),
     },
@@ -43,6 +46,30 @@ api = apigw.HttpApi(stack, "Api", api_name="guppi-obo-prototype",
                     default_integration=integrations.HttpLambdaIntegration("Issuer", function))
 gateway_role = iam.Role(stack, "GatewayRole", assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
                         description="Throwaway: role for the prototype's test gateway")
+# Spike: a throwaway runtime whose authorizer trusts this issuer, from an existing HR image.
+runtime_role = iam.Role(stack, "RuntimeRole", assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
+                        description="Throwaway: role for the spike's test runtime")
+runtime_role.add_to_policy(iam.PolicyStatement(actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+                                               resources=[f"arn:aws:ecr:us-east-1:{stack.account}:repository/cdk-*"]))
+runtime_role.add_to_policy(iam.PolicyStatement(actions=["ecr:GetAuthorizationToken", "logs:CreateLogGroup", "logs:CreateLogStream",
+                                                        "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:DescribeLogGroups"],
+                                               resources=["*"]))
+cdk.CfnOutput(stack, "RuntimeRoleArn", value=runtime_role.role_arn)
 cdk.CfnOutput(stack, "IssuerUrl", value=api.api_endpoint)
+# Spike: the gateway exchanges tokens itself (an OAuth target with TOKEN_EXCHANGE) and
+# invokes the spike runtime.
+gateway_role.add_to_policy(iam.PolicyStatement(
+    actions=["bedrock-agentcore:GetWorkloadAccessToken", "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+             "bedrock-agentcore:GetResourceOauth2Token", "bedrock-agentcore:InvokeAgentRuntime"],
+    resources=["*"]))
+gateway_role.add_to_policy(iam.PolicyStatement(
+    actions=["secretsmanager:GetSecretValue"],
+    resources=[f"arn:aws:secretsmanager:us-east-1:{stack.account}:secret:bedrock-agentcore-identity!*"]))
+# Spike: Policy in AgentCore on the test tools gateway.
+gateway_role.add_to_policy(iam.PolicyStatement(
+    actions=["bedrock-agentcore:GetPolicyEngine", "bedrock-agentcore:AuthorizeAction",
+             "bedrock-agentcore:PartiallyAuthorizeActions"],
+    resources=[f"arn:aws:bedrock-agentcore:us-east-1:{stack.account}:policy-engine/*",
+               f"arn:aws:bedrock-agentcore:us-east-1:{stack.account}:gateway/*"]))
 cdk.CfnOutput(stack, "GatewayRoleArn", value=gateway_role.role_arn)
 app.synth()
