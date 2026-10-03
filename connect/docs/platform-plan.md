@@ -154,10 +154,14 @@ bridge's 2.5 s quiet window, so the bridge does see it in the same run.
   ended, recent turns, errors) beside the Runtime's AgentCore metrics, the Connect
   instance's chats and BasicQueue, and the session table.
 - [ ] Span export, investigated 2 October evening. Two separate problems:
-  - The platform runtime and the HR orchestrator set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
-    to Dynatrace, and Dynatrace answers 404 to every span batch, so neither runtime's
-    application spans reach Dynatrace or X-Ray. The fix is on the Dynatrace side (the
-    environment, the token or the ingest path).
+  - Fixed the same evening. The platform runtime and the HR orchestrator export to
+    Dynatrace, and the trial tenant `wfd05358` had expired, so every span batch got 404.
+    Sam started tenant `zfr04910`; its AWS footprint was removed, a new ingest token went
+    into the 1Password item `GuppiGPT Dynatrace`, and guppi-gpt and guppi-hr were
+    redeployed. Both runtimes now export to `zfr04910`, and the orchestrator's turns
+    since show no export errors. RUM, the dashboard and the AWS connection on the new
+    tenant are not set up: its apps run in cross-origin frames the Chrome extension
+    cannot drive, so those steps are Sam's (guppi-gpt `docs/proposals/dynatrace.md`).
   - The bridge sets no exporter settings of its own, yet about a third of its OTLP batches
     (spans and logs) get 403 while the rest arrive: its FastAPI, botocore and DynamoDB
     spans do reach `aws/spans`. The HR sub-agents, on the same defaults, show no errors.
