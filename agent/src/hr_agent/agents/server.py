@@ -39,7 +39,14 @@ from a2a.types import (
 
 from hr_agent.agents.domains import DOMAINS, Domain
 from hr_agent.agents.mcp_sessions import McpSessions
-from hr_agent.agents.snapshot import RECORD_READS, Snapshots, prompt_paragraph, read_record, search_policy
+from hr_agent.agents.snapshot import (
+    RECORD_READS,
+    WARM_SEARCHES,
+    Snapshots,
+    prompt_paragraph,
+    read_record,
+    search_policy,
+)
 from hr_agent.pending import (
     PENDING_KEY,
     committed_in_messages,
@@ -64,7 +71,8 @@ You have a search over the HR policy documents. When a question concerns policy,
 first and answer once from what the search returns, saying so when the passages do not
 settle it.
 {write_rule}
-Reply in concise plain text for the employee. The page renders no Markdown, so write no
+Reply in at most two short sentences of plain text for the employee, unless you are
+listing a change for them to confirm. The page renders no Markdown, so write no
 headings, bullet markers, bold, code fences, or links; use short paragraphs and plain
 sentences. If the request is outside your area, say in one sentence what you can help with
 and do not guess.
@@ -72,8 +80,8 @@ and do not guess.
 
 WRITE_RULE = """
 Your tools act on this employee's own records. When the employee asks about one of their
-details ("what about my emergency contact?"), look it up (in the record below, when there
-is one) and say what is on file before anything else; ask for new values only if they
+details ("what about my emergency contact?"), look it up (in the record sent with the message,
+when there is one) and say what is on file before anything else; ask for new values only if they
 want to change it. A change always takes
 two turns: first call
 the matching propose tool, then tell the employee the exact change it returned and ask
@@ -94,13 +102,25 @@ id; do not ask what it is about first.
 
 
 def system_prompt(domain: Domain, pending: dict[str, str] | None = None) -> str:
+    """The domain's fixed instructions. Nothing about the employee goes here: Strands copies
+    the system prompt into the `system_prompt` span attribute, which its redaction does not
+    cover (aws-feedback A8), so the record, passages and a pending change travel with the
+    message instead (turn_context). `pending` is accepted for callers that still pass it."""
     writes = any(name.startswith("propose_") for name in domain.hr_tools)
-    prompt = PROMPT_TEMPLATE.format(
+    return PROMPT_TEMPLATE.format(
         title=domain.title,
         scope=domain.scope,
         write_rule=WRITE_RULE if writes else TICKET_RULE,
     )
-    return prompt + (pending_paragraph(pending) if writes else "")
+
+
+def turn_context(
+    domain: Domain, pending: dict[str, str] | None, record: str | None, passages: str | None
+) -> str:
+    """What the model needs about this employee for this turn, sent as a content block
+    before the employee's message, where the trace keeps it redacted."""
+    writes = any(name.startswith("propose_") for name in domain.hr_tools)
+    return ((pending_paragraph(pending) if writes else "") + prompt_paragraph(record, passages)).strip()
 
 
 @dataclass
@@ -214,7 +234,7 @@ async def run_domain(
                 SNAPSHOTS.put(key, record)
         passages = None
         if domain.name not in RECORD_READS:
-            passages = await asyncio.to_thread(search_policy, client, text)
+            passages = SNAPSHOTS.get(key) or await asyncio.to_thread(search_policy, client, text)
         allowed = domain.tool_names(settings.hr_tool_prefix)
         tools = [tool for tool in listed if tool.tool_name in allowed]
         missing = allowed - {tool.tool_name for tool in tools}
@@ -224,16 +244,19 @@ async def run_domain(
             model=BedrockModel(
                 model_id=settings.model_id,
                 region_name=settings.region,
-                max_tokens=1024,
+                # Short answers come back sooner (L21); a proposal still fits.
+                max_tokens=400,
                 temperature=0.3,
             ),
-            system_prompt=system_prompt(domain, pending) + prompt_paragraph(record, passages),
+            system_prompt=system_prompt(domain),
             tools=tools,
             messages=[dict(message) for message in history],
             callback_handler=None,
         )
         before = len(agent.messages)
-        result = await agent.invoke_async(text)
+        context = turn_context(domain, pending, record, passages)
+        message = [{"text": context}, {"text": text}] if context else text
+        result = await agent.invoke_async(message)
         added = agent.messages[before:]
         tool_calls = sum(
             1 for message in added for block in message.get("content", []) if "toolUse" in block
@@ -255,10 +278,17 @@ async def warm_domain(token: str, thread_id: str, domain: str = "", settings: Se
     of it ready. No model call."""
     settings = settings or Settings()
     async with SESSIONS.lease((token, thread_id), token_expires_at=token_expires_at(token)) as (client, _tools):
-        if domain in RECORD_READS and SNAPSHOTS.get((token, thread_id, domain)) is None:
-            record = await asyncio.to_thread(read_record, client, domain, settings.hr_tool_prefix)
-            if record:
-                SNAPSHOTS.put((token, thread_id, domain), record)
+        key = (token, thread_id, domain)
+        if SNAPSHOTS.get(key) is not None:
+            return
+        if domain in RECORD_READS:
+            found = await asyncio.to_thread(read_record, client, domain, settings.hr_tool_prefix)
+        elif domain in WARM_SEARCHES:
+            found = await asyncio.to_thread(search_policy, client, WARM_SEARCHES[domain])
+        else:
+            found = None
+        if found:
+            SNAPSHOTS.put(key, found)
 
 
 def mark_span(record: dict[str, Any], domain: str, thread_id: str) -> None:

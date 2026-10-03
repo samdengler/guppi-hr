@@ -1090,3 +1090,4 @@ def test_every_strands_runtime_redacts_span_content(template):
     for runtime in template.find_resources("AWS::BedrockAgentCore::Runtime").values():
         env = runtime["Properties"].get("EnvironmentVariables", {})
         assert env.get("OTEL_SEMCONV_STABILITY_OPT_IN") == "gen_ai_unredacted_attributes="
+        assert env.get("OTEL_PYTHON_DISABLED_INSTRUMENTATIONS") == "aws_mcp"

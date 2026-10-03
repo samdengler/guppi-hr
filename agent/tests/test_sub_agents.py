@@ -148,7 +148,16 @@ def test_writer_prompts_show_what_is_on_file_first():
 
 def test_travel_is_read_only_in_its_prompt():
     assert "commit_change" not in server.system_prompt(TRAVEL, PENDING)
-    assert PROPOSAL_ID in server.system_prompt(PROFILE, PENDING)
+    assert "commit_change" not in server.turn_context(TRAVEL, PENDING, None, None)
+    assert PROPOSAL_ID in server.turn_context(PROFILE, PENDING, None, None)
+
+
+def test_nothing_about_the_employee_reaches_the_system_prompt():
+    # Strands copies the system prompt into an unredacted span attribute (A8).
+    prompt = server.system_prompt(PROFILE, PENDING)
+    assert PROPOSAL_ID not in prompt and PENDING["to"] not in prompt
+    context = server.turn_context(PROFILE, PENDING, "get_profile: {...}", None)
+    assert PENDING["to"] in context and "<record>" in context
 
 
 def test_history_is_trimmed_to_alternating_turns_ending_on_the_assistant():
@@ -314,3 +323,13 @@ def test_a_snapshot_expires_and_can_be_dropped():
     snapshots.put(("t", "c", "profile"), "record")
     snapshots.drop(("t", "c", "profile"))
     assert snapshots.get(("t", "c", "profile")) is None
+
+
+
+async def test_the_warm_start_caches_a_broad_travel_search(monkeypatch):
+    client = ToolClient({"docs___Retrieve": "Buddy passes: 8 per calendar year."})
+    monkeypatch.setattr(server, "SESSIONS", server.McpSessions(lambda key: (client, [])))
+    monkeypatch.setattr(server, "SNAPSHOTS", server.Snapshots())
+    await server.warm_domain("tok", "contact-1", "travel")
+    assert [name for name, _ in client.calls] == ["docs___Retrieve"]
+    assert "8 per calendar year" in server.SNAPSHOTS.get(("tok", "contact-1", "travel"))

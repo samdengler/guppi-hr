@@ -3,7 +3,8 @@
 A sub-agent answering "what is my home address?" used to take two model calls with a tool
 call between them: the model asked for hr___get_profile, the call went through the tools
 gateway (about 1.1 s, A6), and a second model call wrote the answer. Reading the record
-first and putting it in the system prompt lets the model answer in one call (docs/
+first and sending it with the message (never in the system prompt, which traces keep
+unredacted) lets the model answer in one call (docs/
 latency-log.md, L15). The reads go through the same MCP session and gateway as any tool
 call, so D40 holds.
 
@@ -11,9 +12,10 @@ A snapshot is kept per (token, thread, domain) for five minutes and dropped when
 commits a change, so a later question sees the new value. The warm start fills it, so a
 new conversation's first read pays no tool call at all.
 
-Travel has no record; its snapshot is the policy search for the question itself, run before
-the model so its first call can answer (L16). It is never cached, since it depends on the
-question.
+Travel has no record; its snapshot is policy passages. The warm start runs one broad
+search over the pass travel policy and caches it like a record, so a travel question needs
+no search before the model (L22); without a cached search, the question itself is searched
+first (L16). Either way the model may search again when the passages do not settle it.
 """
 
 from __future__ import annotations
@@ -33,6 +35,13 @@ RECORD_READS: dict[str, tuple[tuple[str, dict[str, Any]], ...]] = {
     "pay": (("get_direct_deposit", {}), ("list_pay_statements", {"count": 3})),
 }
 RETRIEVE_TOOL = "docs___Retrieve"
+# The broad search a warm start caches for a domain whose answers come from policy.
+WARM_SEARCHES: dict[str, str] = {
+    "travel": (
+        "pass travel privileges: who is eligible, enrolled pass riders, buddy passes, "
+        "service charges, boarding priority, embargo dates, conduct"
+    ),
+}
 
 Key = tuple[str, str, str]
 

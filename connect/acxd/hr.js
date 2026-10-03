@@ -32,7 +32,9 @@
 const { FlowBuilder, statusIs } = require('./lib/nodes');
 const { MOCK_URL, AGENTS_GATEWAY_URL, TOOLS_GATEWAY_URL, env, hdr } = require('./lib/common');
 
-const SONNET = 'anthropic.claude-sonnet-5';
+// The policy journey runs on Haiku 4.5 with short answers: for the POC, speed comes before
+// answer length (Sam, 3 Oct; docs/latency-log.md, L21).
+const HAIKU = 'anthropic.claude-haiku-4-5';
 const CONV = '{System.conversationId:NLX.System}';
 const UTTERANCE = '{System.utterance:NLX.System}';
 // End-of-turn and closed signals ride on the reply itself, as one invisible trailing
@@ -575,8 +577,9 @@ function policyFlow() {
       ],
       metadata: {
         generativeJourney: {
-          modelType: SONNET,
+          modelType: HAIKU,
           maxSteps: 8,
+          maxTokens: 300,
           temperature: 0.2,
           prompt: [
             "You answer an airline employee's HR policy questions for the HR assistant.",
@@ -586,7 +589,7 @@ function policyFlow() {
             'If the employee wants a human or you cannot answer, offer to open a ticket with hr___open_ticket, and open it only if they agree.',
             'You never change records. If the employee wants to change their home address or emergency contact, use the switchToProfile exit; direct deposit or pay statements, switchToPay; pass travel or buddy passes, switchToTravel; a person, human.',
             'When you take an exit, write nothing before it: the flow you hand to answers the employee.',
-            'Keep answers to three sentences.',
+            'Answer in at most two short sentences.',
           ].join(' '),
           // One journey tool per enabled MCP tool. As a single tool the MCP data request
           // reached the model as one "HrTools" tool with no schema, and every call failed

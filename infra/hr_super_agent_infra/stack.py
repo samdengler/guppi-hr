@@ -144,6 +144,10 @@ RUNTIME_BASE_ENVIRONMENT = {
     # unless this token is set; an empty list redacts all of them, so account numbers and
     # addresses never reach the trace backend (critique finding 5). Token counts stay.
     "OTEL_SEMCONV_STABILITY_OPT_IN": "gen_ai_unredacted_attributes=",
+    # The AWS distro's own MCP instrumentation puts every tool call's arguments and result
+    # (a profile, an account number) on its span, with no switch to leave them out
+    # (aws-feedback A9); Strands' own execute_tool spans keep the timing, redacted.
+    "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS": "aws_mcp",
 }
 
 # The JWT claim per-user gateway limits are keyed on (as in guppi-gpt's edge gateway).

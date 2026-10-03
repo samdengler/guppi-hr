@@ -40,6 +40,8 @@ URL = os.environ.get("HR_AGENT_URL", "https://chat.dengler.io/api/hr/invocations
 QUESTIONS = [
     ("What is my home address on file?", "And what is my emergency contact?"),
     ("How many buddy passes do I get?", "Can my parents use them?"),
+    # PolicyFlow's generative journey (added 3 Oct with L21).
+    ("How much PTO do I earn per year?", "Does unused PTO carry over?"),
 ]
 
 
