@@ -631,3 +631,13 @@ def test_chat_item_reads_only_chat_frames():
     assert turn_module.chat_item(json.dumps({"topic": "aws/chat", "content": json.dumps(item)})) == item
     assert turn_module.chat_item(json.dumps({"topic": "aws/heartbeat"})) is None
     assert turn_module.chat_item("not json") is None
+
+
+def test_a_new_contact_is_announced_before_its_connection_and_greeting():
+    participant = LateParticipant({})
+    clients = FakeClients(participant)
+    turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep)
+    seen = []
+    turn.on_contact = lambda contact_id: seen.append((contact_id, participant.connections))
+    turn.start_contact("k", time.time() + 3600)
+    assert seen == [("contact-1", 0)]

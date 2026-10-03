@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import hashlib
 import json
 import logging
@@ -213,6 +214,8 @@ class ConnectTurn:
         self.clock = clock
         self.sleep = sleep
         self.stats: dict[str, Any] = {}
+        # Set by a warm start: called with the contact id as soon as a new contact exists.
+        self.on_contact: Callable[[str], None] | None = None
 
     # ---- the run ---------------------------------------------------------------------
 
@@ -265,15 +268,25 @@ class ConnectTurn:
         yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread, run_id=run)
 
     async def warm(self, run_input: RunAgentInput) -> None:
-        """A warm start: the thread's contact, started and past its greeting, in the store."""
-        session = await asyncio.to_thread(self.session_for, run_input.thread_id)
-        self.stats.update({"contact": session.contact_id})
-        if self.stats.get("started") and self.settings.agents_gateway_url:
-            results = await asyncio.gather(
-                *(asyncio.to_thread(self.warm_sub_agent, session.contact_id, d) for d in WARM_DOMAINS),
-                return_exceptions=True,
-            )
-            self.stats["sub_agents_warmed"] = sum(1 for result in results if result is True)
+        """A warm start: the thread's contact, started and past its greeting, in the store,
+        and each sub-agent warmed while the greeting is awaited."""
+        warming: list[concurrent.futures.Future] = []
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(WARM_DOMAINS))
+
+        def warm_sub_agents(contact_id: str) -> None:
+            warming.extend(pool.submit(self.warm_sub_agent, contact_id, d) for d in WARM_DOMAINS)
+
+        if self.settings.agents_gateway_url:
+            self.on_contact = warm_sub_agents
+        try:
+            session = await asyncio.to_thread(self.session_for, run_input.thread_id)
+            self.stats.update({"contact": session.contact_id})
+            if warming:
+                done = await asyncio.gather(*(asyncio.wrap_future(f) for f in warming), return_exceptions=True)
+                self.stats["sub_agents_warmed"] = sum(1 for result in done if result is True)
+        finally:
+            self.on_contact = None
+            pool.shutdown(wait=False)
 
     def warm_sub_agent(self, contact_id: str, domain: str) -> bool:
         """One sub-agent's warm message, as the canvas would address it; False on failure."""
@@ -356,6 +369,9 @@ class ConnectTurn:
             Attributes={"hrToken": self.token, "employeeId": str(claims(self.token).get("sub", ""))},
             SupportedMessagingContentTypes=["text/plain"],
         )
+        if self.on_contact is not None:
+            # The sub-agents need only the contact id, so they warm during the greeting.
+            self.on_contact(started["ContactId"])
         conn = self.clients.participant.create_participant_connection(
             Type=["WEBSOCKET", "CONNECTION_CREDENTIALS"], ParticipantToken=started["ParticipantToken"]
         )
