@@ -27,9 +27,9 @@ tool call. Every hop below is AWS.
   (phase 0, `connect/docs/platform-plan.md`), so a per-turn value cannot get in at all.
   The bridge's trace and the Profile agent's trace for the same turn are unrelated in
   Dynatrace.
-- Evidence: `connect/docs/platform-plan.md` (phase 0 results); a turn on 3 Oct, contact
-  `f15499c1-…`, shows `guppi_connect_bridge` and `hr_super_agent_profile` as separate
-  traces.
+- Evidence: `connect/docs/platform-plan.md` (phase 0 results). Confirmed in Dynatrace on
+  3 Oct for contact `f15499c1-…` (03:40 UTC): the bridge's trace `6ac0791a48b553ed…` and
+  the Profile agent's trace `6ac0792b69f685ec…` for the same message share nothing.
 - Ask: accept `traceparent` on `SendMessage` (or message metadata) and expose it to data
   requests, for example as `{System.traceparent}`; or let the designer emit OTLP spans for
   its nodes with the incoming trace as parent.
@@ -118,12 +118,34 @@ tool call. Every hop below is AWS.
 
 ### TC8. Trace context through AgentCore Gateway to a runtime
 
-- Date: 3 Oct 2026. Service: AgentCore Gateway. Status: **to verify**.
+- Date: 3 Oct 2026. Service: AgentCore Gateway. Status: **confirmed** for the tools
+  gateway; the edge and agents gateways on `/p/hr/` still to check.
 - Expected: with `traceparent` in the allowlists (TC3), one trace covers the edge gateway,
   the orchestrator, the agents gateway, a sub-agent, the tools gateway and the tools
   server.
-- Next: open a `/p/hr/` trace in Dynatrace and check the parent links across both
-  gateways, now that every runtime reports there (D36).
+- Happened: the Profile agent's `mcp tools/call` and the tools server's span carry the
+  same trace id (`6ac0792b69f685ec…`, 3 Oct 03:40 UTC), so the tools gateway passes trace
+  context. When a request arrives with none (the canvas's call, TC1), the agents gateway
+  starts a trace itself and the runtime joins it.
+
+### TC9. AgentCore Gateway's own spans never reach the customer's trace backend
+
+- Date: 3 Oct 2026. Service: AgentCore Gateway. Status: **open**.
+- Expected: the gateway's span for a hop sits in the same trace as the runtimes on
+  either side, in whatever backend the runtimes export to.
+- Happened: in Dynatrace the Profile agent's root span and the tools server's span both
+  name parents (`2dec31f446c40bed`, `cbde195c21bd5990`) that are not there: the agents and
+  tools gateways' spans go only to AgentCore's own destinations. The trace has a hole at
+  every gateway, and the hole is where time goes missing: the Profile agent's
+  `hr___get_profile` call took 1.21 s, the tools server 0.22 s of it (DynamoDB 33 ms), and
+  about 1 s sat in the gateway hop with nothing to say whether it was the gateway or a
+  cold start of the freshly deployed tools runtime.
+- Evidence: Dynatrace `fetch spans` for 3 Oct 03:40:00 to 03:41:00 UTC, services
+  `hr_super_agent_profile.DEFAULT` and `hr_super_agent_tools.DEFAULT`.
+- Ask: export gateway spans over OTLP to the destination the customer configures (or the
+  runtimes'), with the incoming trace as parent; until then, gateway timing (queueing,
+  authorization, target invocation, cold start) as span attributes or vended logs with
+  the trace id.
 
 ## Amazon Connect
 
@@ -179,3 +201,4 @@ Kept here so every finding is in one place; these are not for the AWS teams.
 | X2 | 2 Oct | Dynatrace | Each app in the new platform UI runs in a cross-origin frame, and API calls from the outer page carry the shell's OAuth scopes; the token API answered 403 "missing required scope" and the classic config API "404 Api Gateway error". Browser automation cannot create tokens or RUM applications there; the old tenant's runbook relied on it. | worked around (by hand) |
 | X3 | 3 Oct | Dynatrace | The local MCP server (`@dynatrace-oss/dynatrace-mcp-server`) is deprecated; the remote MCP server takes a platform token only, with no browser sign-in. | confirmed |
 | X4 | 2 Oct | AWS Distro for OpenTelemetry | 0.21.0 and 0.19.0 behave the same for the bridge's 403s (TC6); version is not the cause. | confirmed |
+| X5 | 3 Oct | A2A Python SDK | Its instrumentation records each 500 ms `EventQueue.dequeue_event` poll as a server span, so a 3.8 s sub-agent call shows eight "requests" in Dynatrace's request list that are only the queue waiting. | open |
