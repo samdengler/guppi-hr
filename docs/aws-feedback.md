@@ -173,6 +173,7 @@ tool call. Every hop below is AWS.
 | A2 | 3 Sep | `CreateGatewayRateLimit` refuses two rate limits on one gateway with the same dimension keys, so request and concurrency limits share one entry (guppi-gpt stack). | worked around |
 | A3 | 4 Sep | A CloudWatch Logs destination for a gateway's `TRACES` log type is rejected by CloudFormation; gateways deliver `APPLICATION_LOGS` only (guppi-gpt stack tests). | open |
 | A4 | 2 Oct | A runtime's execution role reading a private git dependency at image build needs a BuildKit secret; nothing AgentCore-specific, noted because the starter kit's Dockerfile has no hook for it (guppi-hr D29). | worked around |
+| A5 | 3 Oct | Behind a gateway, an MCP server runtime starts a new runtime session, so a new microVM, for every new MCP session. A client that opens a session per request pays a cold start on every tool call: the tools runtime's log streams were created at 04:18:26.06 and 04:18:43.33 UTC, one per Profile agent request, and each `tools/call` took about 1.2 s against 0.2 s inside the server. Nothing in the gateway's responses or spans says a cold start happened (see TC9). | open (worked around by keeping the session, `connect/docs/latency-plan.md`) |
 
 ## Amazon Cognito
 

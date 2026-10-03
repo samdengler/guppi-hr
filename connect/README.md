@@ -33,6 +33,7 @@ without an employee token.
 | [`docs/acxd-super-agent.html`](docs/acxd-super-agent.html) | The design this folder built: the designer canvas as the super-agent over the existing sub-agents and tools, with the spike's results |
 | [`docs/spike-report.md`](docs/spike-report.md) | What the spike proved over Connect chat, with real and mock sub-agents, and what is still open |
 | [`docs/platform-plan.md`](docs/platform-plan.md) | How the project joined chat.dengler.io: the token gate, the bridge design, the phases |
+| [`docs/latency-plan.md`](docs/latency-plan.md) | Where a `/p/hr/` turn's time goes, measured hop by hop, and the changes that cut it, in order |
 | [`docs/platform-report.md`](docs/platform-report.md) | The project on `/p/hr-connect/` (now `/p/hr/`): the scenarios on the platform token, the routing eval, the decisions and what is open |
 
 The HTML documents are self-contained copies of two Claude Docs; open them in a browser.
