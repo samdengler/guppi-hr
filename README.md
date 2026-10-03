@@ -55,6 +55,7 @@ accepts the platform user pool's token. The stack reads the platform's identifie
 | [`docs/design.md`](docs/design.md) | Components, one turn end to end through the platform, routing policy, confirmation, identity per hop, tools, observability, limits |
 | [`docs/demo.md`](docs/demo.md) | The four scenarios, what to type and what to expect, and how to check the logs and audit entries |
 | [`docs/decision-log.md`](docs/decision-log.md) | Every decision, D1 on, with status |
+| [`docs/aws-feedback.md`](docs/aws-feedback.md) | What the POC learned about AWS services (trace context first), with evidence and asks, for the AWS teams |
 | [`docs/plan.md`](docs/plan.md) | The phases (all done), the four scenarios, the first-cut routing policy |
 | [`docs/phase-8.md`](docs/phase-8.md), [`docs/phase-8-report.md`](docs/phase-8-report.md) | The move onto the platform and its report |
 | [`docs/handoff.md`](docs/handoff.md) | The brief this repository started from, and its sources |
