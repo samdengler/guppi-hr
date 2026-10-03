@@ -1,7 +1,7 @@
 # AWS feedback from the HR super-agent POC
 
-What building chat.dengler.io, the HR super-agent (`/p/hr/`) and the Amazon Connect
-comparison (`/p/hr-connect/`) taught about AWS services, kept for the AWS teams. Each entry
+What building chat.dengler.io, the HR super-agent on Amazon Connect (`/p/hr/`) and its
+Strands version (`/p/hr-diy/`, named `/p/hr-connect/` and `/p/hr/` before D37) taught about AWS services, kept for the AWS teams. Each entry
 says what was expected, what happened, where the evidence is, and what would help. Entries
 are added as things are found; an entry is not removed when it is worked around, only
 marked.
@@ -173,7 +173,8 @@ tool call. Every hop below is AWS.
 | A2 | 3 Sep | `CreateGatewayRateLimit` refuses two rate limits on one gateway with the same dimension keys, so request and concurrency limits share one entry (guppi-gpt stack). | worked around |
 | A3 | 4 Sep | A CloudWatch Logs destination for a gateway's `TRACES` log type is rejected by CloudFormation; gateways deliver `APPLICATION_LOGS` only (guppi-gpt stack tests). | open |
 | A4 | 2 Oct | A runtime's execution role reading a private git dependency at image build needs a BuildKit secret; nothing AgentCore-specific, noted because the starter kit's Dockerfile has no hook for it (guppi-hr D29). | worked around |
-| A5 | 3 Oct | Behind a gateway, an MCP server runtime starts a new runtime session, so a new microVM, for every new MCP session. A client that opens a session per request pays a cold start on every tool call: the tools runtime's log streams were created at 04:18:26.06 and 04:18:43.33 UTC, one per Profile agent request, and each `tools/call` took about 1.2 s against 0.2 s inside the server. Nothing in the gateway's responses or spans says a cold start happened (see TC9). | open (worked around by keeping the session, `connect/docs/latency-plan.md`) |
+| A5 | 3 Oct | Behind a gateway, an MCP server runtime starts a new runtime session, so a new microVM, for every new MCP session. A client that opens a session per request pays a cold start on every tool call: the tools runtime's log streams were created at 04:18:26.06 and 04:18:43.33 UTC, one per Profile agent request, and each `tools/call` took about 1.2 s against 0.2 s inside the server. Nothing in the gateway's responses or spans says a cold start happened (see TC9). Revised the same day: with the client's session kept (guppi-hr D38), the two calls of one kept client session reached two different microVMs, both already running (log streams created at 04:38:49 and 04:38:51), and each still spent about 0.8 s outside the server (A6). How the gateway maps a client session to runtime sessions is not visible, and the cold start explains only part of the 1 s. | to verify |
+| A6 | 3 Oct | Behind a gateway, every `tools/call` to an MCP server runtime is its own MCP session on the target: the server logs an `initialize`, a `notifications/initialized` and the `tools/call` as three requests on a new connection, after one "Invalid HTTP request received" warning, even when the client reuses one gateway session. On a warm microVM the follow-up's call (trace `6ac087344e428cc85ef240f016d342ec`) took 965 ms at the client against 157 ms in the server: 0.54 s from the client's send to the target answering `initialize`, then about 0.12 s for each of the two handshake steps. Every running tools microVM also gets an MCP ping every 2 s on a second connection. The ask: reuse the target session for a client session, or skip the handshake for a stateless target, and say in a span where the time goes (TC9). | open |
 
 ## Amazon Cognito
 

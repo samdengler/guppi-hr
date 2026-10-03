@@ -1,7 +1,8 @@
 # Latency plan for /p/hr/
 
-Status: changes 1 to 3 built on 3 October 2026 (results below). Two of them changed on the
-way, after a test on the development flow:
+Status: changes 1 to 3 built and measured on 3 October 2026 (results below): a
+follow-up's first reply went from 5.8 s to 4.1 s and a new chat's from 12.1 s to 8.8 s.
+Two of them changed on the way, after a test on the development flow:
 
 - Change 2 needs no canvas marker. Each canvas turn arrives as one message, and a
   generative journey (PolicyFlow) cannot be followed by a marker node anyway, so the bridge
@@ -44,10 +45,33 @@ runtime session per thread), `StartChatContact`, the participant connection, a f
 1.5 s WebSocket wait, and waiting for the canvas's greeting plus 1.5 s of quiet so the
 greeting is not shown.
 
-The 1 s inside the tool call is a cold start: the tools runtime opened a new runtime
-session, so a new microVM, at each tool call (log streams created at 04:18:26.06 and
-04:18:43.33), because the sub-agent opens a new MCP session for every request and
-AgentCore gives each MCP session its own microVM (`docs/aws-feedback.md`, A5).
+The 1 s inside the tool call looked like a cold start: the tools runtime opened a new
+runtime session, so a new microVM, at each tool call (log streams created at 04:18:26.06
+and 04:18:43.33), and the sub-agent opened a new MCP session for every request
+(`docs/aws-feedback.md`, A5). Change 1 showed that this is only part of it; see the
+results.
+
+## Results of changes 1 to 3
+
+Measured at 04:40 UTC on 3 October with the same three turns, after deploying both stacks.
+
+| Turn | First reply, before | First reply, after | Turn finished, before | Turn finished, after |
+| --- | --- | --- | --- | --- |
+| New chat, "What is my home address on file?" | 12.1 s | 8.8 s | 15.0 s | 10.2 s |
+| Same chat, "And what is my emergency contact?" | 5.8 s | 4.1 s | 8.6 s | 5.3 s |
+| New chat, "How many buddy passes do I get?" | 12.0 s | 9.2 s | 15.0 s | 10.5 s |
+
+The follow-up's Profile agent took 2.44 s against 3.15 s: no session setup and no
+`tools/list` (the session was reused), Haiku 0.76 s, the tool call 0.97 s, Haiku 0.62 s.
+
+The tool call still spends 0.8 s outside the tools server (965 ms at the client, 157 ms in
+the server), on a microVM that was already running. The tools server's log shows why: the
+gateway opens a new MCP session on the target for every `tools/call`, with an
+`initialize` and a `notifications/initialized` before the call, on a new connection. The
+target answered `initialize` 0.54 s after the client sent the call, and each handshake
+step took about 0.12 s (`docs/aws-feedback.md`, A6). Keeping the client's session removed
+what the client controls; the rest is inside the gateway, and change 9 below is the only
+way around it in this design.
 
 ## Targets
 
@@ -66,10 +90,12 @@ of its last reply.
 | 6 | **Prompt caching for the sub-agents.** Cache the system prompt and tool definitions (about 1,700 tokens) on Bedrock for Haiku 4.5 | guppi-hr `agent/` | about 0.1 to 0.3 s per model call, two calls per turn | small |
 | 7 | **Measure the canvas's routing step.** Split the 1.9 s between the canvas's routing model and the agents gateway with `QueryLogs` node timings; then pick the routing model per node (Nova Micro or Haiku) on the eval's accuracy | `acxd/` | to be measured | small to measure |
 | 8 | **Optional, an architecture choice: reads without a sub-agent.** For read-only questions (an address, pay statements) the canvas calls the HR tool directly over HTTP, as PolicySearch already does, and phrases the answer itself; sub-agents keep changes and confirmation | `acxd/hr.js` | about 2 s on a read (two model calls and a hop) | medium; moves logic into the canvas |
+| 9 | **Optional, an architecture choice: sub-agents call the tools runtime directly.** Each sub-agent keeps an MCP session to the tools runtime's own endpoint instead of the tools gateway, for the `hr` tools; the gateway stays for `docs___Retrieve` | guppi-hr `agent/` and the HR stack | about 0.6 to 0.8 s per tool call (A6), to be confirmed with one direct call | medium; gives up the gateway's single tool list and its policy for those tools |
 
-Changes 1 to 3 are code in this repository with no new services; together they bring a
-follow-up to about 4 s and a new chat to about 7 s. Change 4 brings a new chat close to
-a follow-up. Change 8 is the only one that changes the design and gets its own decision.
+Changes 1 to 3 are code in this repository with no new services; the forecast was a
+follow-up at about 4 s and a new chat at about 7 s, and the measured result is 4.1 s and
+8.8 s (the new chat kept its greeting wait, see the status). Change 4 brings a new chat close to
+a follow-up. Changes 8 and 9 change the design and each gets its own decision.
 
 ## How each change is checked
 
