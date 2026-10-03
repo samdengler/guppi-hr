@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "AG-UI to Amazon Connect chat bridge, an agent project on chat.dengler.io"
 requires-python = ">=3.12"
 dependencies = [
-    "guppi-agent @ git+https://github.com/samdengler/guppi-gpt@kit-v0.2.0#subdirectory=agent",
+    "guppi-agent @ git+https://github.com/samdengler/guppi-gpt@kit-v0.3.0#subdirectory=agent",
     "boto3>=1.40",
     "websocket-client>=1.8",
 ]

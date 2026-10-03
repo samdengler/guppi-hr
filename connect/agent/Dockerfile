@@ -1,5 +1,5 @@
 # AgentCore Runtime expects an arm64 image listening on 0.0.0.0:8080. The build context is
-# this directory. The platform kit is a git dependency (kit-v0.2.0), so git is installed
+# this directory. The platform kit is a git dependency (kit-v0.3.0), so git is installed
 # for the sync and the dependencies land in their own layer before the source.
 FROM --platform=linux/arm64 python:3.12-slim
 

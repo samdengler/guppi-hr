@@ -465,7 +465,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.40" },
-    { name = "guppi-agent", git = "https://github.com/samdengler/guppi-gpt?subdirectory=agent&rev=kit-v0.2.0" },
+    { name = "guppi-agent", git = "https://github.com/samdengler/guppi-gpt?subdirectory=agent&rev=kit-v0.3.0" },
     { name = "websocket-client", specifier = ">=1.8" },
 ]
 
@@ -631,7 +631,7 @@ wheels = [
 [[package]]
 name = "guppi-agent"
 version = "0.1.0"
-source = { git = "https://github.com/samdengler/guppi-gpt?subdirectory=agent&rev=kit-v0.2.0#763fe4203425745f6ad58b336f172c11b6dcc8bc" }
+source = { git = "https://github.com/samdengler/guppi-gpt?subdirectory=agent&rev=kit-v0.3.0#6efd0a0e39d72728a5b6437220a601ad6bdb3249" }
 dependencies = [
     { name = "ag-ui-protocol" },
     { name = "ag-ui-strands" },
