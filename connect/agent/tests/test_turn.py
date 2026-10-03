@@ -300,3 +300,163 @@ def test_the_websocket_closes_once_connect_acknowledges_with_no_fixed_wait(monke
     monkeypatch.setattr(turn_module.time, "sleep", no_fixed_wait)
     turn_module.ConnectClients.touch_websocket("wss://example")
     assert calls == [("send", "aws/subscribe"), ("recv",), ("close",)]
+
+
+# ---- warm start and start claims (D39) ----------------------------------------------
+
+
+def warm_input(thread: str = "t1") -> RunAgentInput:
+    return RunAgentInput(
+        thread_id=thread, run_id="w1", messages=[], tools=[], context=[], state={},
+        forwarded_props={"warm": True},
+    )
+
+
+async def test_a_warm_start_opens_the_contact_and_the_first_message_only_sends():
+    participant = FakeParticipant({"hello": [bot("Hi there.")]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    warm = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    await warm.warm(warm_input())
+    assert len(clients.connect.started) == 1 and warm.usage()["connect_started"] is True
+
+    turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "hello")
+    assert len(clients.connect.started) == 1
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Hi there."]
+    assert "connect_started" not in turn.usage()
+
+
+async def test_a_run_waits_for_a_contact_another_run_is_starting(monkeypatch):
+    participant = FakeParticipant({"hello": [bot("Hi there.")]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    # A warm start on another microVM holds the claim; it finishes during the second poll.
+    starter = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    key = session_key(token, "t1")
+    assert store.claim(key, time.time() + 20, time.time())
+    polls = []
+
+    def finish_start(_seconds):
+        polls.append(_seconds)
+        if len(polls) == 2:
+            store.put(starter.start_contact(key, time.time() + 3600))
+
+    monkeypatch.setattr(turn_module.time, "sleep", finish_start)
+    turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "hello")
+    assert len(clients.connect.started) == 1
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Hi there."]
+    assert turn.usage()["connect_waited"] is True
+
+
+async def test_a_stale_claim_is_taken_over():
+    participant = FakeParticipant({"hello": [bot("Hi there.")]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    store.claim(session_key(token, "t1"), time.time() - 1, time.time() - 21)
+    await collect(ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep), "hello")
+    assert len(clients.connect.started) == 1
+
+
+async def test_a_failed_start_releases_its_claim():
+    class Refusing(FakeConnect):
+        def start_chat_contact(self, **kwargs):
+            raise RuntimeError("quota")
+
+    clients = FakeClients(FakeParticipant({}))
+    clients.connect = Refusing()
+    store = MemorySessionStore()
+    token = jwt()
+    with pytest.raises(RuntimeError):
+        await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
+    assert store.get(session_key(token, "t1")) is None
+
+
+def client_error(code: str):
+    from botocore.exceptions import ClientError
+
+    return ClientError({"Error": {"Code": code, "Message": code}}, "SendMessage")
+
+
+class EndedOnce(FakeParticipant):
+    """The first contact's connection refuses messages, as an ended contact would."""
+
+    def __init__(self, script, code: str = "AccessDeniedException") -> None:
+        super().__init__(script)
+        self.code = code
+        self.connections = 0
+        self.refused = 0
+
+    def create_participant_connection(self, **kwargs):
+        self.connections += 1
+        conn = super().create_participant_connection(**kwargs)
+        conn["ConnectionCredentials"]["ConnectionToken"] = f"ct-{self.connections}"
+        return conn
+
+    def send_message(self, Content, ConnectionToken, **kwargs):
+        if ConnectionToken == "ct-1":
+            self.refused += 1
+            raise client_error(self.code)
+        super().send_message(Content)
+
+
+async def test_a_contact_that_refuses_the_message_is_replaced_once():
+    participant = EndedOnce({"hello": [bot("Hi there.")]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
+    turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "hello")
+    assert participant.refused == 1 and len(clients.connect.started) == 2
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Hi there."]
+    assert turn.usage()["connect_replaced"] is True
+
+
+async def test_throttling_is_not_taken_for_an_ended_contact():
+    participant = EndedOnce({"hello": [bot("Hi there.")]}, code="ThrottlingException")
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
+    from botocore.exceptions import ClientError
+
+    with pytest.raises(ClientError):
+        await collect(ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep), "hello")
+    assert len(clients.connect.started) == 1
+
+
+def test_the_dynamo_store_claims_only_when_no_live_claim_is_held():
+    from connect_bridge.store import DynamoSessionStore, Pending
+
+    class Table:
+        def __init__(self) -> None:
+            self.items: dict = {}
+
+        def get_item(self, Key, **kwargs):
+            item = self.items.get(Key["pk"])
+            return {"Item": item} if item else {}
+
+        def put_item(self, Item, ConditionExpression=None, ExpressionAttributeValues=None):
+            current = self.items.get(Item["pk"], {})
+            if ConditionExpression and current.get("startingUntil", -1) >= ExpressionAttributeValues[":now"]:
+                raise client_error("ConditionalCheckFailedException")
+            self.items[Item["pk"]] = Item
+
+        def delete_item(self, Key, ConditionExpression=None):
+            if "startingUntil" not in self.items.get(Key["pk"], {}):
+                raise client_error("ConditionalCheckFailedException")
+            del self.items[Key["pk"]]
+
+    store = DynamoSessionStore(Table())
+    assert store.claim("k", until=1020, now=1000)
+    assert isinstance(store.get("k"), Pending)
+    assert not store.claim("k", until=1030, now=1010)
+    assert store.claim("k", until=1050, now=1030)
+    store.release("k")
+    assert store.get("k") is None
+    store.release("k")  # nothing to release is fine

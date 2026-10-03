@@ -137,6 +137,8 @@ touches the HR stack, and reads the HR stack's gateway URLs from the root
   expected or not, gets an entry in `docs/aws-feedback.md` the day it is found: what was
   expected, what happened, the evidence, the ask, and a status. Update the status when it
   changes; never delete an entry.
+- Every technique tried to cut latency gets an entry in `docs/latency-log.md` with its
+  measured effect, including one that was dropped or made no difference.
 - Every choice not already in `docs/decision-log.md` gets a new entry with status
   Proposed, listed in the next message to Sam.
 - Every named AWS resource differs from its `GuppiGpt` counterpart, since both stacks

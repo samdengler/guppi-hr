@@ -9,6 +9,11 @@ canvas has been quiet for a moment. After the first reply the token attribute is
 so the employee's token does not stay on the contact record (phase 0); a token close to
 expiry gets a new contact, since a running designer session never sees a changed one.
 
+A warm start (the page's run with no messages when a thread starts, kit-v0.3.0) does the
+contact's start ahead of the first message, so that message only sends and polls
+(D39). A run that finds another run starting the contact waits for it, and a stored contact
+that refuses the message is replaced once.
+
 Nothing here holds state between runs; the session store does.
 """
 
@@ -41,7 +46,9 @@ from ag_ui.core import (
     TextMessageStartEvent,
 )
 
-from connect_bridge.store import Session
+from botocore.exceptions import ClientError
+
+from connect_bridge.store import Pending, Session
 
 log = logging.getLogger("connect_bridge")
 
@@ -61,6 +68,11 @@ POLL_INTERVAL = 0.3
 # The canvas drops a message sent before it greets, so a new contact waits for the
 # greeting, and only for it (change 3).
 GREETING_LIMIT = 12.0
+# A run starting a contact claims the thread this long: the API calls plus the greeting.
+START_LIMIT = 20.0
+# SendMessage's errors that say the stored contact cannot take the message; the other two
+# it documents, throttling and an internal error, are not about the contact.
+CONTACT_GONE_CODES = ("AccessDeniedException", "ValidationException")
 # The spike's contact flow says this before transferring to a queue.
 ESCALATION_PREFIX = "[flow] Escalation"
 # Closing lines for a thread whose contact left the canvas. The page renders no CUSTOM
@@ -163,7 +175,19 @@ class ConnectTurn:
             return
         yield StepStartedEvent(type=EventType.STEP_STARTED, step_name=STEP_NAME)
         session = await asyncio.to_thread(self.session_for, thread)
-        await asyncio.to_thread(self.send, session, text)
+        try:
+            await asyncio.to_thread(self.send, session, text)
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") not in CONTACT_GONE_CODES:
+                raise
+            # A contact that sat unused (a warm start nobody wrote in for a while) may have
+            # ended without the bridge seeing it; one new contact takes the message.
+            log.info("contact %s refused the message; starting a new contact", session.contact_id)
+            session.closed = True
+            await asyncio.to_thread(self.store.put, session)
+            session = await asyncio.to_thread(self.session_for, thread)
+            await asyncio.to_thread(self.send, session, text)
+            self.stats["replaced"] = True
         replied = False
         async for reply in self.replies(session):
             if reply.kind == "text":
@@ -180,9 +204,14 @@ class ConnectTurn:
         if replied and not session.token_cleared:
             await asyncio.to_thread(self.clear_token, session)
         await asyncio.to_thread(self.store.put, session)
-        self.stats = {"contact": session.contact_id, "replied": replied, "closed": session.closed}
+        self.stats.update({"contact": session.contact_id, "replied": replied, "closed": session.closed})
         yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=STEP_NAME)
         yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread, run_id=run)
+
+    async def warm(self, run_input: RunAgentInput) -> None:
+        """A warm start: the thread's contact, started and past its greeting, in the store."""
+        session = await asyncio.to_thread(self.session_for, run_input.thread_id)
+        self.stats.update({"contact": session.contact_id})
 
     def usage(self) -> dict[str, Any]:
         """Fields for the kit's run log line."""
@@ -191,17 +220,41 @@ class ConnectTurn:
     # ---- the contact -----------------------------------------------------------------
 
     def session_for(self, thread_id: str) -> Session:
+        """The thread's usable contact: the stored one, the one another run is starting,
+        or a new one this run starts under a claim."""
         key = session_key(self.token, thread_id)
-        session = self.store.get(key)
-        now = self.clock()
-        token_exp = float(claims(self.token).get("exp", now + 3600))
-        if session and not session.closed and session.connection_expires_at > now + 60:
-            near_expiry = session.token_expires_at - now < TOKEN_REFRESH_MARGIN
-            refreshed = token_exp > session.token_expires_at
-            if not (near_expiry and refreshed):
-                return session
+        token_exp = float(claims(self.token).get("exp", self.clock() + 3600))
+        deadline = time.monotonic() + START_LIMIT
+        while True:
+            found = self.store.get(key)
+            now = self.clock()
+            if isinstance(found, Session) and self.usable(found, token_exp, now):
+                return found
+            waiting = isinstance(found, Pending) and found.until >= now
+            if waiting and time.monotonic() < deadline:
+                self.stats["waited"] = True
+                time.sleep(POLL_INTERVAL)
+                continue
+            if time.monotonic() >= deadline or self.store.claim(key, now + START_LIMIT, now):
+                break
+        try:
+            session = self.start_contact(key, token_exp)
+        except Exception:
+            self.store.release(key)
+            raise
+        self.store.put(session)
+        self.stats["started"] = True
+        return session
+
+    def usable(self, session: Session, token_exp: float, now: float) -> bool:
+        if session.closed or session.connection_expires_at <= now + 60:
+            return False
+        near_expiry = session.token_expires_at - now < TOKEN_REFRESH_MARGIN
+        refreshed = token_exp > session.token_expires_at
+        if near_expiry and refreshed:
             log.info("token near expiry for contact %s; starting a new contact", session.contact_id)
-        return self.start_contact(key, token_exp)
+            return False
+        return True
 
     def start_contact(self, key: str, token_exp: float) -> Session:
         settings = self.settings

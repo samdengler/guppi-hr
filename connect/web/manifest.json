@@ -4,6 +4,9 @@
   "description": "Amazon Connect's Agentic CX designer as the orchestrator, over the Profile, Pay and Travel sub-agents and the HR tools.",
   "assistant": "HR Assistant",
   "agent": "/api/hr/invocations",
+  "capabilities": [
+    "warm-start"
+  ],
   "suggestions": [
     {
       "label": "Change my address",

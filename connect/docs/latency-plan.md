@@ -1,8 +1,9 @@
 # Latency plan for /p/hr/
 
-Status: changes 1 to 3 built and measured on 3 October 2026 (results below): a
-follow-up's first reply went from 5.8 s to 4.1 s and a new chat's from 12.1 s to 8.8 s.
-Two of them changed on the way, after a test on the development flow:
+Status: change 4 built (D39), not yet measured. Changes 1 to 3 built and measured on 3
+October 2026 (results below): a follow-up's first reply went from 5.8 s to 4.1 s and a new
+chat's from 12.1 s to 8.8 s. Two of them changed on the way, after a test on the
+development flow:
 
 - Change 2 needs no canvas marker. Each canvas turn arrives as one message, and a
   generative journey (PolicyFlow) cannot be followed by a marker node anyway, so the bridge
@@ -51,6 +52,8 @@ and 04:18:43.33), and the sub-agent opened a new MCP session for every request
 (`docs/aws-feedback.md`, A5). Change 1 showed that this is only part of it; see the
 results.
 
+Every technique tried, with its measured effect, is also in `docs/latency-log.md`.
+
 ## Results of changes 1 to 3
 
 Measured at 04:40 UTC on 3 October with the same three turns, after deploying both stacks.
@@ -85,7 +88,7 @@ of its last reply.
 | 1 | **Keep the tools runtime warm.** Each sub-agent keeps one MCP session to the tools gateway open per process (or per conversation) and caches `tools/list`, instead of a new session per request | guppi-hr `agent/` (sub-agents; `hr-diy`'s orchestrator gets it too) | about 1.4 s per sub-agent call (the cold start and the session setup) | small |
 | 2 | **End the turn on a marker, not on silence.** Every canvas reply path ends with a `[flow] end` message, which the bridge already hides; the bridge ends the run when it sees it, and keeps the quiet window only as a fallback | `acxd/hr.js` and `agent/` | 3.0 s of "working" after each reply; the next message can go at once | medium |
 | 3 | **Start a contact without fixed waits.** Close the WebSocket as soon as it connects instead of after 1.5 s, and stop waiting for the greeting: ignore transcript items older than the bridge's own `SendMessage` | `agent/src/connect_bridge/turn.py` | about 3 s on a new chat | small |
-| 4 | **Open the contact before the first message.** The page's `hr` extension calls the bridge when a thread starts (the extension API's `onThread`), and the bridge starts the contact and its microVM then | `connect/web/` (a small `ext.js`) and `agent/` | the rest of a new chat's start, about 3 s, hidden behind the visitor's typing | medium |
+| 4 | **Open the contact before the first message.** When a new thread starts, the page sends a warm start (a run with no messages) on the thread's runtime session, and the bridge starts the contact and its microVM then. Built as a platform capability, `warm-start`, instead of an `hr` extension, since only the page knows the runtime session id (D39) | guppi-gpt page and kit (kit-v0.3.0), `connect/web/manifest.json` and `agent/` | the rest of a new chat's start, about 3 s, hidden behind the visitor's typing | medium |
 | 5 | **Push instead of polling.** Keep the participant WebSocket open for the length of a run and relay each message as it arrives | `agent/` | up to 0.6 s per reply, about 0.3 s on average | medium |
 | 6 | **Prompt caching for the sub-agents.** Cache the system prompt and tool definitions (about 1,700 tokens) on Bedrock for Haiku 4.5 | guppi-hr `agent/` | about 0.1 to 0.3 s per model call, two calls per turn | small |
 | 7 | **Measure the canvas's routing step.** Split the 1.9 s between the canvas's routing model and the agents gateway with `QueryLogs` node timings; then pick the routing model per node (Nova Micro or Haiku) on the eval's accuracy | `acxd/` | to be measured | small to measure |

@@ -1,0 +1,36 @@
+# Latency log
+
+Every technique tried to make the HR projects on chat.dengler.io answer sooner, with what
+it did when measured. One row per technique, in the order they were tried. A technique
+that is reverted or made no difference keeps its row with that status, so the log also
+says what not to try again. The plan behind the current round is
+`connect/docs/latency-plan.md`; service behavior found on the way goes to
+`docs/aws-feedback.md`.
+
+Measurements use the same turns each time on `/p/hr/`: a new chat with "What is my home
+address on file?", "And what is my emergency contact?" in the same chat, and a new chat
+with "How many buddy passes do I get?". The numbers are the bridge's `first_delta_ms` and
+`total_ms` run lines and the spans in Dynatrace (`zfr04910`).
+
+Status values: **kept** (deployed and measured), **built** (deployed, not yet measured),
+**dropped** (tried and reverted), **idea** (not built).
+
+## Techniques
+
+| # | Date | Technique | Hop | Measured effect | Status | Where |
+| --- | --- | --- | --- | --- | --- | --- |
+| L1 | 3 Oct | Keep each sub-agent's MCP session to the tools gateway open between requests, per caller and thread, with its `tools/list` | sub-agent to tools gateway | Follow-up's Profile agent 3.15 s to 2.44 s: the session setup and `tools/list` (0.2 to 0.55 s) are gone on a reused session, and the tool call went from 1.17 s to 0.97 s | kept | D38, `agent/src/hr_agent/agents/mcp_sessions.py` |
+| L2 | 3 Oct | End the bridge's turn 0.8 s after a reply instead of after 2.5 s of quiet; 3 s after the canvas's hand-off line, which the escalation notice follows | bridge transcript polling | Follow-up's turn finished 8.6 s to 5.3 s; a turn now ends about 1.2 s after its last reply instead of 3 s | kept | change 2, `connect/agent/src/connect_bridge/turn.py` |
+| L3 | 3 Oct | Close the customer WebSocket on Connect's subscribe acknowledgement instead of after a fixed 1.5 s | contact start | About 1.5 s on a new chat; with L4 and L5, a new chat's first reply 12.1 s to 8.8 s | kept | change 3 |
+| L4 | 3 Oct | Send the first message as soon as the canvas's greeting arrives instead of after 1.5 s of quiet | contact start | About 1.5 s on a new chat (see L3) | kept | change 3 |
+| L5 | 3 Oct | Poll the transcript every 0.3 s instead of every 0.6 s | reply relay | About 0.15 s per reply on average (see L3) | kept | part of change 5 |
+| L6 | 3 Oct | Send the first message without waiting for the canvas's greeting | contact start | The canvas never answered: the greeting came 1.5 s after the connect and the message got no reply in 15 s | dropped | change 3 |
+| L7 | 3 Oct | Warm start: when a new thread starts, the page sends a run with no messages on the thread's runtime session, and the bridge starts the Connect contact and waits out the greeting then | bridge microVM and contact start | To be measured; expected to take most of the 4 to 5 s a new chat still adds over a follow-up | built | D39, change 4; guppi-gpt kit-v0.3.0 |
+
+## Time found but not yet cut
+
+- The tools gateway adds about 0.8 s to every tool call on a warm target, because it
+  runs an MCP `initialize` and `notifications/initialized` on the target before each call
+  (aws-feedback A6). Change 9 in the plan would skip the gateway for the `hr` tools.
+- Canvas routing and the agents gateway take about 1.9 s before a sub-agent starts; change
+  7 splits that time before choosing anything.
