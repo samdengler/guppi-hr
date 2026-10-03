@@ -51,4 +51,6 @@ EXPOSE 8080 8000 9000
 # Bedrock call. The runtime supplies the exporter settings as environment variables
 # (AGENT_OBSERVABILITY_ENABLED and OTEL_*). Local development starts uvicorn directly
 # (AGENTS.md) and needs none of this. See docs/proposals/traceability.md.
-CMD ["opentelemetry-instrument", "python", "-m", "hr_agent"]
+# hr_agent.otel_headers puts the Dynatrace trace header in place from Secrets Manager
+# first, when the runtime names the secret, then execs the command (D35).
+CMD ["python", "-m", "hr_agent.otel_headers", "opentelemetry-instrument", "python", "-m", "hr_agent"]

@@ -964,10 +964,31 @@ class HrSuperAgentStack(cdk.Stack):
                 cdk.Aws.NO_VALUE,
             )
         )
-        dynatrace_traces_headers = cdk.Token.as_string(
+        # The API token reaches the orchestrator through Secrets Manager, never its
+        # environment, where GetAgentRuntime would show it to anyone allowed to read the
+        # runtime (D35). The secret always exists so the role's grant has something to
+        # name; its value is the token once both parameters are set. The image's launcher
+        # (hr_agent.otel_headers) reads it and sets OTEL_EXPORTER_OTLP_TRACES_HEADERS inside
+        # the process before opentelemetry-instrument starts.
+        dynatrace_token_secret = secretsmanager.Secret(
+            self,
+            "DynatraceTokenSecret",
+            description="Dynatrace API token for the orchestrator's trace export (D35)",
+            secret_string_value=SecretValue.unsafe_plain_text(
+                cdk.Token.as_string(
+                    cdk.Fn.condition_if(
+                        has_dynatrace_otlp.logical_id,
+                        dynatrace_api_token.value_as_string,
+                        "unset",
+                    )
+                )
+            ),
+        )
+        dynatrace_token_secret.grant_read(runtime_role)
+        dynatrace_token_secret_arn = cdk.Token.as_string(
             cdk.Fn.condition_if(
                 has_dynatrace_otlp.logical_id,
-                cdk.Fn.join("", ["Authorization=Api-Token ", dynatrace_api_token.value_as_string]),
+                dynatrace_token_secret.secret_arn,
                 cdk.Aws.NO_VALUE,
             )
         )
@@ -985,7 +1006,7 @@ class HrSuperAgentStack(cdk.Stack):
             "CONVERSATION_LOG_BUCKET": conversation_bucket.bucket_name,
             "CONVERSATION_LOG_KEY_SECRET_ARN": conversation_secret.secret_arn,
             "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": dynatrace_traces_endpoint,
-            "OTEL_EXPORTER_OTLP_TRACES_HEADERS": dynatrace_traces_headers,
+            "DYNATRACE_TOKEN_SECRET_ARN": dynatrace_token_secret_arn,
         }
 
         # ---- Operational alarms ----------------------------------------------------------
