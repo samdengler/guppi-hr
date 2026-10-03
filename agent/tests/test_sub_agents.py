@@ -219,3 +219,42 @@ def test_each_sub_agent_role_starts_its_a2a_server(monkeypatch):
         monkeypatch.setenv("AGENT_ROLE", role)
         entrypoint.main()
     assert served == ["profile", "pay", "travel"]
+
+
+class FakeWarmer:
+    def __init__(self):
+        self.calls = []
+
+    async def __call__(self, token, thread_id):
+        self.calls.append((token, thread_id))
+
+
+def test_a_warm_message_opens_the_session_without_a_model_run(runner):
+    warmer = FakeWarmer()
+    with TestClient(server.build_app("profile", runner, warmer)) as client:
+        result = send(client, "warm", metadata={"warm": True}, context="contact-1")
+    assert warmer.calls == [("user-token", "contact-1")]
+    assert runner.calls == []
+    assert [p["kind"] for p in result["parts"]] == ["data"]
+    assert result["parts"][0]["data"] == {"domain": "profile", "warm": True}
+
+
+def test_a_warm_message_without_a_token_does_nothing(runner):
+    warmer = FakeWarmer()
+    with TestClient(server.build_app("profile", runner, warmer)) as client:
+        result = send(client, "warm", metadata={"warm": True}, headers={})
+    assert warmer.calls == []
+    assert parts(result)[1]["error"] == "agent_failed"
+
+
+async def test_warm_domain_leases_the_threads_session(monkeypatch):
+    opened = []
+
+    def open_session(key):
+        opened.append(key)
+        return object(), []
+
+    monkeypatch.setattr(server, "SESSIONS", server.McpSessions(open_session))
+    await server.warm_domain("tok", "contact-1")
+    await server.warm_domain("tok", "contact-1")
+    assert opened == [("tok", "contact-1")]

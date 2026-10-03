@@ -231,13 +231,22 @@ async def run_domain(
         )
 
 
+async def warm_domain(token: str, thread_id: str) -> None:
+    """A warm start (D41): open this caller's MCP session for the thread and list its tools,
+    so the thread's first real request finds them ready. No model call."""
+    async with SESSIONS.lease((token, thread_id), token_expires_at=token_expires_at(token)):
+        pass
+
+
 Runner = Callable[..., Awaitable[DomainResult]]
+Warmer = Callable[[str, str], Awaitable[None]]
 
 
 class DomainExecutor(AgentExecutor):
-    def __init__(self, domain: Domain, runner: Runner = run_domain) -> None:
+    def __init__(self, domain: Domain, runner: Runner = run_domain, warmer: Warmer = warm_domain) -> None:
         self.domain = domain
         self._run = runner
+        self._warm = warmer
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         started = time.monotonic()
@@ -249,6 +258,14 @@ class DomainExecutor(AgentExecutor):
         try:
             if token is None:
                 raise PermissionError("no bearer token on the request")
+            if metadata.get("warm") is True:
+                # The Connect bridge's warm start: the runtime session for this thread
+                # exists from now on, and so does the caller's MCP session.
+                await self._warm(token, context.context_id or "")
+                record.update(outcome="warm", tool_calls=0)
+                warmed = [Part(root=DataPart(data={"domain": self.domain.name, "warm": True}))]
+                await self._reply(context, event_queue, warmed, record, started)
+                return
             result = await self._run(
                 self.domain,
                 token,
@@ -278,6 +295,9 @@ class DomainExecutor(AgentExecutor):
                 Part(root=TextPart(text=failed)),
                 Part(root=DataPart(data={"domain": self.domain.name, "error": "agent_failed"})),
             ]
+        await self._reply(context, event_queue, parts, record, started)
+
+    async def _reply(self, context, event_queue, parts, record, started) -> None:
         record["duration_ms"] = int((time.monotonic() - started) * 1000)
         log.info(json.dumps(record, sort_keys=True))
         await event_queue.enqueue_event(
@@ -316,12 +336,12 @@ def agent_card(domain: Domain, url: str = "http://localhost:9000/") -> AgentCard
     )
 
 
-def build_app(domain_name: str, runner: Runner = run_domain):
+def build_app(domain_name: str, runner: Runner = run_domain, warmer: Warmer = warm_domain):
     """The Starlette app: JSON-RPC at /, the card, /ping, and the AgentCore header glue."""
     from bedrock_agentcore.runtime.a2a import build_a2a_app
 
     domain = DOMAINS[domain_name]
-    return build_a2a_app(DomainExecutor(domain, runner), agent_card(domain))
+    return build_a2a_app(DomainExecutor(domain, runner, warmer), agent_card(domain))
 
 
 def serve(domain_name: str) -> None:

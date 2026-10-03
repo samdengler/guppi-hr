@@ -95,6 +95,8 @@ PARAM_EDGE_GATEWAY_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-arn"
 PARAM_EDGE_GATEWAY_ROLE_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-role-arn"
 PARAM_USER_POOL_CLIENT_ID = f"{PLATFORM_PARAMETER_PREFIX}/user-pool-client-id"
 PARAM_JWT_DISCOVERY_URL = f"{PLATFORM_PARAMETER_PREFIX}/jwt-discovery-url"
+# What this stack publishes for the Connect bridge (connect/), which deploys after it.
+AGENTS_GATEWAY_URL_PARAMETER = "/guppi-hr/agents-gateway-url"
 # The project's name on the platform: the page is /p/hr-diy/, the manifest and extension
 # are under /projects/hr-diy/, and the edge gateway target of the same name makes the
 # orchestrator answer at /api/hr-diy/invocations (the platform's CloudFront function
@@ -1002,6 +1004,14 @@ class HrSuperAgentStack(cdk.Stack):
         for sub_agent_role in sub_agents.roles.values():
             dynatrace_token_secret.grant_read(sub_agent_role)
         cdk.CfnOutput(self, "AgentsGatewayUrl", value=sub_agents.gateway.attr_gateway_url)
+        # The Connect bridge's warm start calls each sub-agent through this gateway (D41).
+        ssm.StringParameter(
+            self,
+            "AgentsGatewayUrlParameter",
+            parameter_name=AGENTS_GATEWAY_URL_PARAMETER,
+            string_value=sub_agents.gateway.attr_gateway_url,
+            description="The HR agents gateway URL, for the Connect bridge's warm start",
+        )
 
         # The tools gateway now exists, so the runtime's environment can point at it.
         runtime.environment_variables = {

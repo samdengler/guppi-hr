@@ -155,6 +155,11 @@ class ConnectBridge(Construct):
                 "CONTACT_FLOW_ID": contact_flow_id,
                 "SESSION_TABLE": table.table_name,
                 "CONVERSATION_LOG_ENABLED": "false",
+                # A warm start also warms each sub-agent through the HR agents gateway,
+                # with the employee's token (D41); the HR stack publishes the URL.
+                "AGENTS_GATEWAY_URL": ssm.StringParameter.value_for_string_parameter(
+                    self, "/guppi-hr/agents-gateway-url"
+                ),
                 # Traces go to the platform's Dynatrace tenant, beside the HR runtimes the
                 # canvas calls, with the platform's token read from its secret at start
                 # (connect_bridge.otel_headers; guppi-hr D36).

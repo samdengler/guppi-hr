@@ -70,9 +70,16 @@ class FakeClients:
         self.connect = FakeConnect()
         self.participant = participant
         self.touched: list[str] = []
+        self.posted: list[dict] = []
 
     def touch_websocket(self, url: str) -> None:
         self.touched.append(url)
+
+    def post_json(self, url: str, headers: dict, body: dict, timeout: float) -> int:
+        self.posted.append({"url": url, "headers": headers, "body": body})
+        if "pay" in url and getattr(self, "pay_down", False):
+            raise OSError("timed out")
+        return 200
 
 
 async def no_sleep(_seconds: float) -> None:
@@ -460,3 +467,47 @@ def test_the_dynamo_store_claims_only_when_no_live_claim_is_held():
     store.release("k")
     assert store.get("k") is None
     store.release("k")  # nothing to release is fine
+
+
+# ---- sub-agent warm messages (D41) ----------------------------------------------------
+
+GATEWAY = Settings(
+    instance_id="inst", contact_flow_id="flow", region="us-east-1",
+    agents_gateway_url="https://agents.example",
+)
+
+
+async def test_a_warm_start_warms_each_sub_agent_on_the_canvass_session():
+    clients = FakeClients(FakeParticipant({}))
+    token = jwt()
+    turn = ConnectTurn(token, MemorySessionStore(), GATEWAY, clients, sleep=no_sleep)
+    await turn.warm(warm_input())
+    assert sorted(p["url"] for p in clients.posted) == [
+        "https://agents.example/pay/invocations",
+        "https://agents.example/profile/invocations",
+        "https://agents.example/travel/invocations",
+    ]
+    profile = next(p for p in clients.posted if "profile" in p["url"])
+    assert profile["headers"]["Authorization"] == f"Bearer {token}"
+    assert profile["headers"]["X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"] == "contact-1-profile"
+    message = profile["body"]["params"]["message"]
+    assert message["contextId"] == "contact-1" and message["metadata"] == {"warm": True}
+    assert turn.usage()["connect_sub_agents_warmed"] == 3
+
+
+async def test_a_failed_sub_agent_warm_does_not_fail_the_warm_start():
+    clients = FakeClients(FakeParticipant({}))
+    clients.pay_down = True
+    turn = ConnectTurn(jwt(), MemorySessionStore(), GATEWAY, clients, sleep=no_sleep)
+    await turn.warm(warm_input())
+    assert turn.usage()["connect_sub_agents_warmed"] == 2
+
+
+async def test_no_sub_agent_warm_for_a_contact_already_running():
+    clients = FakeClients(FakeParticipant({}))
+    store = MemorySessionStore()
+    token = jwt()
+    await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
+    again = ConnectTurn(token, store, GATEWAY, clients, sleep=no_sleep)
+    await again.warm(warm_input())
+    assert clients.posted == []

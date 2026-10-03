@@ -13,7 +13,7 @@ with "How many buddy passes do I get?". The numbers are the bridge's `first_delt
 `total_ms` run lines and the spans in Dynatrace (`zfr04910`).
 
 Status values: **kept** (deployed and measured), **built** (deployed, not yet measured),
-**dropped** (tried and reverted), **idea** (not built).
+**dropped** (tried and reverted), **declined** (not built, by decision), **idea** (not built).
 
 ## Techniques
 
@@ -26,6 +26,10 @@ Status values: **kept** (deployed and measured), **built** (deployed, not yet me
 | L5 | 3 Oct | Poll the transcript every 0.3 s instead of every 0.6 s | reply relay | About 0.15 s per reply on average (see L3) | kept | part of change 5 |
 | L6 | 3 Oct | Send the first message without waiting for the canvas's greeting | contact start | The canvas never answered: the greeting came 1.5 s after the connect and the message got no reply in 15 s | dropped | change 3 |
 | L7 | 3 Oct | Warm start: when a new thread starts, the page sends a run with no messages on the thread's runtime session, and the bridge starts the Connect contact and waits out the greeting then | bridge microVM and contact start | The contact start (2.2 to 2.8 s) left the first message's path: a new chat's first reply at the bridge 8.8 s to 6.9 s (address) and 9.2 s to 7.3 s (buddy passes). A message sent 1.1 s after "New chat" waited for the warm start's contact instead of opening a second one | kept | D39, change 4; guppi-gpt kit-v0.3.0 |
+| L8 | 3 Oct | Sub-agents call the tools runtime directly instead of through the tools gateway | sub-agent to tools | Not built; would save about 0.8 to 1.4 s per tool call (aws-feedback A6) | declined | D40, change 9 |
+| L9 | 3 Oct | Prompt caching for the sub-agents' system prompt and tools on Bedrock | sub-agent model calls | Not possible: Haiku 4.5 on Bedrock caches a prefix of 4,096 tokens or more, and the sub-agents' calls send 1,048 to 3,009 input tokens (`chat` spans, 05:01 to 05:04 UTC); a cache point below the minimum is ignored | dropped | change 6 |
+| L10 | 3 Oct | A faster model for the canvas's routing step | canvas routing | Not needed: the designer's log puts the routing model at 0.43 to 0.47 s (`ModelStart` to `ModelEnd`); the rest of the 1.2 to 2.2 s is Connect handing the message to the designer (0.32 s) and the agents gateway reaching the sub-agent (0.4 s, 1.3 s on a contact's first call) | dropped | change 7 |
+| L11 | 3 Oct | Warm the sub-agents during the warm start: an A2A warm message per sub-agent on the canvas's runtime session and thread, which opens the runtime session and the sub-agent's MCP session without a model call | agents gateway and sub-agent | To be measured; expected about 1.7 s off a new chat's first reply (0.9 s at the gateway, 0.84 s of MCP session setup) | built | D41, change 10 |
 
 ## Time found but not yet cut
 
@@ -35,12 +39,14 @@ Where a turn's time went on 3 October after L1 to L7 (05:01 to 05:04 UTC):
 | --- | --- | --- |
 | Page to the bridge's handler (CloudFront, edge gateway, runtime; aws-feedback A7) | 0.5 s | 0.6 s |
 | Bridge reads its contact and sends (`SendMessage`) | 0.2 s | 0.15 s |
-| Canvas routing and the agents gateway (C14) | 1.9 to 2.2 s | 1.2 s |
+| Connect hands the message to the designer | 0.33 s | 0.32 s |
+| Canvas routing model (Connect's NLU) | 0.43 s | 0.47 s |
+| Agents gateway to the sub-agent (C14) | 1.31 s | 0.40 s |
 | Sub-agent (two model calls and one tool or search call) | 4.1 to 4.5 s | 2.8 s |
 | Canvas relays the reply; the bridge's next poll | 0.45 to 0.7 s | 0.65 s |
 
 - The tools gateway adds about 0.8 s to every tool call on a warm target, because it
   runs an MCP `initialize` and `notifications/initialized` on the target before each call
-  (aws-feedback A6). Change 9 in the plan would skip the gateway for the `hr` tools.
+  (aws-feedback A6). Skipping the gateway was declined (D40); the ask is with the AWS team.
 - Canvas routing and the agents gateway take about 1.9 s before a sub-agent starts; change
   7 splits that time before choosing anything.

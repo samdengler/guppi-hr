@@ -1,6 +1,6 @@
 # Latency plan for /p/hr/
 
-Status: change 4 built and measured (D39, results below). Changes 1 to 3 built and measured on 3
+Status: change 4 built and measured (D39, results below); changes 6 and 7 measured with nothing to build (`docs/latency-log.md`, L9 and L10); change 10 built (D41). Changes 1 to 3 built and measured on 3
 October 2026 (results below): a follow-up's first reply went from 5.8 s to 4.1 s and a new
 chat's from 12.1 s to 8.8 s. Two of them changed on the way, after a test on the
 development flow:
@@ -114,12 +114,13 @@ of its last reply.
 | 6 | **Prompt caching for the sub-agents.** Cache the system prompt and tool definitions (about 1,700 tokens) on Bedrock for Haiku 4.5 | guppi-hr `agent/` | about 0.1 to 0.3 s per model call, two calls per turn | small |
 | 7 | **Measure the canvas's routing step.** Split the 1.9 s between the canvas's routing model and the agents gateway with `QueryLogs` node timings; then pick the routing model per node (Nova Micro or Haiku) on the eval's accuracy | `acxd/` | to be measured | small to measure |
 | 8 | **Optional, an architecture choice: reads without a sub-agent.** For read-only questions (an address, pay statements) the canvas calls the HR tool directly over HTTP, as PolicySearch already does, and phrases the answer itself; sub-agents keep changes and confirmation | `acxd/hr.js` | about 2 s on a read (two model calls and a hop) | medium; moves logic into the canvas |
-| 9 | **Optional, an architecture choice: sub-agents call the tools runtime directly.** Each sub-agent keeps an MCP session to the tools runtime's own endpoint instead of the tools gateway, for the `hr` tools; the gateway stays for `docs___Retrieve` | guppi-hr `agent/` and the HR stack | about 0.6 to 0.8 s per tool call (A6), to be confirmed with one direct call | medium; gives up the gateway's single tool list and its policy for those tools |
+| 9 | **Declined (D40): sub-agents call the tools runtime directly.** Each sub-agent keeps an MCP session to the tools runtime's own endpoint instead of the tools gateway, for the `hr` tools; the gateway stays for `docs___Retrieve` | guppi-hr `agent/` and the HR stack | about 0.6 to 0.8 s per tool call (A6), to be confirmed with one direct call | medium; gives up the gateway's single tool list and its policy for those tools |
+| 10 | **Warm the sub-agents too.** The warm start sends each sub-agent an A2A warm message on the canvas's runtime session and thread, so a contact's first delegation finds the runtime session and the MCP session open (D41). Found by change 7's designer log | `agent/` (sub-agents), the HR stack, `connect/agent/` and the bridge stack | about 1.7 s on a new chat's first reply | small |
 
 Changes 1 to 3 are code in this repository with no new services; the forecast was a
 follow-up at about 4 s and a new chat at about 7 s, and the measured result is 4.1 s and
 8.8 s (the new chat kept its greeting wait, see the status). Change 4 brings a new chat close to
-a follow-up. Changes 8 and 9 change the design and each gets its own decision.
+a follow-up. Changes 8 and 9 change the design and each gets its own decision; Sam declined 9 (D40), so tool calls stay on the gateway.
 
 ## How each change is checked
 

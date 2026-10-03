@@ -1068,3 +1068,12 @@ def test_log_delivery_names_are_unique_in_the_account(template):
     # The existing deliveries keep their names, so the deploy does not replace them.
     assert "hr-super-agent-tools-application-logs" in names
     assert "hr-super-agent-tools-runtime-application-logs" in names
+
+
+def test_the_agents_gateway_url_is_published_for_the_connect_bridge(template):
+    params = template.find_resources(
+        "AWS::SSM::Parameter", {"Properties": {"Name": "/guppi-hr/agents-gateway-url"}}
+    )
+    assert len(params) == 1
+    value = next(iter(params.values()))["Properties"]["Value"]
+    assert "GatewayUrl" in json.dumps(value)

@@ -12,7 +12,9 @@ expiry gets a new contact, since a running designer session never sees a changed
 A warm start (the page's run with no messages when a thread starts, kit-v0.3.0) does the
 contact's start ahead of the first message, so that message only sends and polls
 (D39). A run that finds another run starting the contact waits for it, and a stored contact
-that refuses the message is replaced once.
+that refuses the message is replaced once. A warm start that opened a new contact also sends
+each sub-agent a warm message through the agents gateway, on the runtime session and thread
+the canvas will use, so the first message finds both open (D41).
 
 Nothing here holds state between runs; the session store does.
 """
@@ -73,6 +75,10 @@ START_LIMIT = 20.0
 # SendMessage's errors that say the stored contact cannot take the message; the other two
 # it documents, throttling and an internal error, are not about the contact.
 CONTACT_GONE_CODES = ("AccessDeniedException", "ValidationException")
+# The sub-agents the canvas delegates to; hr.js names each runtime session
+# "{conversationId}-{domain}", and the conversation id is the contact id.
+WARM_DOMAINS = ("profile", "pay", "travel")
+SUB_AGENT_WARM_TIMEOUT = 15.0
 # The spike's contact flow says this before transferring to a queue.
 ESCALATION_PREFIX = "[flow] Escalation"
 # Closing lines for a thread whose contact left the canvas. The page renders no CUSTOM
@@ -94,6 +100,9 @@ class Settings:
     instance_id: str = field(default_factory=lambda: os.environ.get("CONNECT_INSTANCE_ID", ""))
     contact_flow_id: str = field(default_factory=lambda: os.environ.get("CONTACT_FLOW_ID", ""))
     region: str = field(default_factory=lambda: os.environ.get("AWS_REGION", "us-east-1"))
+    agents_gateway_url: str = field(
+        default_factory=lambda: os.environ.get("AGENTS_GATEWAY_URL", "").rstrip("/")
+    )
 
 
 def claims(token: str) -> dict:
@@ -131,6 +140,17 @@ class ConnectClients:
 
         self.connect = boto3.client("connect", region_name=region)
         self.participant = boto3.client("connectparticipant", region_name=region)
+
+    @staticmethod
+    def post_json(url: str, headers: dict[str, str], body: dict, timeout: float) -> int:
+        import urllib.request
+
+        request = urllib.request.Request(
+            url, data=json.dumps(body).encode(), method="POST", headers=headers
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response.read()
+            return response.status
 
     @staticmethod
     def touch_websocket(url: str) -> None:
@@ -212,6 +232,41 @@ class ConnectTurn:
         """A warm start: the thread's contact, started and past its greeting, in the store."""
         session = await asyncio.to_thread(self.session_for, run_input.thread_id)
         self.stats.update({"contact": session.contact_id})
+        if self.stats.get("started") and self.settings.agents_gateway_url:
+            results = await asyncio.gather(
+                *(asyncio.to_thread(self.warm_sub_agent, session.contact_id, d) for d in WARM_DOMAINS),
+                return_exceptions=True,
+            )
+            self.stats["sub_agents_warmed"] = sum(1 for result in results if result is True)
+
+    def warm_sub_agent(self, contact_id: str, domain: str) -> bool:
+        """One sub-agent's warm message, as the canvas would address it; False on failure."""
+        body = {
+            "jsonrpc": "2.0",
+            "id": f"warm-{domain}",
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "messageId": uuid.uuid4().hex,
+                    "contextId": contact_id,
+                    "parts": [{"kind": "text", "text": "warm"}],
+                    "metadata": {"warm": True},
+                }
+            },
+        }
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+            "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": f"{contact_id}-{domain}",
+        }
+        url = f"{self.settings.agents_gateway_url}/{domain}/invocations"
+        try:
+            status = self.clients.post_json(url, headers, body, SUB_AGENT_WARM_TIMEOUT)
+        except Exception as error:  # noqa: BLE001 - a warm start never fails the run
+            log.warning("warm start of the %s sub-agent failed: %s", domain, type(error).__name__)
+            return False
+        return status == 200
 
     def usage(self) -> dict[str, Any]:
         """Fields for the kit's run log line."""
