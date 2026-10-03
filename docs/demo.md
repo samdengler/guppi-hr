@@ -1,7 +1,7 @@
 # Demo: the four scenarios
 
 A walk through the four conversations in [plan.md](plan.md), about five minutes. Open
-`https://chat.dengler.io/p/hr/`, sign in with Google, and start a **New chat** (the four
+`https://chat.dengler.io/p/hr-diy/`, sign in with Google, and start a **New chat** (the four
 suggestions under the empty state are the scenarios' opening lines). Each signed-in
 account gets its own synthetic employee record the first time it asks about one, so the
 names and addresses below differ per account; every value is invented.

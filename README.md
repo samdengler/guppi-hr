@@ -1,7 +1,7 @@
 # guppi-hr
 
 An MVP of an HR employee assistant, shown on the page as "HR Assistant", live at
-`https://chat.dengler.io/p/hr/`. An orchestrator on Amazon Bedrock AgentCore Runtime
+`https://chat.dengler.io/p/hr-diy/`. An orchestrator on Amazon Bedrock AgentCore Runtime
 routes each turn to a Profile, Pay, or Travel sub-agent over A2A, or answers general
 questions from an HR policy knowledge base; sub-agents act on the employee's own records
 through an HR tools MCP server, and every change is proposed, read back, and committed
@@ -15,10 +15,11 @@ everything that is HR (D34). [`docs/design.md`](docs/design.md) describes the sy
 built; [`docs/demo.md`](docs/demo.md) walks the four scenarios.
 
 The repository holds two super-agents over the same sub-agents, tools and gateways. The
-Strands orchestrator described here serves `/p/hr/`. [`connect/`](connect/) puts Amazon
-Connect's Agentic CX designer in the orchestrator's place and serves
-`https://chat.dengler.io/p/hr-connect/`; its README covers that side. The four scenarios
-run on both pages. The repository was named hr-super-agent until 2 October 2026, when
+Strands orchestrator described here serves `/p/hr-diy/`. [`connect/`](connect/) puts Amazon
+Connect's Agentic CX designer in the orchestrator's place and serves the main page,
+`https://chat.dengler.io/p/hr/`; its README covers that side. The four scenarios run on
+both pages. Until 3 October 2026 the Strands page was `/p/hr/` and the Connect page
+`/p/hr-connect/` (D37). The repository was named hr-super-agent until 2 October 2026, when
 guppi-connect moved in as `connect/`.
 
 ## What it does
@@ -96,7 +97,7 @@ scripts/seed-content.sh        # sync content/hr/ to the knowledge base bucket
 scripts/ingest.sh              # index it and wait
 ```
 
-Then open `https://chat.dengler.io/p/hr/`, sign in, and follow [`docs/demo.md`](docs/demo.md).
+Then open `https://chat.dengler.io/p/hr-diy/`, sign in, and follow [`docs/demo.md`](docs/demo.md).
 
 ## Everyday commands
 

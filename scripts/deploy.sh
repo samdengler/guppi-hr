@@ -19,7 +19,7 @@ done
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DT_ITEM_TITLE="GuppiGPT Dynatrace"
 OUTPUTS="$ROOT/cdk-outputs.json"
-PROJECT="hr"
+PROJECT="hr-diy"
 # The platform's identifiers (guppi-gpt's docs/proposals/platform.md, "Platform contract").
 PARAM_SITE_BUCKET="/guppi/platform/site-bucket-name"
 PARAM_DISTRIBUTION="/guppi/platform/distribution-id"

@@ -1,4 +1,4 @@
-"""One or more turns through chat.dengler.io's /api/hr-connect/invocations (plan phase 2).
+"""One or more turns through chat.dengler.io's /api/hr/invocations (plan phase 2).
 
 The platform test session's access token comes from guppi-gpt's scripts/test-token.sh,
 read from its stdout and sent only as the Authorization header; it is never printed. Each
@@ -35,12 +35,12 @@ def turn(client: httpx.Client, token: str, thread: str, history: list[dict], tex
         "tools": [],
         "context": [],
         "state": {},
-        "forwardedProps": {"project": "hr-connect"},
+        "forwardedProps": {"project": "hr"},
     }
     types, reply = [], []
     with client.stream(
         "POST",
-        f"{SITE}/api/hr-connect/invocations",
+        f"{SITE}/api/hr/invocations",
         json=body,
         headers={"authorization": f"Bearer {token}", "accept": "text/event-stream"},
     ) as response:

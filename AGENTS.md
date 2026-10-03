@@ -3,7 +3,7 @@
 ## Project Overview
 
 HR Super Agent is an MVP of an HR employee assistant, branded "HR Assistant" on the page,
-at `https://chat.dengler.io/p/hr/`. It began as an iteration of guppi-gpt
+at `https://chat.dengler.io/p/hr-diy/` (the Connect version in `connect/` is `/p/hr/`, D37). It began as an iteration of guppi-gpt
 (`~/src/github.com/samdengler/guppi-gpt`), merged in with its history at commit 8baf911
 and renamed (D9). Since phase 8 it is an agent project on the chat.dengler.io platform
 that guppi-gpt became (`../guppi-gpt/docs/proposals/platform.md`): the platform's
@@ -36,8 +36,8 @@ guppi-gpt. When code and a decision disagree, change one of them in the same com
 - Model: Sonnet 4.6 for the orchestrator, Haiku 4.5 for the sub-agents, through the `us.`
   cross-region inference profiles (`ORCHESTRATOR_MODEL_ID` and `MODEL_ID` in the stack)
 - Edge: the platform's CloudFront and edge gateway; this stack adds the runtime target
-  `hr`, so the orchestrator answers at `/api/hr/invocations`
-- Page: the platform's page at `/p/hr/`, configured by `web/manifest.json`, with this
+  `hr-diy`, so the orchestrator answers at `/api/hr-diy/invocations`
+- Page: the platform's page at `/p/hr-diy/`, configured by `web/manifest.json`, with this
   project's extension `web/src/ext.js` bundled by esbuild as an ES module into
   `web/dist/ext.js` and published to `/projects/hr/`
 - Package manager: uv workspace (`infra` and `agent` are members)
@@ -92,8 +92,8 @@ scripts/
   deploy.sh               # cdk deploy, then the manifest and extension to the platform's site bucket
   seed-content.sh         # clone the docs repositories at pinned revisions, sync Markdown to S3
   ingest.sh               # StartIngestionJob and wait
-  browser-check.mjs       # the four scenarios on /p/hr/ in a headless browser, screenshots in .deploy/
-connect/                  # the Amazon Connect super-agent (/p/hr-connect/): its own projects, lockfiles and
+  browser-check.mjs       # the four scenarios on /p/hr-diy/ in a headless browser, screenshots in .deploy/
+connect/                  # the Amazon Connect super-agent (/p/hr/): its own projects, lockfiles and
                           # stack GuppiConnect, excluded from this uv workspace; see connect/README.md
 ```
 
@@ -207,8 +207,8 @@ agents gateway and the tools gateway, plus the HR tools server's `TOKEN_ISSUER` 
 `TOKEN_ALLOWED_CLIENTS`), `edge-gateway-id` (the target `hr`), `edge-gateway-role-arn`
 (the `InvokeAgentRuntime` grant on the orchestrator, attached to the platform gateway's
 role as this stack's own policy), and `site-url` (the `SiteUrl` output). The platform's
-CloudFront function rewrites `/api/hr/invocations` to `/hr/invocations` on its gateway,
-and `/p/hr/` to its one page, which loads `/projects/hr/manifest.json` and imports the
+CloudFront function rewrites `/api/hr-diy/invocations` to `/hr-diy/invocations` on its gateway,
+and `/p/hr-diy/` to its one page, which loads `/projects/hr-diy/manifest.json` and imports the
 extension it names.
 
 The orchestrator runtime's request header allowlist names `Authorization` and
@@ -261,7 +261,7 @@ works against a JWT runtime today; guppi-gpt's decision log records why.
 
 ## Checking a deploy
 
-`scripts/browser-check.mjs` runs the four scenarios on `https://chat.dengler.io/p/hr/` in
+`scripts/browser-check.mjs` runs the four scenarios on `https://chat.dengler.io/p/hr-diy/` in
 headless Chrome with the session from `$HOME/.config/guppi/test-session.json` (written by
 `../guppi-gpt/scripts/test-token.sh`; Playwright is a dev dependency of `web/`) and saves
 `.deploy/phase-8-<scenario>.png`. Tokens

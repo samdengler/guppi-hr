@@ -1,7 +1,7 @@
 // Headless browser check of the HR project on the platform page (docs/phase-8.md, step 7),
 // adapted from guppi-gpt's scripts/browser-check.mjs. Signs the page in without Google by
 // seeding the platform page's IndexedDB session before load, the way a reload after a real
-// sign-in finds it, then runs the four scenarios of docs/plan.md on /p/hr/:
+// sign-in finds it, then runs the four scenarios of docs/plan.md on /p/hr-diy/:
 //
 //   thread A  disambiguation   "I need to update my information"
 //   thread B  confirmation     the address change, then "yes"
@@ -259,7 +259,7 @@ async function main() {
     try {
       for (const scenario of SCENARIOS) {
         if (!threads[scenario.thread]) {
-          threads[scenario.thread] = await openSignedIn(browser, session, "/p/hr/", log);
+          threads[scenario.thread] = await openSignedIn(browser, session, "/p/hr-diy/", log);
           const { page } = threads[scenario.thread];
           results.pages.hr = {
             brand: await page.locator("#brand").textContent(),

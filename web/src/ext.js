@@ -1,6 +1,6 @@
 // The HR extension for the chat.dengler.io platform page (guppi-gpt's
 // docs/proposals/platform.md, "Page extension API"). The page imports this module from
-// /projects/hr/ext.js and calls the default export with its `guppi` object. It carries
+// /projects/hr-diy/ext.js and calls the default export with its `guppi` object. It carries
 // what phase 5 built into HR's own page:
 //
 // - a status line per tool call and per delegation ("Asking the Pay agent…"),

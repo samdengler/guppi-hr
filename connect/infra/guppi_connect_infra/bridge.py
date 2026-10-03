@@ -1,7 +1,7 @@
 """The AG-UI to Connect bridge as a chat.dengler.io agent project (docs/platform-plan.md).
 
 An AgentCore Runtime running `agent/` behind the platform's edge gateway as the target
-`hr-connect`, so the page's `/api/hr-connect/invocations` reaches it. The Runtime takes
+`hr`, so the page's `/api/hr/invocations` reaches it. The Runtime takes
 the platform's own JWT authorizer and forwards Authorization, the bearer becoming the
 contact attribute the canvas sends on to the HR gateways. A DynamoDB table holds each
 thread's chat contact between runs. Everything about the platform comes from its
@@ -23,7 +23,8 @@ from constructs import Construct
 
 AGENT_DIR = Path(__file__).resolve().parents[2] / "agent"
 RUNTIME_NAME = "guppi_connect_bridge"
-TARGET_NAME = "hr-connect"
+# The project is "hr" on the platform since 3 Oct 2026 (it was "hr-connect"; guppi-hr D37).
+TARGET_NAME = "hr"
 TRACE_HEADER = "traceparent"
 SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 PLATFORM = "/guppi/platform"

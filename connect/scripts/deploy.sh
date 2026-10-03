@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy the GuppiConnect stack (the mock Lambda and the bridge: its Runtime, session table
-# and the hr-connect target on the platform's edge gateway), then publish web/ to the
-# platform's site bucket under projects/hr-connect/ and invalidate that prefix. The bridge
+# and the hr target on the platform's edge gateway), then publish web/ to the
+# platform's site bucket under projects/hr/ and invalidate that prefix. The bridge
 # needs the production contact flow id from .deploy/acxd-production.json, which
 # scripts/contact_flow.py --env production writes. Extra arguments go to `cdk deploy`.
 # `--site-only` skips cdk deploy and only publishes web/.
@@ -14,7 +14,7 @@ if [[ "${1:-}" == "--site-only" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PROJECT="hr-connect"
+PROJECT="hr"
 OUTPUTS="$ROOT/cdk-outputs.json"
 
 # The run is also written to .deploy/deploy-<timestamp>.log, with .deploy/latest.log

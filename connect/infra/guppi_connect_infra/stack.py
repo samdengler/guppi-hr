@@ -6,7 +6,8 @@ The function answers two kinds of request from Agentic CX designer data requests
 reply, so the canvas can be built and tested before a real employee token is available.
 The URL has no auth because a data request cannot sign; it never returns a full token.
 
-The bridge (bridge.py) is the chat.dengler.io agent project `hr-connect`. It needs the
+The bridge (bridge.py) is the chat.dengler.io agent project `hr` (until 3 Oct 2026
+`hr-connect`). It needs the
 production contact flow id, which scripts/contact_flow.py records in
 .deploy/acxd-production.json; the context value `contact_flow_id` overrides it.
 """

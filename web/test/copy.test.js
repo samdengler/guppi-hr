@@ -28,6 +28,7 @@ test("each delegation gets its own status line and reply tag", () => {
   assert.equal(replyLabel(undefined), BRAND);
 });
 
-test("the manifest's label is the brand constant", () => {
-  assert.equal(manifest.label, BRAND);
+test("the manifest's assistant name is the brand constant the reply label starts with", () => {
+  // The header says "HR Assistant (DIY)" (label); replies say "HR Assistant · Pay" (assistant).
+  assert.equal(manifest.assistant, BRAND);
 });

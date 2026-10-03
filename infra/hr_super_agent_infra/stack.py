@@ -3,7 +3,7 @@
 The platform stack in guppi-gpt (GuppiGpt) owns the page, sign-in, CloudFront, WAF, the edge
 gateway and its per-user limits, and publishes their identifiers as /guppi/platform/* SSM
 parameters (docs/proposals/platform.md there). This stack reads those parameters and holds
-what is HR's own: the orchestrator runtime and its target named "hr" on the platform's edge
+what is HR's own: the orchestrator runtime and its target named "hr-diy" on the platform's edge
 gateway, the three sub-agent runtimes and their agents gateway, the HR tools server and its
 tables, the tools gateway in front of the knowledge base and the HR tools, nightly
 ingestion, the conversation log, alarms, vended log delivery, and the Dynatrace export.
@@ -11,7 +11,7 @@ Every JWT authorizer accepts the platform user pool's token, so the token the pa
 on chat.dengler.io is the one checked on every hop.
 
 Resource ordering that matters:
-  runtime -> platform gateway role policy -> "hr" target on the platform edge gateway
+  runtime -> platform gateway role policy -> "hr-diy" target on the platform edge gateway
   tools gateway -> runtime environment variables (the runtime needs the tools gateway url)
 """
 
@@ -95,11 +95,12 @@ PARAM_EDGE_GATEWAY_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-arn"
 PARAM_EDGE_GATEWAY_ROLE_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-role-arn"
 PARAM_USER_POOL_CLIENT_ID = f"{PLATFORM_PARAMETER_PREFIX}/user-pool-client-id"
 PARAM_JWT_DISCOVERY_URL = f"{PLATFORM_PARAMETER_PREFIX}/jwt-discovery-url"
-# The project's name on the platform: the page is /p/hr/, the manifest and extension are
-# under /projects/hr/, and the edge gateway target of the same name makes the orchestrator
-# answer at /api/hr/invocations (the platform's CloudFront function rewrites that to
-# /hr/invocations on the gateway).
-PROJECT_NAME = "hr"
+# The project's name on the platform: the page is /p/hr-diy/, the manifest and extension
+# are under /projects/hr-diy/, and the edge gateway target of the same name makes the
+# orchestrator answer at /api/hr-diy/invocations (the platform's CloudFront function
+# rewrites that to /hr-diy/invocations on the gateway). It was "hr" until 3 Oct 2026, when
+# the Connect version took that name (D37).
+PROJECT_NAME = "hr-diy"
 TARGET_NAME = PROJECT_NAME
 OIDC_DISCOVERY_SUFFIX = "/.well-known/openid-configuration"
 

@@ -1,9 +1,9 @@
 {
-  "name": "hr-connect",
-  "label": "HR Assistant (Connect)",
-  "description": "The same HR assistant with Amazon Connect's Agentic CX designer as the orchestrator, over the same sub-agents and tools.",
+  "name": "hr",
+  "label": "HR Assistant",
+  "description": "Amazon Connect's Agentic CX designer as the orchestrator, over the Profile, Pay and Travel sub-agents and the HR tools.",
   "assistant": "HR Assistant",
-  "agent": "/api/hr-connect/invocations",
+  "agent": "/api/hr/invocations",
   "suggestions": [
     {
       "label": "Change my address",

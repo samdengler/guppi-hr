@@ -5,9 +5,9 @@ import test from "node:test";
 const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url)));
 
 test("the manifest names the project, its agent path and its extension", () => {
-  assert.equal(manifest.name, "hr");
-  assert.equal(manifest.agent, "/api/hr/invocations");
-  assert.equal(manifest.extension, "/projects/hr/ext.js");
+  assert.equal(manifest.name, "hr-diy");
+  assert.equal(manifest.agent, "/api/hr-diy/invocations");
+  assert.equal(manifest.extension, "/projects/hr-diy/ext.js");
 });
 
 test("the platform's default palette applies: the manifest carries no theme", () => {

@@ -1,15 +1,16 @@
 {
-  "name": "hr",
-  "label": "HR Assistant",
-  "description": "A Strands orchestrator routes each question to Profile, Pay and Travel sub-agents; every change is confirmed before it commits.",
-  "agent": "/api/hr/invocations",
+  "name": "hr-diy",
+  "label": "HR Assistant (DIY)",
+  "assistant": "HR Assistant",
+  "description": "The do-it-yourself version: a Strands orchestrator routes each question to Profile, Pay and Travel sub-agents; every change is confirmed before it commits.",
+  "agent": "/api/hr-diy/invocations",
   "features": {
     "history": false,
     "feedback": false,
     "logging": true,
     "rum": true
   },
-  "extension": "/projects/hr/ext.js",
+  "extension": "/projects/hr-diy/ext.js",
   "suggestions": [
     {
       "label": "Update my information",

@@ -145,8 +145,8 @@ def test_platform_gateway_role_may_invoke_the_orchestrator(template):
 def test_page_url_is_the_platform_project_path(template):
     site = _ssm_parameter_ref(template, "/guppi/platform/site-url")
     outputs = template.to_json()["Outputs"]
-    assert outputs["SiteUrl"]["Value"] == {"Fn::Join": ["", [site, "p/hr/"]]}
-    assert outputs["AgentPath"]["Value"] == "/api/hr/invocations"
+    assert outputs["SiteUrl"]["Value"] == {"Fn::Join": ["", [site, "p/hr-diy/"]]}
+    assert outputs["AgentPath"]["Value"] == "/api/hr-diy/invocations"
     for kept in ("AgentsGatewayUrl", "ToolsGatewayUrl", "RuntimeArn", "KnowledgeBaseId"):
         assert kept in outputs
 
@@ -203,7 +203,7 @@ def _platform_target(template) -> dict:
 def test_target_is_runtime_with_jwt_passthrough(template):
     target = _platform_target(template)
     props = target["Properties"]
-    assert props["Name"] == "hr"
+    assert props["Name"] == "hr-diy"
     assert props["GatewayIdentifier"] == _ssm_parameter_ref(
         template, "/guppi/platform/edge-gateway-id"
     )

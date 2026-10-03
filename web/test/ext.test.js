@@ -11,7 +11,7 @@ function fakeGuppi() {
   const threadHooks = [];
   const statuses = [];
   const guppi = {
-    project: { name: "hr" },
+    project: { name: "hr-diy" },
     renderers: {
       tool() {},
       event(type, fn) {
@@ -121,7 +121,7 @@ test("thread state keeps only an object snapshot and hands out copies", () => {
 });
 
 test("withThreadState replaces the run's state and keeps the rest", () => {
-  const run = { ...RUN, forwardedProps: { project: "hr" }, state: { stale: true } };
+  const run = { ...RUN, forwardedProps: { project: "hr-diy" }, state: { stale: true } };
   assert.deepEqual(withThreadState(run, { activeDomain: "pay" }), {
     ...run,
     state: { activeDomain: "pay" },

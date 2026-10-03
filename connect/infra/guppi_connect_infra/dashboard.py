@@ -101,8 +101,8 @@ class BridgeDashboard(Construct):
         dashboard.add_widgets(
             cw.TextWidget(
                 markdown=(
-                    "## hr-connect bridge\n"
-                    "AG-UI runs from `https://chat.dengler.io/p/hr-connect/` as Amazon Connect "
+                    "## hr bridge (Connect)\n"
+                    "AG-UI runs from `https://chat.dengler.io/p/hr/` as Amazon Connect "
                     "chat turns. One run line per turn in the Runtime log group; `closed` means "
                     "the contact flow escalated or the chat ended, and the next message starts a "
                     "new contact."
