@@ -225,15 +225,15 @@ class FakeWarmer:
     def __init__(self):
         self.calls = []
 
-    async def __call__(self, token, thread_id):
-        self.calls.append((token, thread_id))
+    async def __call__(self, token, thread_id, domain):
+        self.calls.append((token, thread_id, domain))
 
 
 def test_a_warm_message_opens_the_session_without_a_model_run(runner):
     warmer = FakeWarmer()
     with TestClient(server.build_app("profile", runner, warmer)) as client:
         result = send(client, "warm", metadata={"warm": True}, context="contact-1")
-    assert warmer.calls == [("user-token", "contact-1")]
+    assert warmer.calls == [("user-token", "contact-1", "profile")]
     assert runner.calls == []
     assert [p["kind"] for p in result["parts"]] == ["data"]
     assert result["parts"][0]["data"] == {"domain": "profile", "warm": True}
@@ -258,3 +258,59 @@ async def test_warm_domain_leases_the_threads_session(monkeypatch):
     await server.warm_domain("tok", "contact-1")
     await server.warm_domain("tok", "contact-1")
     assert opened == [("tok", "contact-1")]
+
+
+class ToolClient:
+    """An MCP client whose tool calls answer from a table and are counted."""
+
+    def __init__(self, answers):
+        self.answers = answers
+        self.calls = []
+
+    def call_tool_sync(self, tool_use_id, name, arguments=None):
+        self.calls.append((name, arguments))
+        text = self.answers.get(name)
+        if text is None:
+            return {"status": "error", "toolUseId": tool_use_id, "content": [{"text": "no"}]}
+        return {"status": "success", "toolUseId": tool_use_id, "content": [{"text": text}]}
+
+
+async def test_the_warm_start_reads_the_record_once_for_the_thread(monkeypatch):
+    client = ToolClient({"hr___get_profile": '{"home_address": "25 Ponce de Leon Ave"}'})
+    monkeypatch.setattr(server, "SESSIONS", server.McpSessions(lambda key: (client, [])))
+    monkeypatch.setattr(server, "SNAPSHOTS", server.Snapshots())
+    await server.warm_domain("tok", "contact-1", "profile")
+    await server.warm_domain("tok", "contact-1", "profile")
+    assert client.calls == [("hr___get_profile", {})]
+    assert "25 Ponce" in server.SNAPSHOTS.get(("tok", "contact-1", "profile"))
+
+
+def test_a_failed_read_leaves_the_model_to_read_it_itself():
+    from hr_agent.agents.snapshot import read_record
+
+    client = ToolClient({"hr___get_direct_deposit": "{}"})  # list_pay_statements fails
+    assert read_record(client, "pay", "hr___") is None
+    assert read_record(client, "travel", "hr___") is None
+
+
+def test_the_record_and_passages_reach_the_prompt():
+    from hr_agent.agents.snapshot import prompt_paragraph
+
+    text = prompt_paragraph("get_profile: {...}", "Buddy passes: 8 per year")
+    assert "<record>" in text and "get_profile: {...}" in text
+    assert "<passages>" in text and "8 per year" in text
+    assert prompt_paragraph(None, None) == ""
+
+
+def test_a_snapshot_expires_and_can_be_dropped():
+    from hr_agent.agents.snapshot import SNAPSHOT_SECONDS, Snapshots
+
+    now = [0.0]
+    snapshots = Snapshots(clock=lambda: now[0])
+    snapshots.put(("t", "c", "profile"), "record")
+    assert snapshots.get(("t", "c", "profile")) == "record"
+    now[0] += SNAPSHOT_SECONDS + 1
+    assert snapshots.get(("t", "c", "profile")) is None
+    snapshots.put(("t", "c", "profile"), "record")
+    snapshots.drop(("t", "c", "profile"))
+    assert snapshots.get(("t", "c", "profile")) is None

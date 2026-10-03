@@ -54,7 +54,8 @@ else
   if [[ -n "${GUPPI_ALARM_EMAIL:-}" ]]; then
     params+=(--parameters "AlarmEmail=$GUPPI_ALARM_EMAIL")
   fi
-  uv run cdk deploy GuppiConnect --outputs-file "$OUTPUTS" "${params[@]}" "$@"
+  # ${params[@]+...}: macOS bash 3.2 treats an empty array as unbound under set -u.
+  uv run cdk deploy GuppiConnect --outputs-file "$OUTPUTS" ${params[@]+"${params[@]}"} "$@"
   # AgentCore creates the runtime's log group without a retention; keep 30 days.
   log_group="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["GuppiConnect"]["RuntimeLogGroup"])' "$OUTPUTS")"
   aws logs put-retention-policy --log-group-name "$log_group" --retention-in-days 30

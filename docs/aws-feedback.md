@@ -33,8 +33,11 @@ tool call. Every hop below is AWS.
 - Ask: accept `traceparent` on `SendMessage` (or message metadata) and expose it to data
   requests, for example as `{System.traceparent}`; or let the designer emit OTLP spans for
   its nodes with the incoming trace as parent.
-- Workaround planned: link by id. The canvas already sends the contact id as
-  `X-Hr-Thread-Id`; spans on both sides carry it.
+- Workaround: link by id. Corrected 3 Oct: until `connect-hardening` no span carried the
+  id (critique finding 18). Now the bridge's run span has `connect.contact_id`, and each
+  sub-agent's request span has `hr.thread_id` (the contact id the canvas sends as the A2A
+  context) and `hr.domain`, with the trace id in the sub-agent's run record, so the two
+  traces of one turn join on that attribute.
 
 ### TC2. The designer's own steps have no traces, and logs arrive late
 
@@ -95,23 +98,31 @@ tool call. Every hop below is AWS.
 ### TC6. The bridge's exports to the AgentCore default endpoints fail a third of the time
 
 - Date: 2 Oct 2026. Service: AgentCore Runtime (default trace and log export). Status:
-  **open** (avoided by sending the bridge's traces to Dynatrace).
+  **to verify** (retest with the documented role; traces avoided by sending them to
+  Dynatrace).
 - Expected: the default OTLP export from a runtime succeeds or fails consistently.
 - Happened: on the connect bridge runtime, about a third of span and log batches answered
   `403 Forbidden` from the plain OTLP exporter, during turns, while the rest arrived. The
-  HR sub-agents, with the same execution role policy, showed none. Pinning ADOT 0.19.0
-  instead of 0.21.0 did not change it, and the IAM policy simulator gave the same answer
-  for both roles.
+  HR sub-agents showed none. Pinning ADOT 0.19.0 instead of 0.21.0 did not change it.
+  Corrected 3 Oct (critique finding 18): the two roles are not the same. The bridge's
+  hand-written role (`connect/infra/guppi_connect_infra/bridge.py`) lacks
+  `logs:PutResourcePolicy` and the workload access token actions that the HR runtimes'
+  role grants (`infra/hr_super_agent_infra/runtime_role.py`), so the comparison does not
+  isolate AgentCore. Log export still fails (X7); span failures stopped once traces went
+  to Dynatrace.
 - Evidence: log group `/aws/bedrock-agentcore/runtimes/guppi_connect_bridge-6MsqS747nh-DEFAULT`,
   2 Oct (about 140 errors that day); `connect/docs/platform-plan.md` (open items).
-- Ask: a look at what differs per batch; the bridge restarts its process often (11
-  starts in a few minutes), which may matter.
+- Ask, after a retest with the documented execution role: a look at what differs per
+  batch. The bridge starts its process 10 to 45 times an hour without traffic (the
+  critique's count), so the 11 starts noted first are its normal state, not a lead.
 
 ### TC7. Transaction Search at 1 percent hides most spans
 
 - Date: 3 Oct 2026. Service: X-Ray Transaction Search. Status: **confirmed** (the POC's
   own setting).
-- Happened: with indexing at 1 percent (set in guppi-hr's stack), the sub-agents' spans
+- Happened: with indexing at 1 percent (the account's rule comes from the GuppiGpt stack;
+  guppi-hr's copy is created only with `own_account_singletons`, which is off; corrected 3
+  Oct), the sub-agents' spans
   for a slow turn were not in `aws/spans`, so the slow call could not be explained there.
 - Ask: index error and slow spans regardless of the percentage, or make the setting's
   effect clearer where spans are searched.
@@ -153,8 +164,8 @@ tool call. Every hop below is AWS.
 | --- | --- | --- | --- |
 | C1 | 2 Oct | The chat contact flow starts only after the customer's WebSocket connects; with connection credentials alone the transcript stays empty. One connect and close is enough, then `SendMessage` and `GetTranscript` carry the conversation (phase 0). | worked around |
 | C2 | 2 Oct | A contact attribute updated with `UpdateContactAttributes` never reaches a running designer session, so a refreshed token needs a new contact (phase 0). | worked around |
-| C3 | 2 Oct | `GetContactAttributes` on a finished contact still returns `hrToken`, so the employee's token stays on the contact record for its lifetime unless cleared (spike fact 13). | worked around (blanked after the first reply) |
-| C4 | 3 Oct | A new chat costs about 5 s before the first message can be sent: `StartChatContact`, the participant connection, the WebSocket connect, and the flow's greeting. Nothing starts a contact ahead of the first message. | open |
+| C3 | 2 Oct | `GetContactAttributes` on a finished contact still returns `hrToken`, so the employee's token stays on the contact record for its lifetime unless cleared (spike fact 13). Corrected 3 Oct: the first workaround blanked it after the first relayed reply, which left it on warm-only and failed contacts (two live contacts held one; critique finding 1). Since `connect-hardening` the bridge blanks it right after the greeting on every path, since the designer keeps the value it read at start (C2). The ask stands: a way to pass a credential to the designer that is not a contact attribute. | worked around (blanked after the greeting) |
+| C4 | 3 Oct | A new chat costs about 5 s before the first message can be sent: `StartChatContact`, the participant connection, the WebSocket connect, and the flow's greeting. The POC hides it with its own warm start (D39); the ask is for Connect to make the start faster or let a client start a contact ahead of the first message without holding a chat for its whole duration. | open |
 | C5 | 2 Oct | The designer's MCP data request type fails every call with "data request could not be prepared" before any HTTP request; a plain HTTP JSON-RPC `tools/call` works. The console's Sync may be the missing step; the SDK has no call for it (spike fact 11). | open |
 | C6 | 2 Oct | Headers set only on a flow node's data request are not sent; they must be declared on the data request itself (spike fact 1). | worked around |
 | C7 | 2 Oct | A field-map payload fills only top-level placeholders and over-escapes quotes; a JSON string payload works (spike fact 2). A field-map payload also adds every context variable, the token included, to the body as `nlx_context` (phase 0). | worked around |
@@ -163,8 +174,8 @@ tool call. Every hop below is AWS.
 | C10 | 2 Oct | The Agentic CX block needs speech and audio filler configuration even for chat, or the contact flow import fails (spike fact 10). | worked around |
 | C11 | 2 Oct | A data request node's timeout caps at 30 s, where the code orchestrator allows 120 s (spike report). | open |
 | C12 | 2 Oct | Intent routing varies run to run on the same canvas: the PTO question went to EscalationFlow once and answered the next time; the routing eval's u52 follow-up missed once in a re-run (54 of 60 against 55); a PTO question right after a buddy pass question stayed in Travel. No setting pins routing for a test run (`connect/docs/platform-report.md`). | to verify |
-| C13 | 3 Oct | The 2.5 s the bridge waits after the last reply, before it ends the turn, exists because the transcript has no "turn complete" signal: the canvas can send several messages for one input, and only silence says it is done. | open |
-| C14 | 3 Oct | The first data request of a contact to a sub-agent reaches it much later than the next one: the designer's `DataRequestsRequested` at 05:01:52.473 UTC and the Profile agent's request at 53.785 (1.31 s), against 0.40 s for the follow-up at 05:02:20.400. The canvas names the runtime session `{conversationId}-{domain}`, so the first call opens a new runtime session through the agents gateway (AgentCore); the Profile microVM itself had been running since 04:38, so it is session setup, not a container start. The routing model step is 0.43 to 0.47 s and Connect hands a message to the designer in 0.32 s. | open |
+| C13 | 3 Oct | The transcript has no "turn complete" signal, and the canvas can send several messages for one input (ClarifyFlow's re-ask sends two), so a client can only guess the end of a turn from silence: the bridge waited 2.5 s, then 0.8 s, and a reply after the window showed up as the answer to the next question (critique finding 4). Corrected 3 Oct: since `connect-hardening` every reply node sends a hidden `[flow] end` line after its text, which the bridge ends the turn on; a generative journey's own answer cannot be followed by a node, so it still ends on silence. The ask: a turn-complete event from the designer, journeys included. | worked around (except journeys) |
+| C14 | 3 Oct | The first data request of a contact to a sub-agent reaches it much later than the next one: the designer's `DataRequestsRequested` at 05:01:52.473 UTC and the Profile agent's request at 53.785 (1.31 s), against 0.40 s for the follow-up at 05:02:20.400. The canvas names the runtime session `{conversationId}-{domain}`, so the first call opens a new runtime session through the agents gateway (AgentCore); the Profile microVM itself had been running since 04:38, so it is session setup, not a container start. The routing model step is 0.43 to 0.47 s and Connect hands a message to the designer in 0.32 s. | to verify (one pair of runs) |
 
 ## Amazon Bedrock AgentCore
 
@@ -176,7 +187,7 @@ tool call. Every hop below is AWS.
 | A4 | 2 Oct | A runtime's execution role reading a private git dependency at image build needs a BuildKit secret; nothing AgentCore-specific, noted because the starter kit's Dockerfile has no hook for it (guppi-hr D29). | worked around |
 | A5 | 3 Oct | Behind a gateway, an MCP server runtime starts a new runtime session, so a new microVM, for every new MCP session. A client that opens a session per request pays a cold start on every tool call: the tools runtime's log streams were created at 04:18:26.06 and 04:18:43.33 UTC, one per Profile agent request, and each `tools/call` took about 1.2 s against 0.2 s inside the server. Nothing in the gateway's responses or spans says a cold start happened (see TC9). Revised the same day: with the client's session kept (guppi-hr D38), the two calls of one kept client session reached two different microVMs, both already running (log streams created at 04:38:49 and 04:38:51), and each still spent about 0.8 s outside the server (A6). How the gateway maps a client session to runtime sessions is not visible, and the cold start explains only part of the 1 s. | to verify |
 | A6 | 3 Oct | Behind a gateway, every `tools/call` to an MCP server runtime is its own MCP session on the target: the server logs an `initialize`, a `notifications/initialized` and the `tools/call` as three requests on a new connection, after one "Invalid HTTP request received" warning, even when the client reuses one gateway session. On a warm microVM the follow-up's call (trace `6ac087344e428cc85ef240f016d342ec`) took 965 ms at the client against 157 ms in the server: 0.54 s from the client's send to the target answering `initialize`, then about 0.12 s for each of the two handshake steps. Every running tools microVM also gets an MCP ping every 2 s on a second connection. The ask: reuse the target session for a client session, or skip the handshake for a stateless target, and say in a span where the time goes (TC9). | open |
-| A7 | 3 Oct | A request through an AgentCore Gateway runtime target reaches the runtime's handler 0.5 to 0.6 s after the browser sends it, on a runtime session that is already running: the page's fetch for the follow-up started at 05:02:18.806 UTC and the bridge's server span at 05:02:19.420; a warm start at 05:03:38.413 reached it at 05:03:38.936, and the next request at 05:03:44.907 at 05:03:45.405. The path is CloudFront, the edge gateway's runtime target and the runtime; with no gateway spans (TC9) the split between them is unknown. | open |
+| A7 | 3 Oct | A request through an AgentCore Gateway runtime target reaches the runtime's handler 0.5 to 0.6 s after the browser sends it, on a runtime session that is already running: the page's fetch for the follow-up started at 05:02:18.806 UTC and the bridge's server span at 05:02:19.420; a warm start at 05:03:38.413 reached it at 05:03:38.936, and the next request at 05:03:44.907 at 05:03:45.405. The path is CloudFront, the edge gateway's runtime target and the runtime; with no gateway spans (TC9) the split between them is unknown. Each figure compares the browser's clock with the server's, and each is one sample. | to verify |
 
 ## Amazon Cognito
 

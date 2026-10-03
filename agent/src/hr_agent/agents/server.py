@@ -13,6 +13,7 @@ state (D23).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -38,6 +39,7 @@ from a2a.types import (
 
 from hr_agent.agents.domains import DOMAINS, Domain
 from hr_agent.agents.mcp_sessions import McpSessions
+from hr_agent.agents.snapshot import RECORD_READS, Snapshots, prompt_paragraph, read_record, search_policy
 from hr_agent.pending import (
     PENDING_KEY,
     committed_in_messages,
@@ -70,8 +72,9 @@ and do not guess.
 
 WRITE_RULE = """
 Your tools act on this employee's own records. When the employee asks about one of their
-details ("what about my emergency contact?"), look it up and say what is on file before
-anything else; ask for new values only if they want to change it. A change always takes
+details ("what about my emergency contact?"), look it up (in the record below, when there
+is one) and say what is on file before anything else; ask for new values only if they
+want to change it. A change always takes
 two turns: first call
 the matching propose tool, then tell the employee the exact change it returned and ask
 them to confirm. Call commit_change with that proposal_id only when their next message
@@ -174,6 +177,7 @@ def _open_session(key: tuple[str, str], settings: Settings | None = None):
 
 
 SESSIONS = McpSessions(_open_session)
+SNAPSHOTS = Snapshots()
 
 
 def bearer_token(headers: dict[str, str]) -> str | None:
@@ -197,9 +201,20 @@ async def run_domain(
 
     settings = settings or Settings()
     async with SESSIONS.lease((token, thread_id), token_expires_at=token_expires_at(token)) as (
-        _client,
+        client,
         listed,
     ):
+        # What is on file, or for travel the policy passages for the question, read before
+        # the model so a read is one model call (snapshot.py; latency log L15, L16).
+        key = (token, thread_id, domain.name)
+        record = SNAPSHOTS.get(key)
+        if record is None and domain.name in RECORD_READS:
+            record = await asyncio.to_thread(read_record, client, domain.name, settings.hr_tool_prefix)
+            if record:
+                SNAPSHOTS.put(key, record)
+        passages = None
+        if domain.name not in RECORD_READS:
+            passages = await asyncio.to_thread(search_policy, client, text)
         allowed = domain.tool_names(settings.hr_tool_prefix)
         tools = [tool for tool in listed if tool.tool_name in allowed]
         missing = allowed - {tool.tool_name for tool in tools}
@@ -212,7 +227,7 @@ async def run_domain(
                 max_tokens=1024,
                 temperature=0.3,
             ),
-            system_prompt=system_prompt(domain, pending),
+            system_prompt=system_prompt(domain, pending) + prompt_paragraph(record, passages),
             tools=tools,
             messages=[dict(message) for message in history],
             callback_handler=None,
@@ -223,19 +238,27 @@ async def run_domain(
         tool_calls = sum(
             1 for message in added for block in message.get("content", []) if "toolUse" in block
         )
+        committed = committed_in_messages(added, settings.hr_tool_prefix)
+        if committed:
+            SNAPSHOTS.drop(key)
         return DomainResult(
             reply=str(result).strip(),
             pending=pending_after_messages(added, settings.hr_tool_prefix),
             tool_calls=tool_calls,
-            committed=committed_in_messages(added, settings.hr_tool_prefix),
+            committed=committed,
         )
 
 
-async def warm_domain(token: str, thread_id: str) -> None:
+async def warm_domain(token: str, thread_id: str, domain: str = "", settings: Settings | None = None) -> None:
     """A warm start (D41): open this caller's MCP session for the thread and list its tools,
-    so the thread's first real request finds them ready. No model call."""
-    async with SESSIONS.lease((token, thread_id), token_expires_at=token_expires_at(token)):
-        pass
+    and read what is on file for the domain, so the thread's first real request finds all
+    of it ready. No model call."""
+    settings = settings or Settings()
+    async with SESSIONS.lease((token, thread_id), token_expires_at=token_expires_at(token)) as (client, _tools):
+        if domain in RECORD_READS and SNAPSHOTS.get((token, thread_id, domain)) is None:
+            record = await asyncio.to_thread(read_record, client, domain, settings.hr_tool_prefix)
+            if record:
+                SNAPSHOTS.put((token, thread_id, domain), record)
 
 
 def mark_span(record: dict[str, Any], domain: str, thread_id: str) -> None:
@@ -256,7 +279,7 @@ def mark_span(record: dict[str, Any], domain: str, thread_id: str) -> None:
 
 
 Runner = Callable[..., Awaitable[DomainResult]]
-Warmer = Callable[[str, str], Awaitable[None]]
+Warmer = Callable[[str, str, str], Awaitable[None]]
 
 
 class DomainExecutor(AgentExecutor):
@@ -279,7 +302,7 @@ class DomainExecutor(AgentExecutor):
             if metadata.get("warm") is True:
                 # The Connect bridge's warm start: the runtime session for this thread
                 # exists from now on, and so does the caller's MCP session.
-                await self._warm(token, context.context_id or "")
+                await self._warm(token, context.context_id or "", self.domain.name)
                 record.update(outcome="warm", tool_calls=0)
                 warmed = [Part(root=DataPart(data={"domain": self.domain.name, "warm": True}))]
                 await self._reply(context, event_queue, warmed, record, started)

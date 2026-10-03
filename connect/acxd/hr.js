@@ -17,7 +17,7 @@
  * - PolicyFlow is a generative journey whose tool is the HrTools MCP data request on the
  *   tools gateway, with only read and ticket tools enabled.
  * - EscalationFlow opens an HR ticket through the tools gateway, gives the employee its
- *   id and ends the conversation; nobody staffs a Connect queue (D42).
+ *   id and ends the conversation; nobody staffs a Connect queue (D43).
  * - Every reply node that ends a turn sends END_OF_TURN after its text, a hidden line the
  *   bridge ends the turn on instead of waiting for silence (D42). A generative journey's
  *   own answers cannot be followed by a node, so those turns still end on silence, and
