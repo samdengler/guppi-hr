@@ -64,14 +64,16 @@ Testing was kept to a budget: the harness ran 10 rounds per configuration for th
 baseline and the snapshot, then 5 for checks, and the 60-chat routing eval was not rerun,
 since nothing in this work changed routing.
 
-## Seen while testing, not changed
+## Seen while testing
 
-- A policy question asked after a domain question stays with that domain's sub-agent,
-  which declines it ("How much PTO do I earn per year?" after a profile question). The
-  domain flows treat a PolicyFlow capture as "unrecognized" because the designer files
-  unmatched input under PolicyFlow (D6). `System.capturedIntent` tells the two apart
-  (`NLX.Unknown` for unmatched), so a domain flow could hand a recognized policy question
-  to PolicyFlow; it needs a routing check before it ships.
+- A policy question asked after a domain question stayed with that domain's sub-agent,
+  which declined it ("How much PTO do I earn per year?" after a profile question). The
+  domain flows treated every PolicyFlow capture as "unrecognized", because the designer
+  files unmatched input under PolicyFlow too. Changed (D45): a capture with an intent
+  (`System.capturedIntent` not `NLX.Unknown`) now leaves the domain flow for PolicyFlow.
+  Checked live on 3 Oct: the PTO question got the policy answer, while "And what is my
+  emergency contact?" and "Can my parents use them?" stayed with their sub-agents and
+  "Thanks, that works" reached GoodbyeFlow.
 - "thanks, that's all" in a new conversation went to the journey instead of GoodbyeFlow
   once (routing varies run to run, C12).
 

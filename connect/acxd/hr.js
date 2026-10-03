@@ -210,6 +210,16 @@ const stayEdges = (selfId, to, name) => [
   { to, name: `${name}Self`, when: [{ left: { type: 'captured_flow' }, operator: 'eq', right: { type: 'constant', value: selfId } }] },
   { to, name: `${name}Unknown`, when: [{ left: { type: 'captured_flow' }, operator: 'eq', right: { type: 'constant', value: 'PolicyFlow' } }] },
 ];
+/**
+ * A question the application recognizes as a policy question (PolicyFlow with an intent),
+ * as opposed to input it does not recognize, which it also files under PolicyFlow but with
+ * the intent NLX.Unknown. Only the first leaves a domain flow (seen 3 Oct: "How much PTO
+ * do I earn per year?" after a profile question went to the Profile agent, which declined).
+ */
+const recognizedPolicy = [
+  { left: { type: 'captured_flow' }, operator: 'eq', right: { type: 'constant', value: 'PolicyFlow' } },
+  { left: { type: 'system', name: 'System.capturedIntent' }, operator: 'neq', right: { type: 'constant', value: 'NLX.Unknown' } },
+];
 const utteranceMatches = (regex) => [
   { left: { type: 'system', name: 'System.utterance' }, operator: 'matches_regex', right: { type: 'constant', value: regex } },
 ];
@@ -306,6 +316,7 @@ function domainFlow(d) {
     .add('listen', 'user_input', {
       children: [
         { to: 'shift', when: capturedOther(d.flowId), name: 'topicShift' },
+        { to: 'shift', when: recognizedPolicy, name: 'policyShift' },
         ...stayEdges(d.flowId, 'call', 'followUp'),
       ],
     })
