@@ -2,7 +2,8 @@
 
 The runtime keeps nothing in memory between requests (a new microVM can take any run), so
 each AG-UI thread's chat contact is a DynamoDB item keyed by the caller's hashed subject and
-the thread id: the contact id, the participant connection token and its expiry, the expiry
+the thread id: the contact id, the participant token (for a WebSocket per run), the
+participant connection token and its expiry, the expiry
 of the employee token the contact was started with, the transcript items already relayed,
 and whether the conversation has ended. Items expire a day after their last use.
 
@@ -33,6 +34,8 @@ class Session:
     seen: list[str] = field(default_factory=list)
     token_cleared: bool = False
     closed: bool = False
+    # Empty for a contact stored before change 5; that contact's runs poll the transcript.
+    participant_token: str = ""
 
     def remember(self, ids: list[str]) -> None:
         for item_id in ids:
@@ -67,6 +70,7 @@ class DynamoSessionStore:
             seen=list(item.get("seen", [])),
             token_cleared=bool(item.get("tokenCleared", False)),
             closed=bool(item.get("closed", False)),
+            participant_token=str(item.get("participantToken", "")),
         )
 
     def put(self, session: Session) -> None:
@@ -80,6 +84,7 @@ class DynamoSessionStore:
                 "seen": session.seen,
                 "tokenCleared": session.token_cleared,
                 "closed": session.closed,
+                "participantToken": session.participant_token,
                 "ttl": int(time.time()) + ITEM_TTL_SECONDS,
             }
         )

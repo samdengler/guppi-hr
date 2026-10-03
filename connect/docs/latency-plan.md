@@ -1,6 +1,6 @@
 # Latency plan for /p/hr/
 
-Status: change 4 built and measured (D39, results below); changes 6 and 7 measured with nothing to build (`docs/latency-log.md`, L9 and L10); change 10 built and measured (D41): a new chat's first reply at the bridge is 5.06 s, from 8.8 s before change 4. Changes 1 to 3 built and measured on 3
+Status: change 4 built and measured (D39, results below); changes 6 and 7 measured with nothing to build (`docs/latency-log.md`, L9 and L10); change 10 built and measured (D41): a new chat's first reply at the bridge is 5.06 s, from 8.8 s before change 4. Change 5 built and measured: replies arrive over a WebSocket the run opens after its send, 0.2 s after the canvas answers instead of 0.35 to 0.55 s. Changes 1 to 3 built and measured on 3
 October 2026 (results below): a follow-up's first reply went from 5.8 s to 4.1 s and a new
 chat's from 12.1 s to 8.8 s. Two of them changed on the way, after a test on the
 development flow:

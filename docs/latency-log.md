@@ -30,6 +30,7 @@ Status values: **kept** (deployed and measured), **built** (deployed, not yet me
 | L9 | 3 Oct | Prompt caching for the sub-agents' system prompt and tools on Bedrock | sub-agent model calls | Not possible: Haiku 4.5 on Bedrock caches a prefix of 4,096 tokens or more, and the sub-agents' calls send 1,048 to 3,009 input tokens (`chat` spans, 05:01 to 05:04 UTC); a cache point below the minimum is ignored | dropped | change 6 |
 | L10 | 3 Oct | A faster model for the canvas's routing step | canvas routing | Not needed: the designer's log puts the routing model at 0.43 to 0.47 s (`ModelStart` to `ModelEnd`); the rest of the 1.2 to 2.2 s is Connect handing the message to the designer (0.32 s) and the agents gateway reaching the sub-agent (0.4 s, 1.3 s on a contact's first call) | dropped | change 7 |
 | L11 | 3 Oct | Warm the sub-agents during the warm start: an A2A warm message per sub-agent on the canvas's runtime session and thread, which opens the runtime session and the sub-agent's MCP session without a model call | agents gateway and sub-agent | A new chat's first reply at the bridge 6.9 s to 5.06 s (address, 05:16:24 UTC): `SendMessage` to the Profile agent 2.19 s to 1.42 s, and the Profile agent 4.07 s to 2.83 s with no `tools/list` (first model call 0.08 s after the request, against 0.84 s). The warm start itself grew from about 2.3 s to 4.8 s, still inside a pause for typing | kept | D41, change 10 |
+| L12 | 3 Oct | Relay replies as Connect pushes them: each run opens a customer WebSocket from a fresh `CreateParticipantConnection` on the stored participant token, right after its send, and keeps the new connection token; polling stays as the fallback | reply relay | From the designer's `NluResponded` to the bridge's first delta: 0.35 s and 0.55 s polling (05:01:57, 05:02:23 UTC) to 0.22 s and 0.19 s pushed (05:23:58, 05:24:10). What is left is Connect's own delivery to the socket. A follow-up's first reply at the bridge was 4.36 s | kept | change 5 |
 
 ## Time found but not yet cut
 
@@ -43,7 +44,7 @@ Where a turn's time went on 3 October after L1 to L7 (05:01 to 05:04 UTC):
 | Canvas routing model (Connect's NLU) | 0.43 s | 0.47 s |
 | Agents gateway to the sub-agent (C14) | 1.31 s | 0.40 s |
 | Sub-agent (two model calls and one tool or search call) | 4.1 to 4.5 s | 2.8 s |
-| Canvas relays the reply; the bridge's next poll | 0.45 to 0.7 s | 0.65 s |
+| Canvas relays the reply to the bridge (0.2 s after L12) | 0.45 to 0.7 s | 0.65 s |
 
 - The tools gateway adds about 0.8 s to every tool call on a warm target, because it
   runs an MCP `initialize` and `notifications/initialized` on the target before each call

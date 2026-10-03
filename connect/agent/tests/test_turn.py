@@ -48,7 +48,8 @@ class FakeParticipant:
         self.items.append(item)
 
     def create_participant_connection(self, **kwargs):
-        if self.greeting:
+        # The canvas greets once, when the contact's first connection comes up.
+        if self.greeting and not self.items:
             self._add(Type="MESSAGE", ParticipantRole="SYSTEM", Content=self.greeting)
         return {
             "ConnectionCredentials": {"ConnectionToken": "ct", "Expiry": "2099-01-01T00:00:00Z"},
@@ -65,12 +66,46 @@ class FakeParticipant:
         return {"Transcript": list(self.items)}
 
 
-class FakeClients:
+class FakeSocket:
+    """Pushes the transcript items added after it opened, as Connect's aws/chat frames."""
+
     def __init__(self, participant: FakeParticipant) -> None:
+        self.participant = participant
+        self.next = len(participant.items)
+        self.sent: list[str] = []
+        self.closed = False
+
+    def send(self, frame: str) -> None:
+        self.sent.append(frame)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeClients:
+    def __init__(self, participant: FakeParticipant, websocket: bool = True) -> None:
         self.connect = FakeConnect()
         self.participant = participant
         self.touched: list[str] = []
         self.posted: list[dict] = []
+        self.websocket = websocket
+        self.sockets: list[FakeSocket] = []
+
+    def open_websocket(self, url: str) -> FakeSocket:
+        if not self.websocket:
+            raise OSError("refused")
+        socket = FakeSocket(self.participant)
+        self.sockets.append(socket)
+        return socket
+
+    @staticmethod
+    def receive(ws: FakeSocket, timeout: float) -> str | None:
+        items = ws.participant.items
+        if ws.next >= len(items):
+            return None
+        item = items[ws.next]
+        ws.next += 1
+        return json.dumps({"topic": "aws/chat", "content": json.dumps(item)})
 
     def touch_websocket(self, url: str) -> None:
         self.touched.append(url)
@@ -511,3 +546,88 @@ async def test_no_sub_agent_warm_for_a_contact_already_running():
     again = ConnectTurn(token, store, GATEWAY, clients, sleep=no_sleep)
     await again.warm(warm_input())
     assert clients.posted == []
+
+
+# ---- replies pushed over the customer WebSocket (change 5) ----------------------------
+
+
+class LateParticipant(FakeParticipant):
+    """The canvas answers only after the run's WebSocket is open, as it does in Connect."""
+
+    def __init__(self, script) -> None:
+        super().__init__(script)
+        self.later: list[dict] = []
+        self.connections = 0
+
+    def create_participant_connection(self, **kwargs):
+        self.connections += 1
+        conn = super().create_participant_connection(**kwargs)
+        conn["ConnectionCredentials"]["ConnectionToken"] = f"ct-{self.connections}"
+        return conn
+
+    def send_message(self, Content, **kwargs):
+        self.sent.append(Content)
+        self._add(Type="MESSAGE", ParticipantRole="CUSTOMER", Content=Content)
+        self.later.extend(self.script.get(Content, []))
+
+
+class PushingClients(FakeClients):
+    def receive(self, ws, timeout):
+        if self.participant.later:
+            for reply in self.participant.later:
+                self.participant._add(**reply)
+            self.participant.later = []
+        return FakeClients.receive(ws, timeout)
+
+
+async def test_replies_arrive_over_the_runs_websocket(monkeypatch):
+    monkeypatch.setattr(turn_module, "QUIET_AFTER_REPLY", 0.05)
+    participant = LateParticipant({"hello": [bot("First."), bot("Second.")]})
+    clients = PushingClients(participant)
+    store = MemorySessionStore()
+    turn = ConnectTurn(jwt(), store, SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "hello")
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["First.", "Second."]
+    assert turn.usage()["connect_pushed"] is True
+    assert len(clients.sockets) == 1 and clients.sockets[0].closed
+    # The run's new connection token replaced the stored one.
+    assert store.get(session_key(jwt(), "t1")).connection_token == "ct-2"
+
+
+async def test_without_a_websocket_the_run_polls():
+    participant = FakeParticipant({"hello": [bot("Polled.")]})
+    clients = FakeClients(participant, websocket=False)
+    turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "hello")
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Polled."]
+    assert turn.usage()["connect_pushed"] is False
+
+
+async def test_a_contact_stored_without_a_participant_token_polls():
+    participant = FakeParticipant({"hello": [bot("Polled.")]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
+    store.get(session_key(token, "t1")).participant_token = ""
+    turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "hello")
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Polled."]
+    assert clients.sockets == [] and turn.usage()["connect_pushed"] is False
+
+
+async def test_a_quiet_stream_sends_heartbeats_until_the_turn_limit(monkeypatch):
+    monkeypatch.setattr(turn_module, "TURN_LIMIT", 0.05)
+    monkeypatch.setattr(turn_module, "HEARTBEAT_SECONDS", 0.001)
+    clients = FakeClients(FakeParticipant({}))
+    turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep)
+    events = await collect(turn, "anyone there?")
+    assert "TEXT_MESSAGE_CONTENT" not in types(events)
+    assert any("aws/heartbeat" in frame for frame in clients.sockets[0].sent)
+
+
+def test_chat_item_reads_only_chat_frames():
+    item = {"Id": "i1", "Type": "MESSAGE", "Content": "hi"}
+    assert turn_module.chat_item(json.dumps({"topic": "aws/chat", "content": json.dumps(item)})) == item
+    assert turn_module.chat_item(json.dumps({"topic": "aws/heartbeat"})) is None
+    assert turn_module.chat_item("not json") is None

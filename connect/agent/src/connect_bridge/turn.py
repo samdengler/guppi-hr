@@ -4,8 +4,10 @@ A thread's first run starts a Connect chat contact on the contact flow that hold
 Agentic CX block, with the caller's token and subject as contact attributes, opens the
 customer's WebSocket once (the flow runs only after it connects), closes it, and skips the
 canvas's greeting. Every run then sends the latest user message with the participant API
-and polls the transcript, relaying each canvas message as an AG-UI text message until the
-canvas has been quiet for a moment. After the first reply the token attribute is blanked,
+and relays each canvas message as an AG-UI text message until the canvas has been quiet for
+a moment. The messages come over a customer WebSocket the run opens beside its send, from
+a fresh URL for the stored participant token (change 5); when that fails, or for a contact
+stored without the token, the run polls the transcript instead. After the first reply the token attribute is blanked,
 so the employee's token does not stay on the contact record (phase 0); a token close to
 expiry gets a new contact, since a running designer session never sees a changed one.
 
@@ -79,6 +81,9 @@ CONTACT_GONE_CODES = ("AccessDeniedException", "ValidationException")
 # "{conversationId}-{domain}", and the conversation id is the contact id.
 WARM_DOMAINS = ("profile", "pay", "travel")
 SUB_AGENT_WARM_TIMEOUT = 15.0
+# Connect closes an idle customer WebSocket; a run that waits longer than this sends a
+# heartbeat.
+HEARTBEAT_SECONDS = 10.0
 # The spike's contact flow says this before transferring to a queue.
 ESCALATION_PREFIX = "[flow] Escalation"
 # Closing lines for a thread whose contact left the canvas. The page renders no CUSTOM
@@ -153,6 +158,31 @@ class ConnectClients:
             return response.status
 
     @staticmethod
+    def open_websocket(url: str) -> Any:
+        """A customer WebSocket, subscribed to the chat and acknowledged by Connect."""
+        import websocket
+
+        ws = websocket.create_connection(url, timeout=10)
+        try:
+            ws.send(json.dumps({"topic": "aws/subscribe", "content": {"topics": ["aws/chat"]}}))
+            ws.recv()
+        except BaseException:
+            ws.close()
+            raise
+        return ws
+
+    @staticmethod
+    def receive(ws: Any, timeout: float) -> str | None:
+        """The next frame, or None when none came within `timeout` seconds."""
+        import websocket
+
+        ws.settimeout(timeout)
+        try:
+            return ws.recv()
+        except websocket.WebSocketTimeoutException:
+            return None
+
+    @staticmethod
     def touch_websocket(url: str) -> None:
         import websocket
 
@@ -208,8 +238,14 @@ class ConnectTurn:
             session = await asyncio.to_thread(self.session_for, thread)
             await asyncio.to_thread(self.send, session, text)
             self.stats["replaced"] = True
+        # The stream opens after the send, so a new connection can never race it; the
+        # canvas takes longer than the open to answer, and the stream's first read of the
+        # transcript catches anything sooner.
+        stream = await asyncio.to_thread(self.open_stream, session)
+        self.stats["pushed"] = stream is not None
         replied = False
-        async for reply in self.replies(session):
+        source = self.pushed(session, stream) if stream is not None else self.replies(session)
+        async for reply in source:
             if reply.kind == "text":
                 replied = True
             else:
@@ -335,6 +371,7 @@ class ConnectTurn:
             connection_token=credentials["ConnectionToken"],
             connection_expires_at=expires_at,
             token_expires_at=token_exp,
+            participant_token=started["ParticipantToken"],
         )
         self.skip_greeting(session)
         log.info("started contact %s", session.contact_id)
@@ -361,6 +398,64 @@ class ConnectTurn:
             Attributes={"hrToken": CLEARED},
         )
         session.token_cleared = True
+
+    # ---- the stream ------------------------------------------------------------------
+
+    def open_stream(self, session: Session) -> Any:
+        """A WebSocket for this run's messages, or None to poll instead."""
+        if not session.participant_token:
+            return None
+        try:
+            conn = self.clients.participant.create_participant_connection(
+                Type=["WEBSOCKET", "CONNECTION_CREDENTIALS"], ParticipantToken=session.participant_token
+            )
+            # A new connection may retire the stored connection token, so the new one
+            # replaces it and is saved with the session at the end of the run.
+            credentials = conn["ConnectionCredentials"]
+            session.connection_token = credentials["ConnectionToken"]
+            expiry = credentials.get("Expiry")
+            if expiry:
+                session.connection_expires_at = _epoch(expiry)
+            return self.clients.open_websocket(conn["Websocket"]["Url"])
+        except Exception as error:  # noqa: BLE001 - polling still works
+            log.warning("no WebSocket for contact %s (%s); polling", session.contact_id, type(error).__name__)
+            return None
+
+    async def pushed(self, session: Session, ws: Any) -> AsyncIterator[Reply]:
+        """Canvas replies as Connect pushes them, until it goes quiet or the turn limit."""
+        try:
+            # Anything that arrived before the subscription took hold.
+            pending = await asyncio.to_thread(self.new_items, session)
+            start = last = time.monotonic()
+            got_reply = False
+            quiet = QUIET_AFTER_REPLY
+            while True:
+                now = time.monotonic()
+                for item in pending:
+                    reply = classify(item)
+                    if reply is None:
+                        continue
+                    got_reply, last, quiet = True, time.monotonic(), quiet_after(reply.text)
+                    yield reply
+                    if reply.kind != "text":
+                        return
+                pending = []
+                now = time.monotonic()
+                limit = TURN_LIMIT - (now - start)
+                wait = min(limit, quiet - (now - last)) if got_reply else limit
+                if wait <= 0:
+                    return
+                frame = await asyncio.to_thread(self.clients.receive, ws, min(wait, HEARTBEAT_SECONDS))
+                if frame is None:
+                    if min(wait, HEARTBEAT_SECONDS) < wait:
+                        await asyncio.to_thread(ws.send, json.dumps({"topic": "aws/heartbeat"}))
+                    continue
+                item = chat_item(frame)
+                if item and item.get("Id") not in session.seen:
+                    session.remember([item["Id"]] if item.get("Id") else [])
+                    pending = [item]
+        finally:
+            await asyncio.to_thread(ws.close)
 
     # ---- the transcript --------------------------------------------------------------
 
@@ -392,6 +487,19 @@ class ConnectTurn:
                     return
             if got_reply and time.monotonic() - last > quiet:
                 return
+
+
+def chat_item(frame: str) -> dict | None:
+    """The transcript item an `aws/chat` frame carries, or None for any other frame."""
+    try:
+        message = json.loads(frame)
+        if message.get("topic") != "aws/chat":
+            return None
+        content = message.get("content")
+        item = json.loads(content) if isinstance(content, str) else content
+        return item if isinstance(item, dict) else None
+    except (TypeError, ValueError):
+        return None
 
 
 def quiet_after(text: str) -> float:
