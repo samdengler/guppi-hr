@@ -36,7 +36,7 @@ class SubAgents(Construct):
         image_uri: str,
         grant_image: Callable[[iam.Role], None],
         discovery_url: str,
-        allowed_clients: list[str],
+        allowed_audience: list[str],
         tools_gateway_url: str,
         model_id: str,
         hr_tool_prefix: str,
@@ -64,7 +64,7 @@ class SubAgents(Construct):
             authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=discovery_url,
-                    allowed_clients=allowed_clients,
+                    allowed_audience=allowed_audience,
                 )
             ),
             # protocol_type is left unset: runtime targets cannot join MCP gateways.
@@ -113,7 +113,7 @@ class SubAgents(Construct):
                 authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
                     custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
                         discovery_url=discovery_url,
-                        allowed_clients=allowed_clients,
+                        allowed_audience=allowed_audience,
                     )
                 ),
                 environment_variables={

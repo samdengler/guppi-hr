@@ -93,3 +93,9 @@ def test_the_warm_start_domains_come_from_the_canvas_list(template):
     names = json.loads((Path(__file__).resolve().parents[2] / "acxd" / "domains.json").read_text())
     runtime = next(iter(template.find_resources("AWS::BedrockAgentCore::Runtime").values()))["Properties"]
     assert runtime["EnvironmentVariables"]["WARM_DOMAINS"] == ",".join(names)
+
+
+def test_the_bridge_accepts_the_platform_audience(template):
+    runtime = next(iter(template.find_resources("AWS::BedrockAgentCore::Runtime").values()))["Properties"]
+    authorizer = runtime["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
+    assert "AllowedAudience" in authorizer and "AllowedClients" not in authorizer

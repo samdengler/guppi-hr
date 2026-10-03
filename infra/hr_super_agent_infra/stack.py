@@ -95,6 +95,7 @@ PARAM_EDGE_GATEWAY_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-arn"
 PARAM_EDGE_GATEWAY_ROLE_ARN = f"{PLATFORM_PARAMETER_PREFIX}/edge-gateway-role-arn"
 PARAM_USER_POOL_CLIENT_ID = f"{PLATFORM_PARAMETER_PREFIX}/user-pool-client-id"
 PARAM_JWT_DISCOVERY_URL = f"{PLATFORM_PARAMETER_PREFIX}/jwt-discovery-url"
+PARAM_JWT_AUDIENCE = f"{PLATFORM_PARAMETER_PREFIX}/jwt-audience"
 # What this stack publishes for the Connect bridge (connect/), which deploys after it.
 AGENTS_GATEWAY_URL_PARAMETER = "/guppi-hr/agents-gateway-url"
 TOOLS_GATEWAY_URL_PARAMETER = "/guppi-hr/tools-gateway-url"
@@ -399,19 +400,17 @@ class HrSuperAgentStack(cdk.Stack):
         billing_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
         # ---- Platform -------------------------------------------------------------------
-        # The platform's user pool and app client: every authorizer below accepts the token
-        # the page holds on chat.dengler.io, and the HR tools server verifies the same token
-        # against the same issuer (D19).
+        # The platform's issuer (Okta since D46): every authorizer below accepts the token
+        # the page holds on chat.dengler.io by its audience, and the HR tools server verifies
+        # the same token against the same issuer (D19), checking the app's client id (`cid`).
         discovery_url = ssm.StringParameter.value_for_string_parameter(
             self, PARAM_JWT_DISCOVERY_URL
         )
+        jwt_audience = [ssm.StringParameter.value_for_string_parameter(self, PARAM_JWT_AUDIENCE)]
         jwt_allowed_clients = [
             ssm.StringParameter.value_for_string_parameter(self, PARAM_USER_POOL_CLIENT_ID)
         ]
         token_issuer = cdk.Fn.select(0, cdk.Fn.split(OIDC_DISCOVERY_SUFFIX, discovery_url))
-        # https://cognito-idp.<region>.amazonaws.com/<pool id>/.well-known/... split on "/"
-        # puts the pool id at index 3.
-        platform_user_pool_id = cdk.Fn.select(3, cdk.Fn.split("/", discovery_url))
         platform_gateway_id = ssm.StringParameter.value_for_string_parameter(
             self, PARAM_EDGE_GATEWAY_ID
         )
@@ -488,7 +487,7 @@ class HrSuperAgentStack(cdk.Stack):
             authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=discovery_url,
-                    allowed_clients=jwt_allowed_clients,
+                    allowed_audience=jwt_audience,
                     # Binding the runtime to the platform's gateway is off by default. With it
                     # on, the runtime demands a transaction token, and the gateway only supplies
                     # one when it signs the request itself (GATEWAY_IAM_ROLE), which a JWT
@@ -763,22 +762,8 @@ class HrSuperAgentStack(cdk.Stack):
                 resources=[conversation_secret.secret_arn],
             )
         )
-        # The subjects in thread records are the platform pool's users now, so resolving
-        # one means listing that pool (D31).
-        investigator_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["cognito-idp:ListUsers"],
-                resources=[
-                    cdk.Fn.join(
-                        "",
-                        [
-                            f"arn:aws:cognito-idp:{self.region}:{self.account}:userpool/",
-                            platform_user_pool_id,
-                        ],
-                    )
-                ],
-            )
-        )
+        # The subjects in thread records are Okta user ids since D46; resolving one means
+        # Okta's users API with the admin token, not an AWS permission (D31 superseded).
 
         # The runtime reads and writes single objects by key, and no delete. ListBucket is
         # granted only under the threads/ prefix: without it S3 answers a GET on a missing
@@ -892,7 +877,7 @@ class HrSuperAgentStack(cdk.Stack):
             authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=discovery_url,
-                    allowed_clients=jwt_allowed_clients,
+                    allowed_audience=jwt_audience,
                 )
             ),
             exception_level="DEBUG",
@@ -1026,6 +1011,7 @@ class HrSuperAgentStack(cdk.Stack):
             gateway_role=tools_gateway_role,
             token_issuer=token_issuer,
             allowed_clients=jwt_allowed_clients,
+            audience=jwt_audience[0],
             base_environment={**RUNTIME_BASE_ENVIRONMENT, **trace_environment},
         )
 
@@ -1036,7 +1022,7 @@ class HrSuperAgentStack(cdk.Stack):
             image_uri=image_uri,
             grant_image=grant_image,
             discovery_url=discovery_url,
-            allowed_clients=jwt_allowed_clients,
+            allowed_audience=jwt_audience,
             tools_gateway_url=tools_gateway.attr_gateway_url,
             model_id=MODEL_ID,
             hr_tool_prefix=HR_TOOL_PREFIX,

@@ -165,7 +165,8 @@ class ConnectBridge(Construct):
             authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=platform_parameter(self, "jwt-discovery-url"),
-                    allowed_clients=[platform_parameter(self, "user-pool-client-id")],
+                    # Okta's access tokens name the client in cid, so the audience (D46).
+                    allowed_audience=[platform_parameter(self, "jwt-audience")],
                 )
             ),
             environment_variables={

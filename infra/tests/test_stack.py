@@ -97,7 +97,7 @@ def _ssm_parameter_ref(template, name: str) -> dict:
 
 def test_every_authorizer_accepts_the_platform_token(template):
     discovery = _ssm_parameter_ref(template, "/guppi/platform/jwt-discovery-url")
-    client = _ssm_parameter_ref(template, "/guppi/platform/user-pool-client-id")
+    audience = _ssm_parameter_ref(template, "/guppi/platform/jwt-audience")
     gateways = template.find_resources("AWS::BedrockAgentCore::Gateway")
     runtimes = template.find_resources("AWS::BedrockAgentCore::Runtime")
     authorizers = [
@@ -113,7 +113,9 @@ def test_every_authorizer_accepts_the_platform_token(template):
     assert len(authorizers) == 6
     for authorizer in authorizers:
         assert authorizer["DiscoveryUrl"] == discovery
-        assert authorizer["AllowedClients"] == [client]
+        # Okta's access tokens name the client in cid, not client_id, so the audience (D46).
+        assert authorizer["AllowedAudience"] == [audience]
+        assert "AllowedClients" not in authorizer
 
 
 def test_hr_tools_verify_the_platform_issuer_and_client(template):
@@ -161,7 +163,7 @@ def test_runtime_is_agui_and_not_bound_to_gateway_by_default(template):
                 "CustomJWTAuthorizer": Match.object_equals(
                     {
                         "DiscoveryUrl": Match.any_value(),
-                        "AllowedClients": Match.any_value(),
+                        "AllowedAudience": Match.any_value(),
                     }
                 )
             },
@@ -607,7 +609,7 @@ def test_runtime_role_reads_writes_and_lists_thread_objects_only(template):
     assert any(s.get("Action") == ["kms:Decrypt", "kms:GenerateDataKey"] for s in document)
 
 
-def test_investigator_role_reads_the_bucket_the_key_and_the_pool_and_nothing_else(template):
+def test_investigator_role_reads_the_bucket_and_the_key_and_nothing_else(template):
     document = statements(template, "ConversationInvestigatorRole")
     actions = sorted(
         action
@@ -616,8 +618,8 @@ def test_investigator_role_reads_the_bucket_the_key_and_the_pool_and_nothing_els
             statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
         )
     )
+    # No Cognito since D46: a subject is an Okta user id, looked up in Okta.
     assert actions == [
-        "cognito-idp:ListUsers",
         "kms:Decrypt",
         "s3:GetObject",
         "s3:GetObjectVersion",
