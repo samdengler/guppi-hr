@@ -51,9 +51,15 @@ CLEARED = "cleared"
 TOKEN_REFRESH_MARGIN = 300
 # The canvas's data request nodes time out at 30 s, so a turn never waits longer.
 TURN_LIMIT = 32.0
-QUIET_AFTER_REPLY = 2.5
-POLL_INTERVAL = 0.6
-GREETING_QUIET = 1.5
+# Each canvas turn arrives as one message, so a short quiet window ends the turn; the
+# contact flow's escalation notice follows the canvas's hand-off line by about 1.5 s, so
+# that line waits longer (docs/latency-plan.md, change 2).
+QUIET_AFTER_REPLY = 0.8
+ESCALATION_QUIET = 3.0
+ESCALATION_HINT = "Connecting you to the HR service desk"
+POLL_INTERVAL = 0.3
+# The canvas drops a message sent before it greets, so a new contact waits for the
+# greeting, and only for it (change 3).
 GREETING_LIMIT = 12.0
 # The spike's contact flow says this before transferring to a queue.
 ESCALATION_PREFIX = "[flow] Escalation"
@@ -118,10 +124,12 @@ class ConnectClients:
     def touch_websocket(url: str) -> None:
         import websocket
 
+        # The flow starts once the customer's WebSocket has connected and subscribed;
+        # Connect's acknowledgement says so, and the socket can close at once.
         ws = websocket.create_connection(url, timeout=20)
         try:
             ws.send(json.dumps({"topic": "aws/subscribe", "content": {"topics": ["aws/chat"]}}))
-            time.sleep(1.5)
+            ws.recv()
         finally:
             ws.close()
 
@@ -225,15 +233,11 @@ class ConnectTurn:
         return session
 
     def skip_greeting(self, session: Session) -> None:
-        """Marks the canvas's greeting as seen; the page has its own empty state."""
-        start = last = time.monotonic()
-        greeted = False
+        """Waits for the canvas's greeting and marks it seen; the page has its own empty
+        state. The canvas ignores a message sent before it greets."""
+        start = time.monotonic()
         while time.monotonic() - start < GREETING_LIMIT:
-            new = self.new_items(session)
-            if new:
-                greeted = True
-                last = time.monotonic()
-            elif greeted and time.monotonic() - last > GREETING_QUIET:
+            if any(classify(item) for item in self.new_items(session)):
                 return
             time.sleep(POLL_INTERVAL)
 
@@ -264,6 +268,7 @@ class ConnectTurn:
         """Canvas replies to the message just sent, until it goes quiet or the turn limit."""
         start = last = time.monotonic()
         got_reply = False
+        quiet = QUIET_AFTER_REPLY
         while time.monotonic() - start < TURN_LIMIT:
             await self.sleep(POLL_INTERVAL)
             fresh = await asyncio.to_thread(self.new_items, session)
@@ -273,11 +278,17 @@ class ConnectTurn:
                     continue
                 got_reply = True
                 last = time.monotonic()
+                quiet = quiet_after(reply.text)
                 yield reply
                 if reply.kind != "text":
                     return
-            if got_reply and time.monotonic() - last > QUIET_AFTER_REPLY:
+            if got_reply and time.monotonic() - last > quiet:
                 return
+
+
+def quiet_after(text: str) -> float:
+    """How long the bridge waits for more after a reply before it ends the turn."""
+    return ESCALATION_QUIET if ESCALATION_HINT in text else QUIET_AFTER_REPLY
 
 
 def classify(item: dict) -> Reply | None:

@@ -82,7 +82,6 @@ async def no_sleep(_seconds: float) -> None:
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
     monkeypatch.setattr(turn_module, "QUIET_AFTER_REPLY", 0.0)
-    monkeypatch.setattr(turn_module, "GREETING_QUIET", 0.0)
     monkeypatch.setattr(turn_module, "POLL_INTERVAL", 0.0)
     monkeypatch.setattr(turn_module.time, "sleep", lambda _s: None)
 
@@ -232,3 +231,72 @@ async def test_the_kit_app_streams_the_bridge(monkeypatch):
     assert [d["type"] for d in data][0] == "RUN_STARTED"
     assert any(d.get("delta") == "Hi from Connect." for d in data)
     assert data[-1]["type"] == "RUN_FINISHED"
+
+
+# ---- Latency plan, changes 2 and 3 (docs/latency-plan.md) ------------------------------
+
+
+class LateGreeting(FakeParticipant):
+    """The greeting appears only after a few transcript reads, as the flow takes ~1.3 s."""
+
+    def __init__(self, script, reads_before_greeting: int = 3) -> None:
+        super().__init__(script, greeting=None)
+        self.reads = 0
+        self.reads_before_greeting = reads_before_greeting
+        self.sent_after_reads: list[int] = []
+
+    def get_transcript(self, **kwargs):
+        self.reads += 1
+        if self.reads == self.reads_before_greeting:
+            self._add(Type="MESSAGE", ParticipantRole="SYSTEM", Content="Hi, I'm the HR assistant.")
+        return super().get_transcript(**kwargs)
+
+    def send_message(self, Content, **kwargs):
+        self.sent_after_reads.append(self.reads)
+        super().send_message(Content, **kwargs)
+
+
+async def test_a_new_contact_sends_the_message_as_soon_as_the_greeting_arrives():
+    # The canvas ignores a message sent before it greets, so the bridge waits for the
+    # greeting, and only for it: no quiet period after it.
+    participant = LateGreeting({"hello": [bot("Hi from Connect.")]}, reads_before_greeting=3)
+    clients = FakeClients(participant)
+    events = await collect(ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep), "hello")
+    assert participant.sent_after_reads == [3]
+    texts = [e.delta for e in events if types([e]) == ["TEXT_MESSAGE_CONTENT"]]
+    assert texts == ["Hi from Connect."]
+
+
+def test_a_turn_ends_soon_after_its_reply_except_for_the_escalation_line():
+    assert turn_module.quiet_after("Your address on file is 1 Main St.") == turn_module.QUIET_AFTER_REPLY
+    assert turn_module.QUIET_AFTER_REPLY <= 1.0 or turn_module.QUIET_AFTER_REPLY == 0.0
+    # The contact flow's escalation notice follows the canvas's line by about 1.5 s.
+    assert turn_module.quiet_after("Connecting you to the HR service desk.") == turn_module.ESCALATION_QUIET
+    assert turn_module.ESCALATION_QUIET >= 3.0
+
+
+def test_the_websocket_closes_once_connect_acknowledges_with_no_fixed_wait(monkeypatch):
+    calls = []
+
+    class FakeSocket:
+        def send(self, payload):
+            calls.append(("send", json.loads(payload)["topic"]))
+
+        def recv(self):
+            calls.append(("recv",))
+            return json.dumps({"topic": "aws/subscribe", "content": {"status": 200}})
+
+        def close(self):
+            calls.append(("close",))
+
+    import types as pytypes
+
+    fake_module = pytypes.SimpleNamespace(create_connection=lambda url, timeout: FakeSocket())
+    monkeypatch.setitem(__import__("sys").modules, "websocket", fake_module)
+
+    def no_fixed_wait(_seconds):
+        raise AssertionError("touch_websocket must not sleep")
+
+    monkeypatch.setattr(turn_module.time, "sleep", no_fixed_wait)
+    turn_module.ConnectClients.touch_websocket("wss://example")
+    assert calls == [("send", "aws/subscribe"), ("recv",), ("close",)]

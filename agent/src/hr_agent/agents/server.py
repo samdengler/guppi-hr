@@ -1,10 +1,11 @@
 """A sub-agent as an A2A server on the AgentCore Runtime A2A contract (port 9000, JSON-RPC at
 the root, agent card at /.well-known/agent-card.json, D2).
 
-Each request builds its own Strands agent: the MCP client to the tools gateway carries the
+Each request builds its own Strands agent. Its MCP session to the tools gateway carries the
 caller's token (from the A2A request's Authorization header, which the runtime validated)
 and the conversation's thread id (the A2A contextId), so no tool call can act for anyone
-but the caller or bind a proposal to another conversation. The orchestrator sends recent
+but the caller or bind a proposal to another conversation; the session is kept open for
+that caller and thread between requests (mcp_sessions.py, D38). The orchestrator sends recent
 turns and any pending change in the message metadata; the reply is a text part plus a
 data part with the pending change this run left, which the orchestrator carries in AG-UI
 state (D23).
@@ -12,7 +13,7 @@ state (D23).
 
 from __future__ import annotations
 
-import asyncio
+import base64
 import json
 import logging
 import os
@@ -36,6 +37,7 @@ from a2a.types import (
 )
 
 from hr_agent.agents.domains import DOMAINS, Domain
+from hr_agent.agents.mcp_sessions import McpSessions
 from hr_agent.pending import (
     PENDING_KEY,
     committed_in_messages,
@@ -136,6 +138,44 @@ def history_messages(history: object) -> list[dict]:
     return turns
 
 
+def token_expires_at(token: str) -> float:
+    """The token's `exp`, unverified (the runtime's authorizer verified it), or an hour
+    from now when it cannot be read."""
+    try:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return float(claims["exp"])
+    except Exception:  # noqa: BLE001
+        return time.time() + 3600
+
+
+def _open_session(key: tuple[str, str], settings: Settings | None = None):
+    """A started MCP client to the tools gateway for (token, thread id), and its tools."""
+    from strands.tools.mcp import MCPClient
+
+    settings = settings or Settings()
+    if not settings.tools_gateway_url:
+        raise RuntimeError("TOOLS_GATEWAY_URL is not set")
+    token, thread_id = key
+    client = MCPClient(
+        url=settings.tools_gateway_url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Hr-User-Token": token,
+            "X-Hr-Thread-Id": thread_id,
+        },
+    )
+    client.start()
+    try:
+        return client, client.list_tools_sync()
+    except BaseException:
+        client.stop(None, None, None)
+        raise
+
+
+SESSIONS = McpSessions(_open_session)
+
+
 def bearer_token(headers: dict[str, str]) -> str | None:
     lowered = {key.lower(): value for key, value in headers.items()}
     scheme, _, token = lowered.get("authorization", "").partition(" ")
@@ -154,22 +194,12 @@ async def run_domain(
     """One sub-agent run against Bedrock and the tools gateway. Tests replace this."""
     from strands import Agent
     from strands.models import BedrockModel
-    from strands.tools.mcp import MCPClient
 
     settings = settings or Settings()
-    if not settings.tools_gateway_url:
-        raise RuntimeError("TOOLS_GATEWAY_URL is not set")
-    client = MCPClient(
-        url=settings.tools_gateway_url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "X-Hr-User-Token": token,
-            "X-Hr-Thread-Id": thread_id,
-        },
-    )
-    await asyncio.to_thread(client.start)
-    try:
-        listed = await asyncio.to_thread(client.list_tools_sync)
+    async with SESSIONS.lease((token, thread_id), token_expires_at=token_expires_at(token)) as (
+        _client,
+        listed,
+    ):
         allowed = domain.tool_names(settings.hr_tool_prefix)
         tools = [tool for tool in listed if tool.tool_name in allowed]
         missing = allowed - {tool.tool_name for tool in tools}
@@ -199,8 +229,6 @@ async def run_domain(
             tool_calls=tool_calls,
             committed=committed_in_messages(added, settings.hr_tool_prefix),
         )
-    finally:
-        await asyncio.to_thread(client.stop, None, None, None)
 
 
 Runner = Callable[..., Awaitable[DomainResult]]

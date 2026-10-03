@@ -1,6 +1,17 @@
 # Latency plan for /p/hr/
 
-Status: plan, 3 October 2026. Nothing below is built yet.
+Status: changes 1 to 3 built on 3 October 2026 (results below). Two of them changed on the
+way, after a test on the development flow:
+
+- Change 2 needs no canvas marker. Each canvas turn arrives as one message, and a
+  generative journey (PolicyFlow) cannot be followed by a marker node anyway, so the bridge
+  ends a turn 0.8 s after a reply, and 3 s after the canvas's hand-off line, since the
+  contact flow's escalation notice follows it by about 1.5 s.
+- Change 3 keeps waiting for the greeting. A message sent before the canvas greets is
+  never answered (tried: the greeting came 1.5 s after the connect, the message got no
+  reply in 15 s). What goes is the fixed 1.5 s WebSocket wait (the socket closes on
+  Connect's acknowledgement) and the 1.5 s of quiet after the greeting. Polling also went
+  from every 0.6 s to every 0.3 s, a small part of change 5.
 
 `/p/hr/` is the Connect version since D37. A message travels page → bridge → Connect chat
 → the designer's canvas → agents gateway → a sub-agent (Strands, Haiku 4.5) → tools
