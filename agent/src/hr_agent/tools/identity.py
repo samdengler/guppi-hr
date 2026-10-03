@@ -3,10 +3,15 @@
 The tools gateway signs its calls to this runtime with its own role (D19), so the
 runtime's own authorizer says nothing about the user. The caller sends the user's access
 token a second time in `X-Hr-User-Token`, the gateway target forwards it, and this module
-verifies it independently: signature against the issuer's keys, issuer, expiry, token use,
-and client. Nothing here trusts the gateway for identity. Issuer, keys, clients, and the
-optional audience are environment settings, so an exchanged on-behalf-of token (D20)
-needs configuration, not code.
+verifies it independently: signature against the issuer's keys, issuer, expiry, and
+client or audience. Nothing here trusts the gateway for identity. Issuer, keys, clients,
+token use and the audience are environment settings, so an exchanged on-behalf-of token
+(D20) needs configuration, not code.
+
+Two token shapes are accepted (D46): Cognito's (`client_id`, `token_use`) and Okta's
+custom authorization server (`cid`, `aud`, `uid`). The caller is `uid` when the token has
+one, Okta's stable user id, since an Okta access token's `sub` is the user's login (an
+email address); otherwise `sub`.
 """
 
 from __future__ import annotations
@@ -67,9 +72,10 @@ class TokenVerifier:
             )
         except jwt.PyJWTError as exc:
             raise IdentityError(f"user token rejected: {exc}") from exc
-        if claims.get("token_use") != self._token_use:
+        if self._token_use and claims.get("token_use") != self._token_use:
             raise IdentityError(f"user token rejected: token_use is not {self._token_use}")
-        if self._allowed_clients and claims.get("client_id") not in self._allowed_clients:
+        client = claims.get("client_id") or claims.get("cid")
+        if self._allowed_clients and client not in self._allowed_clients:
             raise IdentityError("user token rejected: client not allowed")
         return claims
 
@@ -84,9 +90,15 @@ class TokenVerifier:
             issuer,
             clients,
             lambda token: jwks.get_signing_key_from_jwt(token).key,
+            # Empty skips the check: Okta's access tokens carry no token_use claim.
             token_use=os.environ.get("TOKEN_USE", "access"),
             audience=os.environ.get("TOKEN_AUDIENCE") or None,
         )
+
+
+def subject_of(claims: Mapping[str, Any]) -> str:
+    """The caller's stable id: Okta's `uid` when present, else `sub` (D46)."""
+    return str(claims.get("uid") or claims["sub"])
 
 
 def trace_id_from(traceparent: str | None) -> str | None:
@@ -104,7 +116,7 @@ def caller_from_headers(headers: Mapping[str, str], verifier: TokenVerifier) -> 
         raise IdentityError("no user token on the request")
     claims = verifier.verify(token)
     return Caller(
-        sub=claims["sub"],
+        sub=subject_of(claims),
         thread_id=lowered.get(THREAD_HEADER) or None,
         trace_id=trace_id_from(lowered.get(TRACE_HEADER)),
     )

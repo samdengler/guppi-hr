@@ -156,9 +156,15 @@ def claims(token: str) -> dict:
         return {}
 
 
+def subject(token: str) -> str:
+    """The caller's stable id: Okta's `uid` when the token has one (an Okta access token's
+    `sub` is the login, an email address), else `sub` (D46)."""
+    found = claims(token)
+    return str(found.get("uid") or found.get("sub", ""))
+
+
 def session_key(token: str, thread_id: str) -> str:
-    sub = str(claims(token).get("sub", ""))
-    return f"{hashlib.sha256(sub.encode()).hexdigest()[:24]}#{thread_id}"
+    return f"{hashlib.sha256(subject(token).encode()).hexdigest()[:24]}#{thread_id}"
 
 
 def last_user_text(run_input: RunAgentInput) -> str:
@@ -456,7 +462,7 @@ class ConnectTurn:
             InstanceId=settings.instance_id,
             ContactFlowId=settings.contact_flow_id,
             ParticipantDetails={"DisplayName": "Employee"},
-            Attributes={"hrToken": self.token, "employeeId": str(claims(self.token).get("sub", ""))},
+            Attributes={"hrToken": self.token, "employeeId": subject(self.token)},
             SupportedMessagingContentTypes=["text/plain"],
             ChatDurationInMinutes=CHAT_DURATION_MINUTES,
         )

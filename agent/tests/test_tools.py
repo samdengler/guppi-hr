@@ -357,3 +357,30 @@ def test_each_role_runs_its_own_app_and_port(monkeypatch):
         monkeypatch.setenv("AGENT_ROLE", role)
         entrypoint.main()
     assert started == [("hr_agent.app:app", 8080), ("hr_agent.tools.server:app", 8000)]
+
+
+def test_an_okta_shaped_token_is_accepted_and_keyed_on_uid():
+    # Okta's custom authorization server: cid and aud, no token_use; sub is the login.
+    okta = TokenVerifier(
+        ISSUER, frozenset({CLIENT_ID}), lambda _token: KEY.public_key(), token_use="", audience="api://guppi"
+    )
+    claims_token = jwt.encode(
+        {"sub": "quinn@example.com", "uid": "00u1abcd", "cid": CLIENT_ID, "aud": "api://guppi",
+         "iss": ISSUER, "exp": int(time.time()) + 600},
+        KEY, algorithm="RS256", headers={"kid": "test"},
+    )
+    caller = caller_from_headers({"X-Hr-User-Token": claims_token}, okta)
+    assert caller.sub == "00u1abcd"
+
+
+def test_an_okta_shaped_token_for_another_audience_is_refused():
+    okta = TokenVerifier(
+        ISSUER, frozenset(), lambda _token: KEY.public_key(), token_use="", audience="api://guppi"
+    )
+    other = jwt.encode(
+        {"sub": "q@example.com", "uid": "00u1", "cid": CLIENT_ID, "aud": "api://other", "iss": ISSUER,
+         "exp": int(time.time()) + 600},
+        KEY, algorithm="RS256", headers={"kid": "test"},
+    )
+    with pytest.raises(IdentityError):
+        okta.verify(other)
