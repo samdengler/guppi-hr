@@ -74,6 +74,7 @@ def run(client: httpx.Client, bearer: str, session: str, thread: str, messages: 
     }
     started = time.monotonic()
     first = None
+    started_event = None
     text = []
     outcome = "unfinished"
     with client.stream("POST", URL, json=body, headers=headers, timeout=60) as response:
@@ -84,6 +85,8 @@ def run(client: httpx.Client, bearer: str, session: str, thread: str, messages: 
                 continue
             event = json.loads(line[5:])
             kind = event.get("type")
+            if kind == "RUN_STARTED" and started_event is None:
+                started_event = time.monotonic()
             if kind == "TEXT_MESSAGE_CONTENT":
                 if first is None:
                     first = time.monotonic()
@@ -97,6 +100,8 @@ def run(client: httpx.Client, bearer: str, session: str, thread: str, messages: 
         "trace_id": trace_id,
         "outcome": outcome,
         "first_ms": round((first - started) * 1000) if first else None,
+        # The bridge sends RUN_STARTED at once, so this is the round trip into it, on one clock.
+        "started_ms": round((started_event - started) * 1000) if started_event else None,
         "done_ms": round((done - started) * 1000),
         "text": " ".join(text)[:160],
     }
@@ -153,6 +158,7 @@ def main() -> None:
     print("first reply, follow-up: " + summary([r["follow"]["first_ms"] for r in results]))
     print("turn done, new chat:    " + summary([r["first"]["done_ms"] for r in results]))
     print("turn done, follow-up:   " + summary([r["follow"]["done_ms"] for r in results]))
+    print("RUN_STARTED (hop in):   " + summary([r[k].get("started_ms") for r in results for k in ("first", "follow")]))
     if not args.no_warm:
         print("warm start:             " + summary([r["warm"]["done_ms"] for r in results]))
 

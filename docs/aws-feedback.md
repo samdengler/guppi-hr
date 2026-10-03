@@ -35,9 +35,10 @@ tool call. Every hop below is AWS.
   its nodes with the incoming trace as parent.
 - Workaround: link by id. Corrected 3 Oct: until `connect-hardening` no span carried the
   id (critique finding 18). Now the bridge's run span has `connect.contact_id`, and each
-  sub-agent's request span has `hr.thread_id` (the contact id the canvas sends as the A2A
-  context) and `hr.domain`, with the trace id in the sub-agent's run record, so the two
-  traces of one turn join on that attribute.
+  sub-agent's A2A request handler span (`DefaultRequestHandler._run_event_stream`) has
+  `hr.thread_id` (the contact id the canvas sends as the A2A context) and `hr.domain`,
+  with the trace id in the sub-agent's run record, so the two traces of one turn join on
+  that attribute (checked in Dynatrace, 3 Oct 11:57 UTC, contact `4953554e-…`).
 
 ### TC2. The designer's own steps have no traces, and logs arrive late
 

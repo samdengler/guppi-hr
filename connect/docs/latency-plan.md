@@ -97,6 +97,29 @@ the page sends, through CloudFront, the edge gateway and the runtime
 bridge's `first_delta_ms`, and was before change 4 as well. The full split per hop is in
 `docs/latency-log.md`.
 
+## Measured with the harness after the critique
+
+The critique (3 October) found every before-and-after pair above to be one run against
+one run, on the bridge's clock, and some runs minutes after a deploy (finding 11). From
+here on, numbers come from `connect/scripts/latency_bench.py`: rounds of a warm start, a
+6 s pause, a first question and a follow-up, timed on the client from the request's start
+to the first text, 10 rounds per configuration, medians and p90, with the two question
+pairs reported apart. Each run's trace id joins it with the bridge's run line and the
+spans. The client clock includes the hop into the bridge (about 0.5 to 0.6 s).
+
+Baseline after the hardening (`hardened-warm`, 3 October 11:58 UTC, 10 rounds):
+
+| Question | Median first reply | p90 |
+| --- | --- | --- |
+| New chat: "What is my home address on file?" | 4.79 s | |
+| Follow-up: "And what is my emergency contact?" | 4.79 s | |
+| New chat: "How many buddy passes do I get?" | 5.71 s | |
+| Follow-up: "Can my parents use them?" | 7.12 s | |
+| All new chats | 5.34 s | 5.83 s |
+| All follow-ups | 5.96 s | 7.20 s |
+
+A turn now finishes 0.1 to 0.2 s after its reply (the canvas's end-of-turn line, D42).
+
 ## Targets
 
 Median first reply: 3 s for a follow-up and 5 s for a new chat; a turn ends within 1 s

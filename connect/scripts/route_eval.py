@@ -10,8 +10,16 @@ labeled text. The outcome is read from the reply:
 
     profile / pay / travel  a reply from that sub-agent (every mock reply carries its tag)
     clarify                 ClarifyFlow's question
-    escalation              EscalationFlow's hand-off line
-    general                 anything else (PolicyFlow's journey answered)
+    escalation              EscalationFlow's ticket line, opened or not (D43)
+    general                 PolicyFlow's journey answered
+    failed                  a failure, the welcome help line, or a "not available" answer:
+                            never correct, so a broken search no longer scores as a
+                            correct general route (critique finding 12)
+
+Runs with --repeat N report each run's score and the range, since routing varies run to
+run (C12). The corpus is the one the canvas was tuned on, and development uses mock
+sub-agents and a dummy token, so PolicySearch fails there: "failed" for a policy
+question measures that, not routing.
 
 Scoring follows evals/route.py in hr-super-agent: a write domain (profile, pay) on
 either side counts twice. Writes .deploy/route-eval.json and prints the table.
@@ -36,8 +44,20 @@ from chat import Chat  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT.parent / "evals" / "utterances.jsonl"
 WRITE_DOMAINS = {"profile", "pay"}
-OUTCOMES = ("profile", "pay", "travel", "general", "clarify", "escalation")
+OUTCOMES = ("profile", "pay", "travel", "general", "clarify", "escalation", "failed")
 GREETING = "Hi, I'm the HR assistant"
+FAILURE_PHRASES = (
+    "couldn't look that up",
+    "could not be reached",
+    "I can help with your home address",
+    "The conversation ended",
+    "not available",
+    "don't have access",
+    "do not have access",
+    "unable to",
+    "couldn't find",
+    "could not find",
+)
 
 
 def outcome(replies: list[str]) -> str:
@@ -47,9 +67,13 @@ def outcome(replies: list[str]) -> str:
     for domain in ("profile", "pay", "travel"):
         if f"[mock {domain} agent]" in text:
             return domain
-    if "Connecting you to the HR service desk" in text:
+    if "HR ticket" in text or "open a ticket just now" in text or "Connecting you to the HR service desk" in text:
         return "escalation"
-    return "general" if text.strip() else "none"
+    if not text.strip():
+        return "none"
+    if any(phrase.lower() in text.lower() for phrase in FAILURE_PHRASES):
+        return "failed"
+    return "general"
 
 
 def weight(expected: str, actual: str) -> int:
@@ -101,6 +125,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=5)
     parser.add_argument("--only", nargs="*", help="utterance ids to run")
+    parser.add_argument("--repeat", type=int, default=1, help="run the corpus this many times")
     args = parser.parse_args()
     state = json.loads((ROOT / ".deploy" / "acxd.json").read_text())
     items = [json.loads(line) for line in CORPUS.read_text().splitlines() if line.strip()]
@@ -111,15 +136,23 @@ def main() -> None:
 
     quiet_print = builtins.print
     builtins.print = lambda *a, **k: None  # Chat narrates every message; keep the table readable
+    runs = []
     try:
-        with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            results = list(pool.map(lambda i: run_one(i, state["contactFlowId"]), items))
+        for _ in range(args.repeat):
+            with ThreadPoolExecutor(max_workers=args.workers) as pool:
+                runs.append(list(pool.map(lambda i: run_one(i, state["contactFlowId"]), items)))
     finally:
         builtins.print = quiet_print
-    out = {"build": state.get("buildId"), "seconds": round(time.time() - started), "results": results}
+    results = runs[-1]
+    out = {"build": state.get("buildId"), "seconds": round(time.time() - started), "runs": runs, "results": results}
     (ROOT / ".deploy" / "route-eval.json").write_text(json.dumps(out, indent=2))
-    print(report(results))
-    print(f"{len(results)} chats in {out['seconds']} s; details in .deploy/route-eval.json")
+    for number, run in enumerate(runs, 1):
+        print(f"run {number} of {len(runs)}")
+        print(report(run))
+    if len(runs) > 1:
+        scores = [sum(1 for r in run if r["actual"] == r["expect"]) for run in runs]
+        print(f"correct per run: {scores}; range {min(scores)} to {max(scores)} of {len(items)}")
+    print(f"{len(runs) * len(items)} chats in {out['seconds']} s; details in .deploy/route-eval.json")
 
 
 if __name__ == "__main__":

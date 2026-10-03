@@ -43,6 +43,8 @@ class Chat:
             ParticipantDetails={"DisplayName": "spike-tester"},
             Attributes={"hrToken": token, "employeeId": employee_id},
             SupportedMessagingContentTypes=["text/plain"],
+            # Connect's minimum; a test chat that is not closed ends within the hour.
+            ChatDurationInMinutes=60,
         )
         self.contact_id = started["ContactId"]
         conn = self.participant.create_participant_connection(

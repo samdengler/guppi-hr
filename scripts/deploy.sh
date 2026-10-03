@@ -83,6 +83,13 @@ if [[ "$SITE_ONLY" == 0 ]]; then
     "${param_args[@]+"${param_args[@]}"}" \
     --outputs-file "$OUTPUTS" \
     "$@"
+  # AgentCore creates each runtime's log group without a retention; keep 30 days for the
+  # orchestrator, the sub-agents and the tools server (critique finding 14).
+  for group in $(aws logs describe-log-groups --log-group-name-prefix /aws/bedrock-agentcore/runtimes/hr_super_agent \
+    --query 'logGroups[?retentionInDays==null].logGroupName' --output text); do
+    aws logs put-retention-policy --log-group-name "$group" --retention-in-days 30
+    echo "retention 30 days: $group"
+  done
 fi
 
 cd "$ROOT/web"
