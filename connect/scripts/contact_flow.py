@@ -72,7 +72,9 @@ def flow_content(application_id: str, alias: str, queue_arn: str) -> dict:
                     },
                 },
                 "Transitions": {
-                    "NextAction": "Goodbye",
+                    # The canvas says goodbye itself (GoodbyeFlow, EscalationFlow); a second
+                    # line here would be one more billed message (critique follow-up, cost).
+                    "NextAction": "Disconnect",
                     "Conditions": [
                         {
                             "NextAction": "EscalationMessage",
@@ -81,7 +83,7 @@ def flow_content(application_id: str, alias: str, queue_arn: str) -> dict:
                     ],
                     "Errors": [
                         {"ErrorType": "NoMatchingError", "NextAction": "ErrorMessage"},
-                        {"ErrorType": "NoMatchingCondition", "NextAction": "Goodbye"},
+                        {"ErrorType": "NoMatchingCondition", "NextAction": "Disconnect"},
                         {"ErrorType": "InputTimeLimitExceeded", "NextAction": "Disconnect"},
                     ],
                 },
@@ -120,15 +122,6 @@ def flow_content(application_id: str, alias: str, queue_arn: str) -> dict:
                 "Identifier": "ErrorMessage",
                 "Type": "MessageParticipant",
                 "Parameters": {"Text": "[flow] The Agentic CX block returned an error."},
-                "Transitions": {
-                    "NextAction": "Disconnect",
-                    "Errors": [{"ErrorType": "NoMatchingError", "NextAction": "Disconnect"}],
-                },
-            },
-            {
-                "Identifier": "Goodbye",
-                "Type": "MessageParticipant",
-                "Parameters": {"Text": "[flow] The conversation ended."},
                 "Transitions": {
                     "NextAction": "Disconnect",
                     "Errors": [{"ErrorType": "NoMatchingError", "NextAction": "Disconnect"}],

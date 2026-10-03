@@ -18,8 +18,10 @@
  *   tools gateway, with only read and ticket tools enabled.
  * - EscalationFlow opens an HR ticket through the tools gateway, gives the employee its
  *   id and ends the conversation; nobody staffs a Connect queue (D43).
- * - Every reply node that ends a turn sends END_OF_TURN after its text, a hidden line the
- *   bridge ends the turn on instead of waiting for silence (D42). A generative journey's
+ * - Every reply node that ends a turn ends its text with END_MARK, an invisible character
+ *   the bridge ends the turn on instead of waiting for silence (D42); a node that ends
+ *   the conversation uses CLOSED_MARK. Neither is a message of its own, since Connect
+ *   bills chat by the message. A generative journey's
  *   own answers cannot be followed by a node, so those turns still end on silence, and
  *   the journey is told to write nothing before it hands off to a domain flow.
  *
@@ -33,9 +35,14 @@ const { MOCK_URL, AGENTS_GATEWAY_URL, TOOLS_GATEWAY_URL, env, hdr } = require('.
 const SONNET = 'anthropic.claude-sonnet-5';
 const CONV = '{System.conversationId:NLX.System}';
 const UTTERANCE = '{System.utterance:NLX.System}';
-// connect_bridge.turn.END_OF_TURN: the bridge hides every "[flow] " line and ends the
-// turn on this one.
-const END_OF_TURN = '[flow] end';
+// End-of-turn and closed signals ride on the reply itself, as one invisible trailing
+// character, because Connect bills chat by the message and a separate hidden line made
+// every turn three messages instead of two (connect_bridge.turn, END_MARK and
+// CLOSED_MARK). The bridge strips the character before the page sees the text.
+const END_MARK = '\u2063'; // INVISIBLE SEPARATOR: the turn is over
+const CLOSED_MARK = '\u2064'; // INVISIBLE PLUS: the conversation ends after this message
+const endsTurn = (text) => `${text}${END_MARK}`;
+const closes = (text) => `${text}${CLOSED_MARK}`;
 
 // The domain names live in domains.json, which the bridge's stack also reads for the warm
 // start's session names ("{conversationId}-{domain}"); the check below keeps the two from
@@ -251,12 +258,12 @@ function domainFlow(d) {
     .add('route', 'choice', { children: [{ to: 'replyPending', when: pendingExists }, 'reply'] })
     .add('reply', 'basic', {
       children: ['toListen'],
-      messages: [reply(false), END_OF_TURN],
+      messages: [endsTurn(reply(false))],
       metadata: { stateModifications: remember(d, false) },
     })
     .add('replyPending', 'basic', {
       children: ['confirm'],
-      messages: [reply(false), END_OF_TURN],
+      messages: [endsTurn(reply(false))],
       metadata: { stateModifications: remember(d, false) },
     })
     .add('confirm', 'user_input', {
@@ -281,13 +288,13 @@ function domainFlow(d) {
     })
     .add('replyCommit', 'basic', {
       children: ['toListen'],
-      messages: [reply(true), END_OF_TURN],
+      messages: [endsTurn(reply(true))],
       metadata: { stateModifications: remember(d, true) },
     })
-    .add('declined', 'basic', { children: ['toListen'], messages: ["Okay, I won't make that change.", END_OF_TURN] })
+    .add('declined', 'basic', { children: ['toListen'], messages: [endsTurn("Okay, I won't make that change.")] })
     .add('unreachable', 'basic', {
       children: ['toListen'],
-      messages: [`Sorry, the ${d.title} agent could not be reached just now.`, END_OF_TURN],
+      messages: [endsTurn(`Sorry, the ${d.title} agent could not be reached just now.`)],
     })
     // A second user_input reached in the same turn re-reads that turn's utterance
     // (AICC sample live notes), so a reply ends the turn with a redirect to this flow's
@@ -359,8 +366,9 @@ function welcomeFlow() {
     .add('help', 'basic', {
       children: ['toListen'],
       messages: [
-        'I can help with your home address and emergency contact, your pay and direct deposit, your travel benefits, or an HR policy question. What do you need?',
-        END_OF_TURN,
+        endsTurn(
+          'I can help with your home address and emergency contact, your pay and direct deposit, your travel benefits, or an HR policy question. What do you need?',
+        ),
       ],
     })
     .add('toListen', 'redirect', {
@@ -388,8 +396,9 @@ function clarifyFlow() {
   f.add('start', 'start', { children: ['ask'] })
     .add('ask', 'user_input', {
       messages: [
-        'Do you want to update your profile (home address or emergency contact) or your pay details (direct deposit)?',
-        END_OF_TURN,
+        endsTurn(
+          'Do you want to update your profile (home address or emergency contact) or your pay details (direct deposit)?',
+        ),
       ],
       children: [
         {
@@ -591,7 +600,7 @@ function policyFlow() {
     .add('toEscalation', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'EscalationFlow' } } })
     .add('failed', 'basic', {
       children: ['toWelcome'],
-      messages: ["I couldn't look that up just now. You can ask again, or ask for a person.", END_OF_TURN],
+      messages: [endsTurn("I couldn't look that up just now. You can ask again, or ask for a person.")],
     })
     .add('toWelcome', 'redirect', { children: ['end'], metadata: { redirect: { type: 'flow', flowId: 'WelcomeFlow' } } })
     .add('end', 'end');
@@ -612,7 +621,7 @@ function policyFlow() {
 function goodbyeFlow() {
   const f = new FlowBuilder('GoodbyeFlow');
   f.add('start', 'start', { children: ['bye'] })
-    .add('bye', 'basic', { children: ['end'], messages: ["You're welcome. Have a good day."] })
+    .add('bye', 'basic', { children: ['end'], messages: [closes("You're welcome. Have a good day.")] })
     .add('end', 'terminate');
   return {
     flowId: 'GoodbyeFlow',
@@ -692,12 +701,18 @@ function escalationFlow() {
     .add('opened', 'basic', {
       children: ['end'],
       messages: [
-        'I opened HR ticket {OpenTicket.result.structuredContent.ticket_id:NLX.Variable} for you. A person on the HR team will follow up within two business days.',
+        closes(
+          'I opened HR ticket {OpenTicket.result.structuredContent.ticket_id:NLX.Variable} for you. A person on the HR team will follow up within two business days. This conversation is now closed; a new message starts a new one.',
+        ),
       ],
     })
     .add('noTicket', 'basic', {
       children: ['end'],
-      messages: ["I couldn't open a ticket just now. Please contact the HR service desk directly."],
+      messages: [
+        closes(
+          "I couldn't open a ticket just now. Please contact the HR service desk directly. This conversation is now closed; a new message starts a new one.",
+        ),
+      ],
     })
     .add('end', 'terminate');
   return {
@@ -724,4 +739,4 @@ const DATA_REQUESTS = [
 
 const FLOWS = [welcomeFlow(), clarifyFlow(), ...DOMAINS.map(domainFlow), policyFlow(), goodbyeFlow(), escalationFlow()];
 
-module.exports = { DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS, END_OF_TURN };
+module.exports = { DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS, END_MARK, CLOSED_MARK };

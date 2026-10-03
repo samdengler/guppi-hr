@@ -71,8 +71,14 @@ TOKEN_REFRESH_MARGIN = 300
 CHAT_DURATION_MINUTES = 60
 # The canvas's data request nodes time out at 30 s, so a turn never waits longer.
 TURN_LIMIT = 32.0
-# The hidden line the canvas sends after the last message of a turn (connect/acxd/hr.js).
+# The canvas ends a turn's last message with END_MARK, and the message before it ends the
+# conversation (a ticket, a goodbye) with CLOSED_MARK: one invisible character on the
+# reply itself, since Connect bills chat by the message (connect/acxd/hr.js). The bridge
+# strips it. The separate hidden lines of the first version are still understood.
+END_MARK = "\u2063"  # INVISIBLE SEPARATOR
+CLOSED_MARK = "\u2064"  # INVISIBLE PLUS
 END_OF_TURN = "[flow] end"
+CONVERSATION_CLOSED = "[flow] closed"
 # A generative journey's answer has no END_OF_TURN after it; this much silence ends it.
 QUIET_AFTER_REPLY = 0.8
 POLL_INTERVAL = 0.3
@@ -164,8 +170,10 @@ def last_user_text(run_input: RunAgentInput) -> str:
 
 @dataclass
 class Reply:
-    kind: str  # "text", "end" (END_OF_TURN), "escalated", "error" or "ended"
+    kind: str  # "text", "end" (END_OF_TURN), "closed", "escalated", "error" or "ended"
     text: str = ""
+    # For a text reply that carried a mark: "end" (the turn is over) or "closed".
+    mark: str = ""
 
 
 class StartFailed(RuntimeError):
@@ -290,8 +298,9 @@ class ConnectTurn:
                         self.stats["canvas_error"] = True
                         problem("canvas_error", session.contact_id)
                     yield CustomEvent(type=EventType.CUSTOM, name=f"connect/{reply.kind}", value={"text": reply.text})
-                for event in text_events(reply.text):
-                    yield event
+                if reply.text:
+                    for event in text_events(reply.text):
+                        yield event
             if not replied and not session.closed:
                 self.stats["no_reply"] = True
                 problem("no_reply", session.contact_id)
@@ -598,6 +607,12 @@ class ConnectTurn:
                     yield reply
                     if reply.kind != "text":
                         return
+                    if reply.mark == "end":
+                        self.stats["end_of_turn"] = True
+                        return
+                    if reply.mark == "closed":
+                        yield Reply("closed")
+                        return
                     quiet_until = time.monotonic() + QUIET_AFTER_REPLY
                 now = time.monotonic()
                 wait = TURN_LIMIT - (now - start)
@@ -706,12 +721,18 @@ def classify(item: dict) -> Reply | None:
     content = item.get("Content", "")
     if content.strip() == END_OF_TURN:
         return Reply("end")
+    if content.strip() == CONVERSATION_CLOSED:
+        return Reply("closed")
     if content.startswith(ESCALATION_PREFIX):
         return Reply("escalated", ESCALATED_LINE)
     if content.startswith(CANVAS_ERROR_PREFIX):
         return Reply("error", CANVAS_ERROR_LINE)
     if content.startswith(FLOW_MESSAGE_PREFIX):
         return None
+    if content.endswith(END_MARK):
+        return Reply("text", content.rstrip(END_MARK), mark="end")
+    if content.endswith(CLOSED_MARK):
+        return Reply("text", content.rstrip(CLOSED_MARK), mark="closed")
     return Reply("text", content)
 
 

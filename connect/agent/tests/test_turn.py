@@ -847,3 +847,44 @@ async def test_a_canvas_error_is_shown_logged_and_closes_the_thread(caplog):
     assert turn.usage()["connect_canvas_error"] is True
     assert "bridge_problem canvas_error" in caplog.text
     assert store.get(session_key(token, "t1")).closed
+
+
+async def test_a_closing_line_closes_the_thread_and_ends_the_contact_at_once(monkeypatch):
+    monkeypatch.setattr(turn_module, "QUIET_AFTER_REPLY", 30.0)
+    participant = FakeParticipant(
+        {"talk to someone": [bot("I opened HR ticket HR-1. This conversation is now closed."), bot(turn_module.CONVERSATION_CLOSED)]}
+    )
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    turn = ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep)
+    started = time.monotonic()
+    events = await collect(turn, "talk to someone")
+    assert time.monotonic() - started < 1.0
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["I opened HR ticket HR-1. This conversation is now closed."]
+    assert [e.name for e in events if types([e]) == ["CUSTOM"]] == ["connect/closed"]
+    assert store.get(session_key(token, "t1")).closed
+    assert clients.connect.stopped == ["contact-1"]
+
+
+async def test_an_invisible_end_mark_ends_the_turn_and_is_stripped(monkeypatch):
+    monkeypatch.setattr(turn_module, "QUIET_AFTER_REPLY", 30.0)
+    participant = FakeParticipant({"hello": [bot("Your address is 1 Main St." + turn_module.END_MARK)]})
+    clients = FakeClients(participant)
+    turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep)
+    started = time.monotonic()
+    events = await collect(turn, "hello")
+    assert time.monotonic() - started < 1.0
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Your address is 1 Main St."]
+    assert turn.usage()["connect_end_of_turn"] is True
+
+
+async def test_an_invisible_closed_mark_closes_the_thread(monkeypatch):
+    monkeypatch.setattr(turn_module, "QUIET_AFTER_REPLY", 30.0)
+    participant = FakeParticipant({"bye": [bot("Have a good day." + turn_module.CLOSED_MARK)]})
+    clients = FakeClients(participant)
+    store = MemorySessionStore()
+    token = jwt()
+    events = await collect(ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep), "bye")
+    assert [e.delta for e in events if hasattr(e, "delta")] == ["Have a good day."]
+    assert store.get(session_key(token, "t1")).closed and clients.connect.stopped == ["contact-1"]
