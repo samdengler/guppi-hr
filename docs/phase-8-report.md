@@ -167,7 +167,8 @@ None. Nothing rolled back.
 Status on 2 October, evening: `/p/hr/` checked in Sam's signed-in browser (the four
 suggestions, "HR Assistant · Profile" with its status line, and a "yes" that committed a
 test address, then restored the original); D29 to D33 Approved, D33 with a note that the
-manifest keeps no history. Still open: the redirect URI on the Google OAuth client (the
-client is "GuppiGPT Cognito" in project guppi-gpt; the row is redirect URI 2). The
-retained site bucket is deleted: it held the 8 files of the old page and no distribution
-used it.
+manifest keeps no history. The retained site bucket is deleted: it held the 8 files of
+the old page and no distribution used it. Sam removed
+`https://auth-hr.dengler.io/oauth2/idpresponse` from the Google OAuth client "GuppiGPT
+Cognito" (project guppi-gpt); the client now lists only the platform's
+`https://auth.dengler.io` redirect URI and origin. Nothing from this list is open.
