@@ -118,15 +118,16 @@ def test_every_authorizer_accepts_the_platform_token(template):
         assert "AllowedClients" not in authorizer
 
 
-def test_hr_tools_verify_the_platform_issuer_and_client(template):
+def test_hr_tools_verify_the_platform_issuer_and_audience(template):
     env = _hr_tools_runtime(template)["Properties"]["EnvironmentVariables"]
     discovery = _ssm_parameter_ref(template, "/guppi/platform/jwt-discovery-url")
-    client = _ssm_parameter_ref(template, "/guppi/platform/user-pool-client-id")
+    audience = _ssm_parameter_ref(template, "/guppi/platform/jwt-audience")
     assert env["TOKEN_ISSUER"] == {
         "Fn::Select": [0, {"Fn::Split": ["/.well-known/openid-configuration", discovery]}]
     }
-    # CDK folds a one-element Fn::Join to the element itself.
-    assert env["TOKEN_ALLOWED_CLIENTS"] == client
+    assert env["TOKEN_AUDIENCE"] == audience
+    assert env["TOKEN_USE"] == ""
+    assert "TOKEN_ALLOWED_CLIENTS" not in env
 
 
 def test_platform_gateway_role_may_invoke_the_orchestrator(template):
@@ -895,7 +896,7 @@ def test_hr_tools_runtime_is_an_mcp_server_signed_with_iam(template):
         "TICKETS_TABLE",
         "AUDIT_TABLE",
         "TOKEN_ISSUER",
-        "TOKEN_ALLOWED_CLIENTS",
+        "TOKEN_AUDIENCE",
     }
     assert any(dep.startswith("ToolsRuntimeRoleDefaultPolicy") for dep in runtime["DependsOn"])
 

@@ -49,7 +49,6 @@ class HrTools(Construct):
         gateway: agentcore.CfnGateway,
         gateway_role: iam.Role,
         token_issuer: str,
-        allowed_clients: list[str],
         audience: str,
         base_environment: dict[str, str],
     ) -> None:
@@ -113,9 +112,10 @@ class HrTools(Construct):
                 "TICKETS_TABLE": self.tickets.table_name,
                 "AUDIT_TABLE": self.audit.table_name,
                 "TOKEN_ISSUER": token_issuer,
-                "TOKEN_ALLOWED_CLIENTS": cdk.Fn.join(",", allowed_clients),
                 # An Okta custom authorization server: keys at /v1/keys, the audience
-                # checked, and no token_use claim to check (D46).
+                # checked, and no token_use claim to check (D46). No client allow-list: the
+                # `guppi` server issues the audience only to the chat app and the test
+                # harness's app, as the gateways rely on too.
                 "TOKEN_JWKS_URL": cdk.Fn.join("", [token_issuer, "/v1/keys"]),
                 "TOKEN_AUDIENCE": audience,
                 "TOKEN_USE": "",

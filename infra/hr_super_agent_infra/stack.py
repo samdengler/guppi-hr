@@ -402,14 +402,11 @@ class HrSuperAgentStack(cdk.Stack):
         # ---- Platform -------------------------------------------------------------------
         # The platform's issuer (Okta since D46): every authorizer below accepts the token
         # the page holds on chat.dengler.io by its audience, and the HR tools server verifies
-        # the same token against the same issuer (D19), checking the app's client id (`cid`).
+        # the same token against the same issuer and audience (D19).
         discovery_url = ssm.StringParameter.value_for_string_parameter(
             self, PARAM_JWT_DISCOVERY_URL
         )
         jwt_audience = [ssm.StringParameter.value_for_string_parameter(self, PARAM_JWT_AUDIENCE)]
-        jwt_allowed_clients = [
-            ssm.StringParameter.value_for_string_parameter(self, PARAM_USER_POOL_CLIENT_ID)
-        ]
         token_issuer = cdk.Fn.select(0, cdk.Fn.split(OIDC_DISCOVERY_SUFFIX, discovery_url))
         platform_gateway_id = ssm.StringParameter.value_for_string_parameter(
             self, PARAM_EDGE_GATEWAY_ID
@@ -1010,7 +1007,6 @@ class HrSuperAgentStack(cdk.Stack):
             gateway=tools_gateway,
             gateway_role=tools_gateway_role,
             token_issuer=token_issuer,
-            allowed_clients=jwt_allowed_clients,
             audience=jwt_audience[0],
             base_environment={**RUNTIME_BASE_ENVIRONMENT, **trace_environment},
         )
