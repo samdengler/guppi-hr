@@ -1,4 +1,5 @@
-"""guppi-connect's AWS resources outside Connect: the spike's mock Lambda and the bridge.
+"""guppi-connect's AWS resources outside Connect: the spike's mock Lambda, the bridge and the
+chat start.
 
 The function answers two kinds of request from Agentic CX designer data requests:
 `/echo` reports which headers arrived (token values shortened to a preview), and
@@ -10,6 +11,10 @@ The bridge (bridge.py) is the chat.dengler.io agent project `hr` (until 3 Oct 20
 `hr-connect`). It needs the
 production contact flow id, which scripts/contact_flow.py publishes at
 /guppi-hr/connect/contact-flow-id; the context value `contact_flow_id` overrides it.
+
+The chat start (chat_start.py, guppi-hr D55) starts /p/hr/ chats for a page that talks to
+Connect itself; it uses the same contact flow and alarm topic. The bridge stays deployed as
+the fallback behind the page's flag.
 """
 
 from pathlib import Path
@@ -22,6 +27,7 @@ from constructs import Construct
 
 from guppi_connect_infra.alarms import BridgeAlarms
 from guppi_connect_infra.bridge import ConnectBridge
+from guppi_connect_infra.chat_start import ChatStart
 from guppi_connect_infra.dashboard import BridgeDashboard
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -77,6 +83,7 @@ class GuppiConnectStack(Stack):
         CfnOutput(self, "BridgeDashboardUrl", value=dashboard.url)
         alarms = BridgeAlarms(self, "BridgeAlarms", runtime=bridge.runtime)
         CfnOutput(self, "AlarmTopicArn", value=alarms.topic.topic_arn)
+        ChatStart(self, "ChatStart", contact_flow_id=contact_flow_id, alarm_topic=alarms.topic)
         # scripts/deploy.sh sets this log group's retention; AgentCore creates it.
         CfnOutput(
             self,

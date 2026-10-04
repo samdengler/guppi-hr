@@ -14,7 +14,8 @@ from guppi_connect_infra.stack import GuppiConnectStack
 
 @pytest.fixture(scope="module")
 def template() -> Template:
-    app = cdk.App(context={"contact_flow_id": "flow-123"})
+    # The chat start's Rust build is skipped, as guppi-gpt's issuer tests skip it.
+    app = cdk.App(context={"contact_flow_id": "flow-123", "aws:cdk:bundling-stacks": []})
     stack = GuppiConnectStack(app, "GuppiConnect", env=cdk.Environment(account="111111111111", region="us-east-1"))
     return Template.from_stack(stack)
 
@@ -31,15 +32,27 @@ def actions(statement: dict) -> list[str]:
     return value if isinstance(value, list) else [value]
 
 
+def bridge_statements(template: Template) -> list[dict]:
+    """The bridge runtime role's statements (the chat start's role has its own)."""
+    found = []
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        if any("BridgeRuntimeRole" in json.dumps(role) for role in policy["Properties"].get("Roles", [])):
+            found.extend(policy["Properties"]["PolicyDocument"]["Statement"])
+    return found
+
+
 def test_the_bridge_can_end_contacts_but_only_contacts(template):
-    stop = [s for s in statements(template) if "connect:StopContact" in actions(s)]
+    stop = [s for s in bridge_statements(template) if "connect:StopContact" in actions(s)]
     assert len(stop) == 1
     assert "/contact/*" in json.dumps(stop[0]["Resource"])
+    for statement in statements(template):
+        if "connect:StopContact" in actions(statement):
+            assert json.dumps(statement["Resource"]).count("/contact/*") >= 1
 
 
 def test_the_bridge_starts_contacts_only_on_its_contact_flow(template):
-    start = [s for s in statements(template) if "connect:StartChatContact" in actions(s)]
-    assert "contact-flow/flow-123" in json.dumps(start[0]["Resource"])
+    for start in [s for s in statements(template) if "connect:StartChatContact" in actions(s)]:
+        assert "contact-flow/flow-123" in json.dumps(start["Resource"])
 
 
 def test_the_session_table_uses_the_stacks_own_key(template):
@@ -61,7 +74,7 @@ def test_the_runtime_takes_the_platform_jwt_and_forwards_only_two_headers(templa
 
 
 def test_the_contact_flow_id_comes_from_ssm_without_context():
-    app = cdk.App()
+    app = cdk.App(context={"aws:cdk:bundling-stacks": []})
     stack = GuppiConnectStack(app, "Fresh", env=cdk.Environment(account="111111111111", region="us-east-1"))
     params = Template.from_stack(stack).to_json()["Parameters"]
     assert any(p.get("Default") == "/guppi-hr/connect/contact-flow-id" for p in params.values())
@@ -73,12 +86,15 @@ def test_alarms_cover_chats_problems_and_failed_runs(template):
         "guppi-connect-concurrent-chats",
         "guppi-connect-bridge-problems",
         "guppi-connect-bridge-runfailures",
+        "guppi-connect-chat-start-problems",
+        "guppi-connect-chat-start-errors",
+        "guppi-connect-chat-start-throttles",
     }
     template.has_resource_properties(
         "AWS::CloudWatch::Alarm", {"AlarmName": "guppi-connect-concurrent-chats", "Threshold": 300}
     )
     patterns = {f["Properties"]["FilterPattern"] for f in template.find_resources("AWS::Logs::MetricFilter").values()}
-    assert patterns == {"bridge_problem", '"run failed"'}
+    assert patterns == {"bridge_problem", '"run failed"', '{ $.event = "chat_problem" }'}
 
 
 def test_the_alarm_email_is_a_parameter_and_never_in_the_template(template):
@@ -107,11 +123,11 @@ def test_the_bridge_exchanges_only_through_its_own_provider_and_workload(templat
     env = runtime["EnvironmentVariables"]
     assert env["OBO_WORKLOAD"] == "guppi_connect_bridge-obo"
     assert "/guppi/obo/hr-bridge/provider-name" in json.dumps(template.to_json()["Parameters"])
-    (grant,) = [s for s in statements(template) if "bedrock-agentcore:GetResourceOauth2Token" in actions(s)]
+    (grant,) = [s for s in bridge_statements(template) if "bedrock-agentcore:GetResourceOauth2Token" in actions(s)]
     assert "/guppi/obo/hr-bridge/provider-arn" in json.dumps(template.to_json()["Parameters"])
     assert len(grant["Resource"]) == 4  # the provider, the vault, the directory, the workload
     names = {w["Properties"]["Name"] for w in template.find_resources("AWS::BedrockAgentCore::WorkloadIdentity").values()}
-    assert names == {"guppi_connect_bridge-obo"}
+    assert names == {"guppi_connect_bridge-obo", "hr-chat-start"}
 
 
 def test_the_bridge_never_switches_the_exchange_off(template):

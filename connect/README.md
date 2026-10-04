@@ -51,7 +51,9 @@ The HTML documents are self-contained copies of two Claude Docs; open them in a 
 ```
 acxd/       designer resources as data (hr.js, probes.js), deploy.js, logs.js
 agent/      the AG-UI to Connect bridge on the platform agent kit (connect_bridge)
-infra/      CDK app: the mock and echo Lambda, the bridge Runtime, table and edge target
+chat_start/ the chat start function hr-chat-start (Rust, Lambda; guppi-hr D55)
+infra/      CDK app: the mock and echo Lambda, the bridge Runtime, table and edge target,
+            the chat start function and its URL
 mock/       the Lambda handler
 web/        the hr project manifest for chat.dengler.io
 scripts/    contact flow, chat harness, routing eval, HR token minting, deploy, bridge check
