@@ -2,7 +2,8 @@
 # Deploy the GuppiConnect stack (the mock Lambda; the bridge: its Runtime, session table
 # and the hr target on the platform's edge gateway; the chat start function hr-chat-start,
 # whose Rust is built by cargo-lambda through uvx at synth, or in Docker without cargo, and
-# whose URL host goes to /guppi/hr/chat-start-host for guppi-gpt), then publish web/ to the
+# whose REST API host and stage go to /guppi/hr/chat-start-host and /guppi/hr/chat-start-path
+# for guppi-gpt's CloudFront, D57), then publish web/ to the
 # platform's site bucket under projects/hr/ and invalidate that prefix. The bridge
 # reads the production contact flow id from SSM (/guppi-hr/connect/contact-flow-id),
 # which scripts/contact_flow.py --env production publishes. Extra arguments go to

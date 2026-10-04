@@ -3,10 +3,6 @@
 //! (D57) and gets one buffered answer: `statusCode`, `headers` and a JSON `body`. A cold
 //! start logs one `cold_start` line with each step's start and end in milliseconds, as the
 //! token issuer does (guppi-gpt obo_issuer/src/main.rs).
-//!
-//! Until the function URL is removed (the last deploy of D57), a request through it is
-//! read as the REST event and answered as before, streamed with its status in the prelude,
-//! so the page CloudFront still serves keeps working while CloudFront moves to the API.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,8 +18,7 @@ use hr_chat_start::{
     App, Aws, AttributesError, Config, Connection, Fetcher, FlowSocket, Route, StartChat, Started, Timing, authorize,
     built_in_okta_keys, log, previous_contact, report, request_body, request_path, route, start,
 };
-use lambda_runtime::streaming::Body;
-use lambda_runtime::{Error, FunctionResponse, LambdaEvent, MetadataPrelude, StreamResponse, service_fn};
+use lambda_runtime::{Error, LambdaEvent, service_fn};
 use serde_json::{Map, Value, json};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -252,31 +247,6 @@ fn proxy_answer(status: u16, body: &Value) -> Value {
     })
 }
 
-/// A function URL's event (it has `rawPath`) in the REST proxy event's fields, or None.
-/// Removed with the function URL.
-fn from_function_url(event: &Value) -> Option<Value> {
-    let path = event.get("rawPath")?.clone();
-    Some(json!({
-        "path": path,
-        "httpMethod": event.pointer("/requestContext/http/method").cloned().unwrap_or(Value::Null),
-        "headers": event.get("headers").cloned().unwrap_or(Value::Null),
-        "body": event.get("body").cloned().unwrap_or(Value::Null),
-        "isBase64Encoded": event.get("isBase64Encoded").cloned().unwrap_or(Value::Bool(false)),
-    }))
-}
-
-/// The answer through the function URL as the page before D57 reads it: streamed, the status
-/// in the prelude, the body one NDJSON line. Removed with the function URL.
-fn streamed_answer(status: u16, body: &Value) -> StreamResponse<Body> {
-    let mut headers = http::HeaderMap::new();
-    let content_type = if status == 200 && body.get("ok").is_none() { "application/x-ndjson" } else { "application/json" };
-    headers.insert(http::header::CONTENT_TYPE, http::HeaderValue::from_static(content_type));
-    headers.insert(http::header::CACHE_CONTROL, http::HeaderValue::from_static("no-store"));
-    let metadata_prelude =
-        MetadataPrelude { status_code: http::StatusCode::from_u16(status).unwrap_or(http::StatusCode::OK), headers, cookies: Vec::new() };
-    StreamResponse { metadata_prelude, stream: Body::from(format!("{body}\n")) }
-}
-
 fn ms(since: Instant) -> u64 {
     since.elapsed().as_millis() as u64
 }
@@ -363,16 +333,8 @@ async fn main() -> Result<(), Error> {
             if cold {
                 log(json!({"event": "first_request", "load_ms": load_ms}));
             }
-            match from_function_url(&event.payload) {
-                Some(event) => {
-                    let (status, body) = handle(app, event, cold).await;
-                    Ok::<_, Error>(FunctionResponse::StreamingResponse(streamed_answer(status, &body)))
-                }
-                None => {
-                    let (status, body) = handle(app, event.payload, cold).await;
-                    Ok(FunctionResponse::BufferedResponse(proxy_answer(status, &body)))
-                }
-            }
+            let (status, body) = handle(app, event.payload, cold).await;
+            Ok::<_, Error>(proxy_answer(status, &body))
         }
     }))
     .await

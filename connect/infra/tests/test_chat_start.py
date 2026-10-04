@@ -41,6 +41,15 @@ def function(template: Template) -> dict:
     return found
 
 
+def logical_id(template: Template) -> str:
+    (found,) = [
+        logical
+        for logical, f in template.find_resources("AWS::Lambda::Function").items()
+        if f["Properties"].get("FunctionName") == "hr-chat-start"
+    ]
+    return found
+
+
 def role_statements(template: Template) -> list[dict]:
     role = function(template)["Role"]["Fn::GetAtt"][0]
     found = []
@@ -116,6 +125,18 @@ def test_the_stage_throttles_each_method_and_logs_no_headers_or_bodies(template)
         "AWS::Logs::LogGroup",
         {"LogGroupName": "/aws/apigateway/hr-chat-start", "RetentionInDays": 30},
     )
+
+
+def test_the_function_has_no_url(template):
+    # Reached through the API only (D57): no function URL and no public invoke grant.
+    function_ref = {"Fn::GetAtt": [logical_id(template), "Arn"]}
+    urls = template.find_resources("AWS::Lambda::Url").values()
+    assert all(u["Properties"]["TargetFunctionArn"] != function_ref for u in urls)
+    for permission in template.find_resources("AWS::Lambda::Permission").values():
+        props = permission["Properties"]
+        if props["FunctionName"] == function_ref:
+            assert props["Principal"] == "apigateway.amazonaws.com"
+            assert "FunctionUrlAuthType" not in props
 
 
 def test_no_web_acl_is_attached(template):

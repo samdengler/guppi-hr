@@ -1004,7 +1004,6 @@ dependencies = [
  "aws-sdk-connectparticipant",
  "base64 0.22.1",
  "futures",
- "http",
  "lambda_runtime",
  "num-bigint",
  "rand 0.8.8",

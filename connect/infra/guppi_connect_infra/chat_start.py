@@ -307,13 +307,6 @@ class ChatStart(Construct):
             ),
         )
 
-        # The function URL serves CloudFront until guppi-gpt's origin moves to the API; the
-        # last deploy of D57 removes it.
-        self.url = self.function.add_function_url(
-            auth_type=lambda_.FunctionUrlAuthType.NONE,
-            invoke_mode=lambda_.InvokeMode.RESPONSE_STREAM,
-        )
-
         action = cw_actions.SnsAction(alarm_topic)
         problems = logs.MetricFilter(
             self,
@@ -356,7 +349,6 @@ class ChatStart(Construct):
         # Outputs inside the construct, named as stack outputs, so the bridge's tests can
         # leave the whole chat start out.
         for name, value in (
-            ("ChatStartUrl", self.url.url),
             ("ChatStartApiUrl", self.api.url),
             ("ChatStartHost", self.host),
             ("ChatStartLogGroup", self.log_group.log_group_name),
