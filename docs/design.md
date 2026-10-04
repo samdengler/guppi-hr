@@ -195,3 +195,9 @@ next step.
 - Stored browser history keeps text only: AG-UI state and the reply's agent tag do not
   survive a reload or a switched thread, so a pending change is proposed again and a
   reopened reply shows the plain "HR Assistant" label (D33).
+- TODO (Sam, 4 Oct): a second sample beside the full-page app: a mock page (for example an
+  employee portal) with Connect's chat in a widget, as other projects show, where Touchpoint
+  (`@amazon-connect-touchpoint/web`) may be the right POC. The full-page app uses
+  `amazon-connect-chatjs` instead (docs/proposals/connect-chatjs.md); Touchpoint is a
+  drop-in widget that renders its own UI, so it fits a page that hosts a widget, not this
+  one.
