@@ -13,6 +13,11 @@ gateway with its per-user limits, reply feedback and feature flags; this stack r
 platform's identifiers from `/guppi/platform/*` SSM parameters and owns everything that is
 HR (D31, D34).
 
+Since 3 October the main page, `/p/hr/`, runs on Amazon Connect's Agentic CX designer
+instead (D39); the Strands orchestrator below serves `/p/hr-diy/`. The path from sign-in
+through the warm start to an answer on `/p/hr/` is drawn in
+[hr-page-sequence.md](hr-page-sequence.md).
+
 ## What runs where
 
 | Component | Runs on | Protocol | Code |

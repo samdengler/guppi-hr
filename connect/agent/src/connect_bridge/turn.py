@@ -499,7 +499,7 @@ class ConnectTurn:
     def start_contact(self, key: str, token_exp: float) -> Session:
         settings = self.settings
         # The designer reads attributes only when the flow starts (C2), so the exchange comes
-        # first; the warm start runs on the first focus on the composer (D44).
+        # first; the page sends the warm start as soon as it is in view (D50).
         sign_in_exp = token_exp
         agents_tokens, canvas_token = self.hop_tokens()
         self.agents_tokens = agents_tokens
