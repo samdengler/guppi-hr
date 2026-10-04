@@ -6,14 +6,17 @@
 # guppi-gpt's platform stack stays; nothing calls it after a rollback.
 #
 # Only the commits in OBO_COMMITS are reverted, newest first; add each later on-behalf-of
-# commit to the list in the same commit. Everything else at HEAD is kept.
+# commit to the list in a follow-up commit (a commit cannot name its own hash).
+# infra/tests/test_rollback.py fails when a code commit since D47 is missing from it.
+# Everything else at HEAD is kept.
 #
 #   scripts/obo-rollback.sh --check    # the revert step only (infra/tests runs this)
 #   scripts/obo-rollback.sh --diff     # show the CloudFormation changes, deploy nothing
 #   scripts/obo-rollback.sh            # deploy the rollback (asks first)
 #
-# Each listed commit is reverse-applied with this script itself left out, so a commit that
-# adds itself to the list cannot make the revert conflict (critique round 3, finding 1).
+# Each listed commit is reverse-applied with this script and the documents left out: only
+# what deploys is reverted, and the decision log, findings and design keep their history,
+# so a later edit to a document cannot make the revert conflict (critique rounds 3 and 4).
 #
 # Known risks, from the critique of the build (finding 6):
 # - between the HR stack's deploy and the bridge's, /p/hr/ fails: the gateways want the
@@ -38,7 +41,8 @@ trap 'git -C "$ROOT" worktree remove --force "$WORK" || true' EXIT
 echo "reverting, newest first:"
 for commit in "${OBO_COMMITS[@]}"; do
   git -C "$WORK" log --oneline -1 "$commit"
-  patch="$(git -C "$WORK" show --binary --format= "$commit" -- . ':(exclude)scripts/obo-rollback.sh')"
+  patch="$(git -C "$WORK" show --binary --format= "$commit" -- . ':(exclude)scripts/obo-rollback.sh' \
+    ':(exclude)docs' ':(exclude)*.md')"
   if [[ -n "$patch" ]]; then
     printf '%s\n' "$patch" | git -C "$WORK" apply -R --3way --index
   fi

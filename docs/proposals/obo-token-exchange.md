@@ -275,7 +275,8 @@ accepted the risk instead.
 ## Rollback
 
 `scripts/obo-rollback.sh --diff` shows what a rollback would change. Without the flag, it
-reverts the D47 and D48 commits on top of HEAD in a temporary worktree and deploys: the HR
+reverts the code of the D47 and D48 commits on top of HEAD in a temporary worktree, leaving
+the documents and the decision history as they are, and deploys: the HR
 stack, the bridge, the canvas and the contact flow. Its known risks are listed in the
 script. `infra/tests/test_rollback.py` runs its revert step (`--check`) on every test run. Rehearsed with `--diff` on 4 October, after the third critique of the build:
 - the HR stack drops the policy engine, its seven rules and its workload identities, and

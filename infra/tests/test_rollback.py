@@ -22,3 +22,17 @@ def test_the_rollback_reverts_cleanly_on_head():
     # The revert removes what D47 added: the HR side's token module and the checks.
     assert "infra/hr_super_agent_infra/obo.py" in result.stdout
     assert "scripts/obo-checks.py" in result.stdout
+
+
+def test_every_code_commit_since_d47_is_in_the_rollback_list():
+    """A code commit missing from OBO_COMMITS would quietly survive a rollback (round 4)."""
+    import re
+
+    if shutil.which("git") is None or not (ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+    listed = set(re.search(r"^OBO_COMMITS=\(([^)]*)\)", (ROOT / "scripts" / "obo-rollback.sh").read_text(),
+                           re.MULTILINE).group(1).split())
+    since = subprocess.run(["git", "log", "--format=%h", "--abbrev=7", "c6d96e0^..HEAD", "--",
+                            "agent", "connect", "infra", "scripts", ":(exclude)scripts/obo-rollback.sh"],
+                           cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+    assert set(since) - listed == set(), "add these to OBO_COMMITS in scripts/obo-rollback.sh"
