@@ -15,7 +15,8 @@
 //!   `start_contact`, `await_greeting`, `clear_token`, `warm_sub_agent`, `end_contact`),
 //!   with the same scopes, attributes, limits and request bodies.
 //! - `/chat/report`: the page's record of one turn, checked against the contact's
-//!   `employeeId`, written as one run line, with `chat_problem` lines for the alarm.
+//!   `employeeId`, written as one run line, with `chat_problem` lines for the alarm; it
+//!   answers 200 `{"ok":true}`.
 //!
 //! The function verifies the token itself, since a function URL has no JWT authorizer, with
 //! the token issuer's RS256 verifier and Okta's keys built in (guppi-gpt's obo_issuer, D51).
@@ -1121,7 +1122,10 @@ pub fn report_problems(end_reason: &str, error: Option<&str>) -> Vec<&'static st
     kinds
 }
 
-/// POST /chat/report after the token is verified: the status and body to answer.
+/// POST /chat/report after the token is verified: the status and body to answer. An accepted
+/// report answers 200 with a small body rather than 204: through CloudFront, the browser got
+/// 503 for the empty 204 the streaming function URL returned, though the function had
+/// written the run line.
 pub async fn report(app: &App, caller: &Caller, body: &Map<String, Value>, timing: &Timing) -> (u16, Option<Value>) {
     let received_at = app.now_ms();
     let report = match parse_report(body) {
@@ -1150,7 +1154,7 @@ pub async fn report(app: &App, caller: &Caller, body: &Map<String, Value>, timin
     // One run line per run id, while this instance lives.
     if let Ok(mut seen) = app.seen_runs.lock() {
         if seen.contains(&report.run) {
-            return (204, None);
+            return (200, Some(json!({"ok": true})));
         }
         if seen.len() >= MAX_SEEN_RUNS {
             seen.pop_front();
@@ -1175,7 +1179,7 @@ pub async fn report(app: &App, caller: &Caller, body: &Map<String, Value>, timin
     for kind in report_problems(&report.end_reason, report.error.as_deref()) {
         problem(kind, &report.contact, &report.run);
     }
-    (204, None)
+    (200, Some(json!({"ok": true})))
 }
 
 #[cfg(test)]

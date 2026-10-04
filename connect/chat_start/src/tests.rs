@@ -674,7 +674,7 @@ async fn send_report(env: &Env, overrides: Value) -> (u16, Option<Value>) {
 async fn a_report_on_the_callers_contact_is_one_run_line() {
     let env = env();
     env.aws.owners.lock().unwrap().insert(CONTACT.into(), UID.into());
-    assert_eq!(send_report(&env, json!({})).await, (204, None));
+    assert_eq!(send_report(&env, json!({})).await, (200, Some(json!({"ok": true}))));
     let line = logs().into_iter().find(|l| l["event"] == "chat_report").unwrap();
     assert_eq!(line["contact"], CONTACT);
     assert_eq!(line["run"], "run-1");
@@ -686,7 +686,7 @@ async fn a_report_on_the_callers_contact_is_one_run_line() {
     assert_eq!(line["timing"]["steps"][0]["name"], "send");
     assert!(problems().is_empty());
     // The same run again writes nothing more.
-    assert_eq!(send_report(&env, json!({})).await, (204, None));
+    assert_eq!(send_report(&env, json!({})).await, (200, Some(json!({"ok": true}))));
     assert_eq!(logs().iter().filter(|l| l["event"] == "chat_report").count(), 1);
 }
 
