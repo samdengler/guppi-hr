@@ -133,3 +133,7 @@ At page load (warm function, 28 page loads): page HTML 96 ms, scripts 139 ms, co
 7. Without warm-ups (D57), the first sub-agent question in a chat pays sinks 1, 2 and 4: about 3.6 s of 6.2 s for Profile and 5.6 s of 8.6 s for Pay. Which of this work should be paid per chat at all?
 
 The per-path step tables are in `latency-timelines-2026-10-04-tables.md`; the waterfall charts are on the review page (https://claude.ai/artifact/GgBVLV4xTBZyLCR5Rz4D8L).
+
+The ids behind every number (contacts, request ids, trace and span ids, runtime sessions, the log
+stream of each microVM, ARNs) are in `latency-timelines-2026-10-04-evidence.md`, and every step of
+every turn with its ids in `latency-timelines-2026-10-04-evidence.json`.
