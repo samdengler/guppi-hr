@@ -274,7 +274,12 @@ issuer's throttle and stop every HR tool call.
 `scripts/obo-rollback.sh --diff` shows what a rollback would change. Without the flag, it
 reverts the D47 and D48 commits on top of HEAD in a temporary worktree and deploys: the HR
 stack, the bridge, the canvas and the contact flow. Its known risks are listed in the
-script.
+script. Rehearsed with `--diff` on 3 October after D48:
+- the HR stack drops the policy engine, its seven rules and the five workload identities,
+  and reverts the gateways, runtimes, tools target and role policies;
+- the Connect stack drops the bridge's workload identity and reverts its runtime and role.
+
+Nothing was deployed.
 
 ## Options compared
 
