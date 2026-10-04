@@ -154,7 +154,7 @@ As a result:
   refetches at most once a minute.
 - **Errors are generic** (`invalid_client`, `invalid_grant`, `invalid_scope`), never a
   500.
-- **31 unit tests** cover the rules and verification.
+- **32 unit tests** cover the rules and verification.
 
 ### Exposure and cost controls
 
@@ -183,8 +183,8 @@ As a result:
 - **Each client's secret** is generated in Secrets Manager as `guppi/obo/<client>`. The
   issuer reads it at cold start.
 - **Identity reads the secret as the caller** of `GetResourceOauth2Token` (A16). So each
-  caller's role may read its own client's secret, by name (`guppi/obo/<client>-*`), so a
-  replaced secret keeps its grant.
+  caller's role may read its own client's secret, by name (`guppi/obo/<client>-??????`, the
+  six characters Secrets Manager adds), so a replaced secret keeps its grant.
 - **What else each role may call:** `GetResourceOauth2Token` on its own provider only, and
   `GetWorkloadAccessTokenForJWT` for its own workload identity only (never `ForUserId`).
 - **Nothing is rotated for the POC.**
@@ -275,10 +275,21 @@ accepted the risk instead.
 ## Rollback
 
 `scripts/obo-rollback.sh --diff` shows what a rollback would change. Without the flag, it
-reverts the code of the D47 and D48 commits on top of HEAD in a temporary worktree, leaving
-the documents and the decision history as they are, and deploys: the HR
-stack, the bridge, the canvas and the contact flow. Its known risks are listed in the
-script. `infra/tests/test_rollback.py` runs its revert step (`--check`) on every test run. Rehearsed with `--diff` on 4 October, after the third critique of the build:
+reverts the code of the D47 and D48 commits on top of HEAD in a temporary worktree,
+leaving the documents and the decision history as they are, and deploys the HR stack, the
+bridge, the canvas and the contact flow. Its known risks are listed in the script.
+
+After a deploy, the script keeps two things:
+- the revert commit, as `refs/obo-rollback/<time>`;
+- the deploy logs, in `.deploy/rollback-<time>/`.
+
+The revert must land on main before any other deploy. Otherwise the next deploy from main
+switches the hop tokens back on.
+
+`infra/tests/test_rollback.py` runs the revert step (`--check`) on every test run. It also
+fails when a code commit since D47 is in neither the list to revert nor the list to keep.
+
+Rehearsed with `--diff` on 4 October, after the third critique of the build:
 - the HR stack drops the policy engine, its seven rules and its workload identities, and
   reverts the gateways, runtimes, targets and role policies;
 - the Connect stack drops the bridge's workload identity and reverts its runtime and role.

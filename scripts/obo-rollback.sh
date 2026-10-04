@@ -6,9 +6,13 @@
 # guppi-gpt's platform stack stays; nothing calls it after a rollback.
 #
 # Only the commits in OBO_COMMITS are reverted, newest first; add each later on-behalf-of
-# commit to the list in a follow-up commit (a commit cannot name its own hash).
-# infra/tests/test_rollback.py fails when a code commit since D47 is missing from it.
-# Everything else at HEAD is kept.
+# commit to the list in a follow-up commit (a commit cannot name its own hash). A later
+# commit unrelated to on-behalf-of tokens goes in KEPT_COMMITS instead and survives a
+# rollback. infra/tests/test_rollback.py fails when a code commit since D47 is in neither.
+#
+# After a deploy the revert commit is kept as refs/obo-rollback/<time>, the deploy logs are
+# copied to .deploy/rollback-<time>/, and the revert must land on main before any other
+# deploy: a deploy from main would otherwise switch the hop tokens back on.
 #
 #   scripts/obo-rollback.sh --check    # the revert step only (infra/tests runs this)
 #   scripts/obo-rollback.sh --diff     # show the CloudFormation changes, deploy nothing
@@ -31,6 +35,8 @@
 set -euo pipefail
 
 # The on-behalf-of commits, newest first (D47, D48 and their follow-ups).
+# Later commits that are not part of on-behalf-of tokens and stay through a rollback.
+KEPT_COMMITS=()
 OBO_COMMITS=(8e1ac71 8040b10 9a18c00 454f90d 91f9580 c6d96e0)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)/guppi-hr-rollback"
@@ -66,6 +72,17 @@ fi
 read -r -p "Deploy the rollback to HrSuperAgent, GuppiConnect, the canvas and the contact flow? [y/N] " answer
 [[ "$answer" == "y" ]] || exit 1
 
+STAMP="$(date +%Y%m%d-%H%M%S)"
+REF="refs/obo-rollback/$STAMP"
+git -C "$ROOT" update-ref "$REF" "$(git -C "$WORK" rev-parse HEAD)"
+keep_logs() {
+  mkdir -p "$ROOT/.deploy/rollback-$STAMP"
+  cp -R "$WORK/.deploy" "$ROOT/.deploy/rollback-$STAMP/hr" 2>/dev/null || true
+  cp -R "$WORK/connect/.deploy" "$ROOT/.deploy/rollback-$STAMP/connect" 2>/dev/null || true
+  git -C "$ROOT" worktree remove --force "$WORK" || true
+}
+trap keep_logs EXIT
+
 echo "== HR stack"
 (cd "$WORK" && uv sync --all-packages --dev -q && scripts/deploy.sh --reuse-parameters --require-approval never)
 echo "== Connect bridge"
@@ -73,4 +90,6 @@ echo "== Connect bridge"
 echo "== canvas and contact flow"
 (cd "$WORK/connect/acxd" && npm ci --silent && node deploy.js --env production)
 (cd "$WORK/connect" && uv run scripts/contact_flow.py --env production)
-echo "rolled back; now run the harness"
+echo "rolled back. Before any other deploy, put the revert on main:"
+echo "  git cherry-pick $REF && git push origin main"
+echo "Deploy logs: .deploy/rollback-$STAMP/. Then run the harness."
