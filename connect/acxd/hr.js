@@ -16,8 +16,9 @@
  *   the application recognizes as another domain redirects there (sticky context, D6).
  * - A reply that carries a pending change goes to a fixed confirmation step. Only its
  *   "yes" branch sends the pending change back, so nothing commits without it (D7).
- * - PolicyFlow is a generative journey whose tool is the HrTools MCP data request on the
- *   tools gateway, with only read and ticket tools enabled.
+ * - PolicyFlow searches the policy documents with one fixed data request (PolicySearch) and
+ *   answers from those passages in a generative journey with no tools (guppi-hr D52); its
+ *   exits hand reads, changes and requests for a person to the other flows.
  * - EscalationFlow opens an HR ticket through the tools gateway, gives the employee its
  *   id and ends the conversation; nobody staffs a Connect queue (D43).
  * - Every reply node that ends a turn ends its text with END_MARK, an invisible character
@@ -455,6 +456,10 @@ function clarifyFlow() {
   };
 }
 
+// The tools on the HrTools MCP data request. The policy journey uses none of them (D52):
+// the designer fails every call to this data request with "data request could not be
+// prepared" before any HTTP request (spike fact 11, last seen 2 Oct), so a tool call only
+// cost the journey a model step. The data request stays defined for when it can be prepared.
 const HR_TOOLS = [
   {
     name: 'docs___Retrieve',
@@ -483,13 +488,6 @@ const HR_TOOLS = [
   { name: 'hr___propose_direct_deposit_change', enabled: false },
   { name: 'hr___commit_change', enabled: false },
 ];
-
-const TOOL_PROMPTS = {
-  docs___Retrieve: 'Searches the HR policy documents. Input: {"retrievalQuery": {"text": the question}}.',
-  hr___get_profile: "Reads the employee's own profile (name, job, home address, emergency contact).",
-  hr___list_pay_statements: "Lists the employee's recent pay statements. Input: {\"count\": how many}.",
-  hr___open_ticket: 'Opens an HR service desk ticket. Input: {"summary": what the employee needs, "domain": "general"}. Only after the employee agrees.',
-};
 
 function hrToolsDataRequest() {
   const headers = [
@@ -590,26 +588,20 @@ function policyFlow() {
           prompt: [
             "You answer an airline employee's HR policy questions for the HR assistant.",
             'Policy search results for the question, retrieved before you started (empty if the search failed): <results>{PolicySearch.result.content.0.text:NLX.Variable}</results>.',
-            'Answer only from those results or from the docs___Retrieve tool, naming the policy you used. If neither has the answer, say so.',
-            'You may look up the employee\'s own profile (hr___get_profile) or pay statements (hr___list_pay_statements) when the question needs them.',
-            'If the employee wants a human or you cannot answer, offer to open a ticket with hr___open_ticket, and open it only if they agree.',
-            'You never change records. If the employee wants to change their home address or emergency contact, use the switchToProfile exit; direct deposit or pay statements, switchToPay; pass travel or buddy passes, switchToTravel; a person, human.',
+            'Answer only from those results, naming the policy you used. If they do not have the answer, say so and offer a ticket for a person on the HR team.',
+            'You have no tools and never look up or change records. If the employee wants to see or change their home address or emergency contact, use the switchToProfile exit; direct deposit or pay statements, switchToPay; pass travel or buddy passes, switchToTravel; a person, or the ticket you offered, human.',
             'When you take an exit, write nothing before it: the flow you hand to answers the employee.',
             'Answer in at most two short sentences.',
           ].join(' '),
-          // One journey tool per enabled MCP tool. As a single tool the MCP data request
-          // reached the model as one "HrTools" tool with no schema, and every call failed
-          // "data request could not be prepared" (live, 2026-10-02).
-          tools: HR_TOOLS.filter((t) => t.enabled).map((t) => ({
-            type: 'dataRequest',
-            dataRequest: { dataRequestId: 'HrTools', name: t.name, action: t.name, headers: {}, payload: {} },
-            prompt: TOOL_PROMPTS[t.name],
-          })),
+          // No tools (D52): the passages are in the prompt, and every call to the HrTools
+          // MCP data request failed before reaching the gateway (spike fact 11).
+          tools: [],
           exitConditions: [
             { name: 'switchToProfile', prompt: 'The employee wants to change or see their home address or emergency contact.' },
             { name: 'switchToPay', prompt: 'The employee wants to change direct deposit or see pay statements.' },
             { name: 'switchToTravel', prompt: 'The employee asks about pass travel, buddy passes or flight benefits.' },
-            { name: 'human', prompt: 'The employee asks to talk to a person.' },
+            // EscalationFlow opens the ticket and ends the conversation (D43).
+            { name: 'human', prompt: 'The employee asks to talk to a person, or agrees to the ticket you offered.' },
           ],
         },
       },
@@ -626,7 +618,7 @@ function policyFlow() {
     .add('end', 'end');
   return {
     flowId: 'PolicyFlow',
-    description: 'Answers HR policy questions with the HrTools MCP data request (read and ticket tools only).',
+    description: 'Answers HR policy questions from a policy search made before the journey, which has no tools.',
     aiDescription: 'The employee asks a general HR policy question, such as leave, holidays, benefits enrollment or workplace rules.',
     utterances: [
       'How much vacation do I get',
