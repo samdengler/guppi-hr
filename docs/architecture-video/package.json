@@ -1,0 +1,22 @@
+{
+  "name": "hr-architecture-video",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Remotion animation: how one question flows through the HR assistant at chat.dengler.io/p/hr/",
+  "scripts": {
+    "preview": "remotion studio",
+    "render": "remotion render HrQuestionFlow out/hr-question-flow.mp4",
+    "still": "remotion still HrQuestionFlow out/still.png"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.532",
+    "@remotion/google-fonts": "^4.0.532",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "^4.0.532"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}
