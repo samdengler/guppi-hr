@@ -2,23 +2,23 @@
 //!
 //! The page starts each Amazon Connect chat here and then talks to Connect's participant
 //! service itself with amazon-connect-chatjs. Two routes, both POST, chosen by the path's
-//! suffix, behind a Lambda function URL that streams its response (CloudFront sends
-//! https://chat.dengler.io/api/hr/chat/* here with the path unchanged):
+//! suffix, behind an API Gateway REST API with a standard Lambda proxy integration, the
+//! shape of AWS's StartChatContact sample (D57; CloudFront sends
+//! https://chat.dengler.io/api/hr/chat/* to the stage `prod` with the path unchanged):
 //!
 //! - `/chat/start`: verifies the Okta access token, ends the caller's previous contact when
 //!   asked, trades the token through AgentCore Identity for the hop tokens the designer
 //!   carries (D47, D48), starts the contact with them as attributes, opens the customer's
 //!   WebSocket so the flow runs, waits for the designer's greeting, blanks the token
-//!   attributes (D42, D53) and only then streams line 1 with the participant token. The
-//!   three sub-agent warm-ups (D41) run beside the greeting wait; line 2 says how many
-//!   succeeded. These are the bridge's steps (connect_bridge/turn.py: `hop_tokens`,
-//!   `start_contact`, `await_greeting`, `clear_token`, `warm_sub_agent`, `end_contact`),
-//!   with the same scopes, attributes, limits and request bodies.
+//!   attributes (D42, D53) and only then answers one JSON body with the participant token.
+//!   These are the bridge's steps (connect_bridge/turn.py: `hop_tokens`, `start_contact`,
+//!   `await_greeting`, `clear_token`, `end_contact`), with the same scopes, attributes and
+//!   limits. The sub-agents are not warmed here (D57); the bridge still warms them.
 //! - `/chat/report`: the page's record of one turn, checked against the contact's
 //!   `employeeId`, written as one run line, with `chat_problem` lines for the alarm; it
 //!   answers 200 `{"ok":true}`.
 //!
-//! The function verifies the token itself, since a function URL has no JWT authorizer, with
+//! The function verifies the token itself, since a REST API has no JWT authorizer, with
 //! the token issuer's RS256 verifier and Okta's keys built in (guppi-gpt's obo_issuer, D51).
 //! Nothing logged or returned holds the Okta token or a hop token. This file decides;
 //! `main.rs` reaches AWS. `tests.rs` replaces AWS and Okta with fakes.
@@ -56,10 +56,6 @@ pub const GREETING_LIMIT: Duration = Duration::from_secs(12);
 /// A quiet greeting socket this long sends the wait to the transcript once.
 pub const GREETING_CHECK: Duration = Duration::from_secs(1);
 pub const POLL_INTERVAL: Duration = Duration::from_millis(300);
-/// The bridge's SUB_AGENT_WARM_TIMEOUT. The warm-ups start together, so line 2 comes at most
-/// this long after StartChatContact returns.
-pub const SUB_AGENT_WARM_TIMEOUT: Duration = Duration::from_secs(15);
-const WARM_GUARD: Duration = Duration::from_secs(16);
 pub const MAX_BODY_BYTES: usize = 16 * 1024;
 const MAX_ID_CHARS: usize = 128;
 const CACHE_MARGIN: f64 = 60.0;
@@ -301,7 +297,6 @@ pub trait Aws: Send + Sync {
     async fn update_attributes(&self, instance_id: &str, contact_id: &str, attributes: &HashMap<String, String>) -> Result<(), String>;
     async fn stop_contact(&self, instance_id: &str, contact_id: &str) -> Result<(), String>;
     async fn contact_attributes(&self, instance_id: &str, contact_id: &str) -> Result<HashMap<String, String>, AttributesError>;
-    async fn post_json(&self, url: &str, headers: &[(String, String)], body: &Value, timeout: Duration) -> Result<u16, String>;
 }
 
 #[async_trait]
@@ -311,20 +306,12 @@ pub trait FlowSocket: Send {
     async fn close(&mut self);
 }
 
-/// Where the start route writes its NDJSON lines.
-#[async_trait]
-pub trait Lines: Send {
-    async fn line(&mut self, value: &Value);
-}
-
 pub struct Config {
     pub okta_issuer: String,
     pub okta_audience: String,
     pub okta_clients: HashSet<String>,
     pub instance_id: String,
     pub contact_flow_id: String,
-    pub agents_gateway_url: String,
-    pub warm_domains: Vec<String>,
     pub provider: String,
     pub workload: String,
 }
@@ -339,8 +326,6 @@ impl Config {
             okta_clients: list(var("OKTA_CLIENTS")?).into_iter().collect(),
             instance_id: var("CONNECT_INSTANCE_ID")?,
             contact_flow_id: var("CONTACT_FLOW_ID")?,
-            agents_gateway_url: var("AGENTS_GATEWAY_URL").unwrap_or_default().trim_end_matches('/').to_string(),
-            warm_domains: list(var("WARM_DOMAINS").unwrap_or_else(|_| DOMAINS.join(","))),
             // Without both an exchange fails, so the Okta token never reaches a contact (D48).
             provider: var("OBO_PROVIDER").unwrap_or_default(),
             workload: var("OBO_WORKLOAD").unwrap_or_default(),
@@ -357,10 +342,6 @@ pub struct HopTokens {
 }
 
 impl HopTokens {
-    pub fn agents_token(&self, domain: &str) -> Option<&str> {
-        self.agents.iter().find(|(d, _)| d == domain).map(|(_, t)| t.as_str())
-    }
-
     /// The earliest `exp` of the four, in epoch seconds.
     pub fn min_exp(&self, now: f64) -> f64 {
         self.agents.iter().map(|(_, t)| t).chain([&self.tools]).map(|t| expires_at(t, now)).fold(f64::INFINITY, f64::min)
@@ -500,10 +481,22 @@ pub enum Route {
     NotAllowed,
 }
 
-/// The route, by the path's suffix (CloudFront passes /api/hr/chat/... through unchanged).
+/// The request's path in API Gateway's REST proxy event (version 1.0): `path`, which leaves
+/// out the stage (/api/hr/chat/start for /prod/api/hr/chat/start), or else `resource`.
+pub fn request_path(event: &Value) -> &str {
+    event.get("path").or_else(|| event.get("resource")).and_then(Value::as_str).unwrap_or("")
+}
+
+/// The request's method in the REST proxy event: `httpMethod`.
+pub fn request_method(event: &Value) -> &str {
+    event.get("httpMethod").and_then(Value::as_str).unwrap_or("")
+}
+
+/// The route, by the path's suffix (CloudFront passes /api/hr/chat/... through unchanged,
+/// under the stage's origin path).
 pub fn route(event: &Value) -> Route {
-    let path = event.get("rawPath").and_then(Value::as_str).unwrap_or("");
-    let method = event.pointer("/requestContext/http/method").and_then(Value::as_str).unwrap_or("");
+    let path = request_path(event);
+    let method = request_method(event);
     let found = if path.ends_with("/chat/start") {
         Route::Start
     } else if path.ends_with("/chat/report") {
@@ -826,43 +819,6 @@ pub async fn end_previous(app: &App, timing: &Timing, previous: &str, uid: &str)
     }
 }
 
-/// One sub-agent's warm message, as the designer would address it (the bridge's
-/// `warm_sub_agent`): on the runtime session `{contact}-{domain}` and the thread `contact`.
-pub async fn warm_sub_agent(app: Arc<App>, timing: Timing, contact: String, domain: String, token: Option<String>) -> bool {
-    let Some(token) = token else { return false };
-    let body = json!({
-        "jsonrpc": "2.0",
-        "id": format!("warm-{domain}"),
-        "method": "message/send",
-        "params": {
-            "message": {
-                "role": "user",
-                "messageId": uuid::Uuid::new_v4().simple().to_string(),
-                "contextId": contact,
-                "parts": [{"kind": "text", "text": "warm"}],
-                "metadata": {"warm": true},
-            }
-        },
-    });
-    let headers = vec![
-        ("Authorization".to_string(), format!("Bearer {token}")),
-        ("Content-Type".to_string(), "application/json".to_string()),
-        ("X-Amzn-Bedrock-AgentCore-Runtime-Session-Id".to_string(), format!("{contact}-{domain}")),
-    ];
-    let url = format!("{}/{domain}/invocations", app.config.agents_gateway_url);
-    let start = timing.ms();
-    let warmed = match app.aws.post_json(&url, &headers, &body, SUB_AGENT_WARM_TIMEOUT).await {
-        Ok(status) => status == 200,
-        Err(reason) => {
-            log(json!({"event": "warm_failed", "contact": contact, "domain": domain, "reason": reason}));
-            false
-        }
-    };
-    let name = if warmed { format!("warming {domain}") } else { format!("warming {domain} (failed)") };
-    timing.add(&name, start, Some(timing.ms()), "agents");
-    warmed
-}
-
 /// What one start did, for its run line.
 #[derive(Default)]
 struct StartRecord {
@@ -872,23 +828,25 @@ struct StartRecord {
     started_at: Option<i64>,
     expires_at: Option<i64>,
     token_cleared: Option<bool>,
-    line1_ms: Option<u64>,
-    warmed: Option<usize>,
+    credentials_ms: Option<u64>,
     error: Option<String>,
 }
 
-/// POST /chat/start after the token is verified: line 1 and line 2 to `lines`, then one run
-/// line to the log. `previous` is the chat the page left.
-pub async fn start(app: Arc<App>, caller: Caller, previous: Option<String>, timing: Timing, cold: bool, lines: &mut dyn Lines) {
+/// POST /chat/start after the token is verified: the one JSON body to answer with 200, after
+/// one run line to the log. `previous` is the chat the page left. The body is the
+/// credentials (`data.startChatResult`, as in AWS's StartChatContact sample, with `region`,
+/// `startedAt`, `expiresAt`, `restarted` and `timing`), or `{"error":"signin"}` or
+/// `{"error":"unavailable"}`.
+pub async fn start(app: &App, caller: &Caller, previous: Option<String>, timing: &Timing, cold: bool) -> Value {
     let restarted = previous.is_some();
     // Ending the left contact does not hold up the new one (L27).
     let ending = async {
         match &previous {
-            Some(id) => Some(end_previous(&app, &timing, id, &caller.uid).await),
+            Some(id) => Some(end_previous(app, timing, id, &caller.uid).await),
             None => None,
         }
     };
-    let (previous_outcome, record) = tokio::join!(ending, start_contact(app.clone(), &caller, restarted, &timing, lines));
+    let (previous_outcome, (record, body)) = tokio::join!(ending, start_contact(app, caller, restarted, timing));
     log(json!({
         "event": "chat_start",
         "outcome": record.outcome,
@@ -901,20 +859,20 @@ pub async fn start(app: Arc<App>, caller: Caller, previous: Option<String>, timi
         "token_cleared": record.token_cleared,
         "started_at": record.started_at,
         "expires_at": record.expires_at,
-        "line1_ms": record.line1_ms,
-        "warmed": record.warmed,
+        "credentials_ms": record.credentials_ms,
         "error": record.error,
         "total_ms": timing.ms(),
         "steps": timing.steps(),
     }));
+    body
 }
 
-async fn start_contact(app: Arc<App>, caller: &Caller, restarted: bool, timing: &Timing, lines: &mut dyn Lines) -> StartRecord {
+async fn start_contact(app: &App, caller: &Caller, restarted: bool, timing: &Timing) -> (StartRecord, Value) {
     let mut record = StartRecord::default();
     // The designer reads its attributes once, when the flow reaches it (C2), so the
     // exchange comes first.
     let exchange_start = timing.ms();
-    let hop = match exchange(&app, &caller.token).await {
+    let hop = match exchange(app, &caller.token).await {
         Ok((hop, cached)) => {
             timing.add("hop token exchanges", exchange_start, Some(timing.ms()), "exchange");
             timing.note(if cached { "issuer exchanges cached" } else { "issuer exchanges made by this request" });
@@ -925,10 +883,9 @@ async fn start_contact(app: Arc<App>, caller: &Caller, restarted: bool, timing: 
             // Fail closed: no contact starts with the Okta token in place of the hop tokens.
             timing.add("hop token exchanges (failed)", exchange_start, Some(timing.ms()), "exchange");
             problem("exchange_failed", "-", &error);
-            lines.line(&json!({"error": "signin"})).await;
             record.outcome = "signin";
             record.error = Some(error);
-            return record;
+            return (record, json!({"error": "signin"}));
         }
     };
     let mut attributes: HashMap<String, String> =
@@ -946,81 +903,50 @@ async fn start_contact(app: Arc<App>, caller: &Caller, restarted: bool, timing: 
     let started = match timing.timed("StartChatContact", "connect", app.aws.start_chat(&request)).await {
         Ok(started) => started,
         Err(error) => {
-            lines.line(&json!({"error": "unavailable"})).await;
             record.outcome = "unavailable";
             record.error = Some(error);
-            return record;
+            return (record, json!({"error": "unavailable"}));
         }
     };
     let contact = started.contact_id.clone();
     record.contact = Some(contact.clone());
     let started_at = app.now_ms();
     record.started_at = Some(started_at);
-    // The sub-agents need only the contact id, so they warm during the greeting (L13).
-    let warming: Vec<tokio::task::JoinHandle<bool>> = if app.config.agents_gateway_url.is_empty() {
-        Vec::new()
-    } else {
-        app.config
-            .warm_domains
-            .iter()
-            .map(|domain| {
-                let token = hop.agents_token(domain).map(String::from);
-                tokio::spawn(warm_sub_agent(app.clone(), timing.clone(), contact.clone(), domain.clone(), token))
-            })
-            .collect()
-    };
     let greeted: Result<(), String> = async {
         let connection =
             timing.timed("CreateParticipantConnection", "connect", app.aws.create_connection(&started.participant_token)).await?;
         let socket = timing.timed("flow socket", "connect", app.aws.open_flow(&connection.websocket_url)).await?;
-        await_greeting(&app, timing, socket, &connection.connection_token, &contact).await
+        await_greeting(app, timing, socket, &connection.connection_token, &contact).await
     }
     .await;
     if let Err(error) = greeted {
         // The designer may have read the tokens; the record no longer needs them, so they are
         // blanked before the contact ends (D42, D53).
-        for handle in &warming {
-            handle.abort();
-        }
-        record.token_cleared = Some(blank_tokens(&app, timing, &contact).await);
-        end_contact(&app, timing, &contact).await;
-        lines.line(&json!({"error": "unavailable"})).await;
+        record.token_cleared = Some(blank_tokens(app, timing, &contact).await);
+        end_contact(app, timing, &contact).await;
         record.outcome = "unavailable";
         record.error = Some(error);
-        return record;
+        return (record, json!({"error": "unavailable"}));
     }
-    let cleared = blank_tokens(&app, timing, &contact).await;
+    let cleared = blank_tokens(app, timing, &contact).await;
     record.token_cleared = Some(cleared);
     let expires_at = expires_at_ms(hop.min_exp(app.now()), started_at);
     record.expires_at = Some(expires_at);
-    let line1_ms = timing.point("credentials sent", LANE);
-    record.line1_ms = Some(line1_ms);
-    lines
-        .line(&json!({
-            "data": {"startChatResult": {
-                "ContactId": started.contact_id,
-                "ParticipantId": started.participant_id,
-                "ParticipantToken": started.participant_token,
-            }},
-            "region": REGION,
-            "startedAt": started_at,
-            "expiresAt": expires_at,
-            "restarted": restarted,
-            "timing": timing.value(Some(&contact)),
-        }))
-        .await;
-    let count = warming.len();
-    let warmed = match tokio::time::timeout(WARM_GUARD, futures::future::join_all(warming)).await {
-        Ok(done) => done.into_iter().filter(|r| matches!(r, Ok(true))).count(),
-        Err(_) => 0,
-    };
-    if warmed < count {
-        timing.note("a sub-agent warm-up failed");
-    }
-    record.warmed = Some(warmed);
+    record.credentials_ms = Some(timing.point("credentials sent", LANE));
     record.outcome = "ok";
-    lines.line(&json!({"warmed": warmed, "timing": timing.value(Some(&contact))})).await;
-    record
+    let body = json!({
+        "data": {"startChatResult": {
+            "ContactId": started.contact_id,
+            "ParticipantId": started.participant_id,
+            "ParticipantToken": started.participant_token,
+        }},
+        "region": REGION,
+        "startedAt": started_at,
+        "expiresAt": expires_at,
+        "restarted": restarted,
+        "timing": timing.value(Some(&contact)),
+    });
+    (record, body)
 }
 
 // ---- the turn report ---------------------------------------------------------------------
@@ -1124,8 +1050,8 @@ pub fn report_problems(end_reason: &str, error: Option<&str>) -> Vec<&'static st
 
 /// POST /chat/report after the token is verified: the status and body to answer. An accepted
 /// report answers 200 with a small body rather than 204: through CloudFront, the browser got
-/// 503 for the empty 204 the streaming function URL returned, though the function had
-/// written the run line.
+/// 503 for the empty 204 the streaming function URL returned before D57 (aws-feedback F1),
+/// though the function had written the run line.
 pub async fn report(app: &App, caller: &Caller, body: &Map<String, Value>, timing: &Timing) -> (u16, Option<Value>) {
     let received_at = app.now_ms();
     let report = match parse_report(body) {

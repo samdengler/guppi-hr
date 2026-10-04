@@ -1,5 +1,5 @@
-//! hr-chat-start: token verification, routing, the two NDJSON lines, expiresAt, ownership,
-//! greeting classification and the blanking order. AWS, Okta and the WebSocket are fakes;
+//! hr-chat-start: token verification, routing of the REST proxy event, the one JSON body,
+//! expiresAt, ownership, greeting classification and the blanking order. AWS, Okta and the WebSocket are fakes;
 //! Okta's key is generated here. Time is tokio's paused clock, so the 12 s greeting limit
 //! takes no real time.
 
@@ -25,7 +25,6 @@ const HARNESS: &str = "0oaharness";
 const UID: &str = "00u-employee";
 const NOW: f64 = 1_800_000_000.0;
 const CONTACT: &str = "11111111-2222-3333-4444-555555555555";
-const GATEWAY: &str = "https://agents.example.com";
 
 fn okta_private() -> &'static RsaPrivateKey {
     static KEY: OnceLock<RsaPrivateKey> = OnceLock::new();
@@ -124,7 +123,6 @@ struct FakeAws {
     workloads: StdMutex<Vec<(String, String)>>,
     blanked: StdMutex<Vec<HashMap<String, String>>>,
     stopped: StdMutex<Vec<String>>,
-    posts: StdMutex<Vec<(String, Vec<(String, String)>, Value)>>,
     exchanges: AtomicUsize,
 }
 
@@ -144,7 +142,6 @@ impl FakeAws {
             workloads: StdMutex::default(),
             blanked: StdMutex::default(),
             stopped: StdMutex::default(),
-            posts: StdMutex::default(),
             exchanges: AtomicUsize::new(0),
         }
     }
@@ -224,26 +221,6 @@ impl Aws for FakeAws {
             None => Err(AttributesError::NotFound),
         }
     }
-
-    async fn post_json(&self, url: &str, headers: &[(String, String)], body: &Value, _timeout: Duration) -> Result<u16, String> {
-        self.event("warm-up");
-        self.posts.lock().unwrap().push((url.into(), headers.to_vec(), body.clone()));
-        tokio::time::sleep(Duration::from_millis(1500)).await;
-        Ok(200)
-    }
-}
-
-struct Collected {
-    lines: Vec<Value>,
-    events: Events,
-}
-
-#[async_trait]
-impl Lines for Collected {
-    async fn line(&mut self, value: &Value) {
-        self.events.lock().unwrap().push(format!("line {}", self.lines.len() + 1));
-        self.lines.push(value.clone());
-    }
 }
 
 struct Env {
@@ -264,8 +241,6 @@ fn env() -> Env {
         okta_clients: [CHAT_APP, HARNESS].iter().map(|s| s.to_string()).collect(),
         instance_id: "instance-1".into(),
         contact_flow_id: "flow-1".into(),
-        agents_gateway_url: GATEWAY.into(),
-        warm_domains: DOMAINS.iter().map(|d| d.to_string()).collect(),
         provider: "guppi-obo-hr-bridge".into(),
         workload: "hr-chat-start".into(),
     };
@@ -273,22 +248,27 @@ fn env() -> Env {
     Env { app: Arc::new(app), aws, okta, events }
 }
 
+/// API Gateway's REST proxy event (version 1.0) as the stage `prod` sends it: `path` without
+/// the stage, `resource`, `httpMethod`, headers as CloudFront forwarded them.
 fn event(path: &str, token: Option<&str>, body: &str) -> Value {
-    let mut headers = json!({"content-type": "application/json"});
+    let mut headers = json!({"Content-Type": "application/json", "Host": "abc123.execute-api.us-east-1.amazonaws.com"});
     if let Some(token) = token {
-        headers["authorization"] = json!(format!("Bearer {token}"));
+        headers["Authorization"] = json!(format!("Bearer {token}"));
     }
-    json!({"rawPath": path, "requestContext": {"http": {"method": "POST"}}, "headers": headers, "body": body, "isBase64Encoded": false})
+    json!({"resource": path, "path": path, "httpMethod": "POST", "headers": headers,
+           "requestContext": {"stage": "prod", "path": format!("/prod{path}"), "httpMethod": "POST"},
+           "body": body, "isBase64Encoded": false})
 }
 
 fn caller(_env: &Env) -> Caller {
     Caller { token: okta_token(json!({})), uid: UID.into(), exp: NOW + 3000.0 }
 }
 
-async fn run_start(env: &Env, previous: Option<&str>) -> Vec<Value> {
-    let mut sink = Collected { lines: Vec::new(), events: env.events.clone() };
-    start(env.app.clone(), caller(env), previous.map(String::from), Timing::new(Instant::now()), false, &mut sink).await;
-    sink.lines
+/// The start's one body; "answered" goes in the events when it is returned.
+async fn run_start(env: &Env, previous: Option<&str>) -> Value {
+    let body = start(&env.app, &caller(env), previous.map(String::from), &Timing::new(Instant::now()), false).await;
+    env.events.lock().unwrap().push("answered".into());
+    body
 }
 
 fn logs() -> Vec<Value> {
@@ -380,8 +360,32 @@ fn routes_go_by_the_path_suffix_and_post_only() {
     assert_eq!(route(&event("/api/hr/chat/other", None, "")), Route::NotFound);
     assert_eq!(route(&event("/api/hr/invocations", None, "")), Route::NotFound);
     let mut get = event("/api/hr/chat/start", None, "");
-    get["requestContext"]["http"]["method"] = json!("GET");
+    get["httpMethod"] = json!("GET");
     assert_eq!(route(&get), Route::NotAllowed);
+    // `resource` serves when `path` is missing.
+    let mut resource_only = event("/api/hr/chat/report", None, "");
+    resource_only.as_object_mut().unwrap().remove("path");
+    assert_eq!(route(&resource_only), Route::Report);
+}
+
+#[test]
+fn a_function_url_event_is_not_a_route() {
+    let url_event = json!({"rawPath": "/api/hr/chat/start", "requestContext": {"http": {"method": "POST"}}, "headers": {}});
+    assert_eq!(route(&url_event), Route::NotFound);
+}
+
+#[tokio::test]
+async fn headers_are_found_whatever_their_case_and_null_headers_are_none() {
+    let env = env();
+    let token = okta_token(json!({}));
+    let mut lower = event("/api/hr/chat/start", None, "");
+    lower["headers"] = json!({"authorization": format!("Bearer {token}")});
+    assert!(authorize(&env.app, &lower).await.is_ok());
+    let mut none = event("/api/hr/chat/start", None, "");
+    none["headers"] = Value::Null;
+    none["body"] = Value::Null;
+    assert_eq!(authorize(&env.app, &none).await.err(), Some("no bearer token"));
+    assert_eq!(request_body(&none).unwrap(), Map::new());
 }
 
 #[test]
@@ -401,11 +405,9 @@ fn bodies_are_json_objects_plain_or_base64() {
 // ---- the start ---------------------------------------------------------------------------
 
 #[tokio::test(start_paused = true)]
-async fn a_start_streams_the_credentials_then_the_warm_up_count() {
+async fn a_start_answers_one_body_with_the_credentials() {
     let env = env();
-    let lines = run_start(&env, None).await;
-    assert_eq!(lines.len(), 2);
-    let first = &lines[0];
+    let first = &run_start(&env, None).await;
     assert_eq!(
         first["data"]["startChatResult"],
         json!({"ContactId": CONTACT, "ParticipantId": "participant-1", "ParticipantToken": "participant-token"})
@@ -421,10 +423,14 @@ async fn a_start_streams_the_credentials_then_the_warm_up_count() {
     for name in ["hop token exchanges", "StartChatContact", "CreateParticipantConnection", "flow socket", "greeting wait", "token blanking"] {
         assert!(names.contains(&name), "{name} in {names:?}");
     }
-    assert_eq!(lines[1]["warmed"], 3);
-    assert!(lines[1]["timing"]["steps"].as_array().unwrap().iter().any(|s| s["name"] == "warming pay"));
+    assert!(names.contains(&"credentials sent"));
+    // No sub-agent is warmed by the chat start (D57).
+    assert!(steps.iter().all(|s| s["lane"] != "agents" && !s["name"].as_str().unwrap().starts_with("warming")));
+    assert!(first.get("warmed").is_none());
     let run = logs().into_iter().find(|l| l["event"] == "chat_start").unwrap();
-    assert_eq!((run["outcome"].as_str(), run["contact"].as_str(), run["warmed"].as_u64()), (Some("ok"), Some(CONTACT), Some(3)));
+    assert_eq!((run["outcome"].as_str(), run["contact"].as_str()), (Some("ok"), Some(CONTACT)));
+    assert!(run["credentials_ms"].is_u64());
+    assert!(run.get("warmed").is_none());
     assert!(problems().is_empty());
 }
 
@@ -460,16 +466,15 @@ async fn the_contact_carries_the_hop_tokens_and_the_employee_id_for_an_hour() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn line_one_comes_after_the_greeting_and_the_blanking() {
+async fn the_answer_comes_after_the_greeting_and_the_blanking() {
     let env = env();
     run_start(&env, None).await;
     let order = events(&env);
     let greeted = position(&order, "socket closed");
     let blanked = position(&order, "UpdateContactAttributes");
-    let line = position(&order, "line 1");
+    let answered = position(&order, "answered");
     assert!(position(&order, "StartChatContact") < position(&order, "flow socket"));
-    assert!(greeted < blanked && blanked < line, "{order:?}");
-    assert!(position(&order, "line 2") > line);
+    assert!(greeted < blanked && blanked < answered, "{order:?}");
     let blanked = env.aws.blanked.lock().unwrap()[0].clone();
     let mut names: Vec<&String> = blanked.keys().collect();
     names.sort();
@@ -478,34 +483,11 @@ async fn line_one_comes_after_the_greeting_and_the_blanking() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_warm_ups_go_out_beside_the_greeting_wait_as_the_bridge_sends_them() {
-    let env = env();
-    // The greeting arrives after a quiet second, so the warm-ups start before it.
-    *env.aws.frames.lock().unwrap() = vec![Frame::Quiet, greeting_frame("Hello\u{2063}")];
-    run_start(&env, None).await;
-    let order = events(&env);
-    assert!(position(&order, "warm-up") < position(&order, "socket closed"), "{order:?}");
-    let posts = env.aws.posts.lock().unwrap().clone();
-    assert_eq!(posts.len(), 3);
-    let (url, headers, body) = posts.iter().find(|(url, ..)| url.contains("/travel/")).unwrap();
-    assert_eq!(url, &format!("{GATEWAY}/travel/invocations"));
-    let header = |name: &str| headers.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone()).unwrap();
-    assert_eq!(header("X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"), format!("{CONTACT}-travel"));
-    assert_eq!(header("Content-Type"), "application/json");
-    assert_eq!(header("Authorization"), format!("Bearer {}", hop("hr.agents.travel", NOW + 3000.0)));
-    assert_eq!(body["method"], "message/send");
-    assert_eq!(body["id"], "warm-travel");
-    assert_eq!(body["params"]["message"]["contextId"], CONTACT);
-    assert_eq!(body["params"]["message"]["metadata"], json!({"warm": true}));
-    assert_eq!(body["params"]["message"]["parts"], json!([{"kind": "text", "text": "warm"}]));
-}
-
-#[tokio::test(start_paused = true)]
 async fn expires_at_is_the_hop_tokens_expiry_when_it_comes_first() {
     let env = env();
     *env.aws.hop_exp.lock().unwrap() = NOW + 1200.0;
-    let lines = run_start(&env, None).await;
-    assert_eq!(lines[0]["expiresAt"], json!(((NOW + 1200.0) * 1000.0) as i64));
+    let body = run_start(&env, None).await;
+    assert_eq!(body["expiresAt"], json!(((NOW + 1200.0) * 1000.0) as i64));
 }
 
 #[test]
@@ -519,8 +501,7 @@ fn expires_at_is_otherwise_the_chat_duration_less_two_minutes() {
 async fn a_failed_exchange_answers_signin_and_starts_nothing() {
     let env = env();
     env.aws.exchange_fails.store(true, Ordering::SeqCst);
-    let lines = run_start(&env, None).await;
-    assert_eq!(lines, vec![json!({"error": "signin"})]);
+    assert_eq!(run_start(&env, None).await, json!({"error": "signin"}));
     assert!(env.aws.started.lock().unwrap().is_empty());
     assert_eq!(problems(), ["exchange_failed"]);
 }
@@ -529,8 +510,7 @@ async fn a_failed_exchange_answers_signin_and_starts_nothing() {
 async fn a_failed_start_chat_answers_unavailable() {
     let env = env();
     env.aws.start_fails.store(true, Ordering::SeqCst);
-    let lines = run_start(&env, None).await;
-    assert_eq!(lines, vec![json!({"error": "unavailable"})]);
+    assert_eq!(run_start(&env, None).await, json!({"error": "unavailable"}));
     assert!(env.aws.stopped.lock().unwrap().is_empty());
 }
 
@@ -539,12 +519,12 @@ async fn no_greeting_blanks_the_tokens_then_ends_the_contact() {
     let env = env();
     *env.aws.frames.lock().unwrap() = Vec::new();
     let begun = Instant::now();
-    let lines = run_start(&env, None).await;
+    let body = run_start(&env, None).await;
     assert!(begun.elapsed() >= GREETING_LIMIT);
-    assert_eq!(lines, vec![json!({"error": "unavailable"})]);
+    assert_eq!(body, json!({"error": "unavailable"}));
     let order = events(&env);
     assert!(position(&order, "UpdateContactAttributes") < position(&order, &format!("StopContact {CONTACT}")), "{order:?}");
-    assert!(position(&order, &format!("StopContact {CONTACT}")) < position(&order, "line 1"));
+    assert!(position(&order, &format!("StopContact {CONTACT}")) < position(&order, "answered"));
     assert_eq!(problems(), ["no_greeting"]);
     assert_eq!(logs().into_iter().find(|l| l["event"] == "chat_start").unwrap()["outcome"], "unavailable");
 }
@@ -556,8 +536,8 @@ async fn a_quiet_socket_reads_the_transcript_for_the_greeting() {
     let greeting = json!({"Id": "g", "Type": "MESSAGE", "ParticipantRole": "SYSTEM", "Content": "Hi\u{2063}"});
     let joined = json!({"Id": "j", "Type": "EVENT", "ContentType": "application/vnd.amazonaws.connect.event.participant.joined"});
     *env.aws.transcripts.lock().unwrap() = VecDeque::from([vec![joined.clone()], vec![greeting, joined]]);
-    let lines = run_start(&env, None).await;
-    assert!(lines[0].get("data").is_some(), "{lines:?}");
+    let body = run_start(&env, None).await;
+    assert!(body.get("data").is_some(), "{body}");
     assert_eq!(events(&env).iter().filter(|e| *e == "GetTranscript").count(), 2);
 }
 
@@ -567,8 +547,8 @@ async fn a_failed_socket_leaves_the_greeting_to_polling() {
     *env.aws.frames.lock().unwrap() = vec![Frame::Fail];
     let greeting = json!({"Id": "g", "Type": "MESSAGE", "ParticipantRole": "SYSTEM", "Content": "Hi\u{2063}"});
     *env.aws.transcripts.lock().unwrap() = VecDeque::from([Vec::new(), vec![greeting]]);
-    let lines = run_start(&env, None).await;
-    assert!(lines[0].get("data").is_some(), "{lines:?}");
+    let body = run_start(&env, None).await;
+    assert!(body.get("data").is_some(), "{body}");
     assert!(logs().iter().any(|l| l["event"] == "greeting_socket_failed"));
     assert!(problems().is_empty());
 }
@@ -577,8 +557,7 @@ async fn a_failed_socket_leaves_the_greeting_to_polling() {
 async fn a_failed_blanking_is_a_problem_but_the_chat_goes_on() {
     let env = env();
     env.aws.blank_fails.store(true, Ordering::SeqCst);
-    let lines = run_start(&env, None).await;
-    assert!(lines[0].get("data").is_some());
+    assert!(run_start(&env, None).await.get("data").is_some());
     assert_eq!(problems(), ["token_not_cleared"]);
 }
 
@@ -587,8 +566,7 @@ async fn the_previous_contact_is_ended_only_when_it_is_the_callers() {
     let env = env();
     env.aws.owners.lock().unwrap().insert("old-mine".into(), UID.into());
     env.aws.owners.lock().unwrap().insert("old-theirs".into(), "00u-someone-else".into());
-    let lines = run_start(&env, Some("old-mine")).await;
-    assert_eq!(lines[0]["restarted"], true);
+    assert_eq!(run_start(&env, Some("old-mine")).await["restarted"], true);
     assert_eq!(env.aws.stopped.lock().unwrap().clone(), ["old-mine"]);
     run_start(&env, Some("old-theirs")).await;
     run_start(&env, Some("old-unknown")).await;

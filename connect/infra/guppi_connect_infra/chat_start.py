@@ -3,12 +3,15 @@
 `hr-chat-start` is a Rust function on `provided.al2023`, arm64, built by cargo-lambda when
 the stack is synthesized, as guppi-gpt builds its token issuer (`ChatStartBuild`; D51);
 test synths skip the build. The page reaches it at https://chat.dengler.io/api/hr/chat/*
-through a CloudFront behavior in guppi-gpt's stack, whose origin is this function's URL.
-guppi-gpt reads the URL's host from /guppi/hr/chat-start-host.
+through a CloudFront behavior in guppi-gpt's stack, whose origin is this stack's regional
+REST API, stage `prod` (D57): the shape of AWS's StartChatContact sample, a `POST` method
+on each route with a standard (buffered) Lambda proxy integration. guppi-gpt reads the
+API's host from /guppi/hr/chat-start-host and the stage path from /guppi/hr/chat-start-path.
 
-The URL streams (RESPONSE_STREAM), so the credentials go out at the greeting while the
-sub-agent warm-ups finish in the same invocation, and has no IAM auth: the function verifies
-the Okta token itself (a function URL has no JWT authorizer). Reserved concurrency caps it.
+The methods have no authorizer: the function verifies the Okta token itself (a REST API
+has no JWT authorizer, and a Lambda authorizer would be a second function). Per-method
+throttles on the stage and the function's reserved concurrency cap it. No web ACL: Sam
+accepted the risk for the POC (D57), as for the token issuer (D48).
 
 The function is the on-behalf-of client hr-bridge through a workload identity of its own,
 like the bridge (bridge.py): the same credential provider from /guppi/obo/hr-bridge/*, the
@@ -19,7 +22,6 @@ request path (D55).
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,6 +29,7 @@ from pathlib import Path
 import aws_cdk as cdk
 import jsii
 from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import aws_apigateway as apigateway
 from aws_cdk import aws_bedrockagentcore as agentcore
 from aws_cdk import aws_cloudwatch as cw
 from aws_cdk import aws_cloudwatch_actions as cw_actions
@@ -37,13 +40,22 @@ from aws_cdk import aws_sns as sns
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
-from guppi_connect_infra.bridge import CONNECT_INSTANCE_ID, DOMAINS_FILE
+from guppi_connect_infra.bridge import CONNECT_INSTANCE_ID
 
 CHAT_START_DIR = Path(__file__).resolve().parents[2] / "chat_start"
 FUNCTION_NAME = "hr-chat-start"
 BINARY = "hr-chat-start"
 WORKLOAD_NAME = "hr-chat-start"
 HOST_PARAMETER = "/guppi/hr/chat-start-host"
+PATH_PARAMETER = "/guppi/hr/chat-start-path"
+API_NAME = "hr-chat-start"
+STAGE = "prod"
+# The routes CloudFront forwards with the path unchanged, under the stage's origin path.
+ROUTES = ("/api/hr/chat/start", "/api/hr/chat/report")
+# Requests a second and burst, per method on the stage (Sam, 4 Oct 2026; D57). A start
+# holds the function for its greeting wait, so its limit sits well under the reserved
+# concurrency and StartChatContact's 5 a second; a report is short.
+THROTTLES = {"/api/hr/chat/start": (2, 5), "/api/hr/chat/report": (10, 20)}
 # guppi-gpt publishes the on-behalf-of providers here (bridge.py reads the same).
 OBO = "/guppi/obo"
 OKTA = "/guppi/okta"
@@ -199,7 +211,9 @@ class ChatStart(Construct):
             code=chat_start_code(),
             role=role,
             memory_size=1024,
-            # Exchanges, the start, a 12 s greeting limit and 15 s warm-ups, with room.
+            # Exchanges, the start, a 20 s socket limit and a 12 s greeting limit, with room.
+            # API Gateway answers 504 after its 29 s integration timeout and the page stops
+            # waiting at 25 s; past either the function still blanks and ends a failed start.
             timeout=Duration.seconds(60),
             reserved_concurrent_executions=RESERVED_CONCURRENCY,
             # X-Ray splits a cold start into Init and Invocation; the function's own steps
@@ -220,25 +234,84 @@ class ChatStart(Construct):
                 ),
                 "CONNECT_INSTANCE_ID": CONNECT_INSTANCE_ID,
                 "CONTACT_FLOW_ID": contact_flow_id,
-                "AGENTS_GATEWAY_URL": parameter(self, "/guppi-hr/agents-gateway-url"),
-                "WARM_DOMAINS": ",".join(json.loads(DOMAINS_FILE.read_text())),
                 "OBO_PROVIDER": parameter(self, f"{OBO}/hr-bridge/provider-name"),
                 "OBO_WORKLOAD": workload.name,
             },
         )
         self.function.node.add_dependency(workload)
-        self.url = self.function.add_function_url(
-            auth_type=lambda_.FunctionUrlAuthType.NONE,
-            invoke_mode=lambda_.InvokeMode.RESPONSE_STREAM,
+
+        # The front door (D57): a regional REST API, stage prod, POST on each route with a
+        # standard Lambda proxy integration. The access log has no headers and no bodies, so
+        # no bearer or participant token reaches it.
+        access_logs = logs.LogGroup(
+            self,
+            "ApiAccessLogs",
+            log_group_name=f"/aws/apigateway/{API_NAME}",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=RemovalPolicy.DESTROY,
         )
-        # https://<host>/ to <host>: CloudFront's origin takes a domain name.
-        self.host = cdk.Fn.select(2, cdk.Fn.split("/", self.url.url))
+        self.api = apigateway.RestApi(
+            self,
+            "Api",
+            rest_api_name=API_NAME,
+            description="The /p/hr/ chat start (guppi-hr D57)",
+            endpoint_types=[apigateway.EndpointType.REGIONAL],
+            deploy_options=apigateway.StageOptions(
+                stage_name=STAGE,
+                method_options={
+                    f"{route}/POST": apigateway.MethodDeploymentOptions(
+                        throttling_rate_limit=rate, throttling_burst_limit=burst
+                    )
+                    for route, (rate, burst) in THROTTLES.items()
+                },
+                access_log_destination=apigateway.LogGroupLogDestination(access_logs),
+                access_log_format=apigateway.AccessLogFormat.json_with_standard_fields(
+                    caller=False,
+                    http_method=True,
+                    ip=True,
+                    protocol=False,
+                    request_time=True,
+                    resource_path=True,
+                    response_length=True,
+                    status=True,
+                    user=False,
+                ),
+            ),
+            # The account's API Gateway CloudWatch role is not this stack's; execution logging
+            # stays off, as on guppi-gpt's APIs.
+            cloud_watch_role=False,
+        )
+        integration = apigateway.LambdaIntegration(self.function)
+        for route in ROUTES:
+            self.api.root.resource_for_path(route).add_method(
+                "POST", integration, authorization_type=apigateway.AuthorizationType.NONE
+            )
+        self.host = f"{self.api.rest_api_id}.execute-api.{region}.amazonaws.com"
         ssm.StringParameter(
             self,
             "HostParameter",
             parameter_name=HOST_PARAMETER,
             string_value=self.host,
-            description="The /p/hr/ chat start's function URL host, for guppi-gpt's CloudFront (guppi-hr D55)",
+            description=(
+                "The /p/hr/ chat start's REST API host, for guppi-gpt's CloudFront (guppi-hr D57)"
+            ),
+        )
+        ssm.StringParameter(
+            self,
+            "PathParameter",
+            parameter_name=PATH_PARAMETER,
+            string_value=f"/{STAGE}",
+            description=(
+                "The /p/hr/ chat start's stage, the origin path of guppi-gpt's CloudFront "
+                "origin (guppi-hr D57)"
+            ),
+        )
+
+        # The function URL serves CloudFront until guppi-gpt's origin moves to the API; the
+        # last deploy of D57 removes it.
+        self.url = self.function.add_function_url(
+            auth_type=lambda_.FunctionUrlAuthType.NONE,
+            invoke_mode=lambda_.InvokeMode.RESPONSE_STREAM,
         )
 
         action = cw_actions.SnsAction(alarm_topic)
@@ -284,6 +357,7 @@ class ChatStart(Construct):
         # leave the whole chat start out.
         for name, value in (
             ("ChatStartUrl", self.url.url),
+            ("ChatStartApiUrl", self.api.url),
             ("ChatStartHost", self.host),
             ("ChatStartLogGroup", self.log_group.log_group_name),
         ):

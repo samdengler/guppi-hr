@@ -1,8 +1,9 @@
-"""The chat start's template (guppi-hr D55): a Rust function behind a streaming function URL
-with reserved concurrency, the bridge's on-behalf-of grants through a workload identity of
-its own, Connect calls on the contact flow and contacts only, the host parameter guppi-gpt's
-CloudFront reads, and alarms on its chat_problem lines. Its Rust tests run here through
-cargo, as guppi-gpt runs the token issuer's."""
+"""The chat start's template (guppi-hr D55, D57): a Rust function behind a regional REST API
+with per-method throttles and reserved concurrency, the bridge's on-behalf-of grants
+through a workload identity of its own, Connect calls on the contact flow and contacts
+only, the host and path parameters guppi-gpt's CloudFront reads, and alarms on its
+chat_problem lines. Its Rust tests run here through cargo, as guppi-gpt runs the token
+issuer's."""
 
 from __future__ import annotations
 
@@ -13,7 +14,12 @@ import subprocess
 import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Match, Template
-from guppi_connect_infra.chat_start import CHAT_START_DIR, HOST_PARAMETER, PROBLEM_PATTERN
+from guppi_connect_infra.chat_start import (
+    CHAT_START_DIR,
+    HOST_PARAMETER,
+    PATH_PARAMETER,
+    PROBLEM_PATTERN,
+)
 from guppi_connect_infra.stack import GuppiConnectStack
 
 
@@ -66,28 +72,69 @@ def test_the_function_is_rust_on_arm64_with_reserved_concurrency(template):
     assert props["Timeout"] == 60
 
 
-def test_the_url_streams_and_leaves_the_token_check_to_the_function(template):
+def test_the_front_door_is_a_regional_rest_api_with_a_proxy_post_on_each_route(template):
     template.has_resource_properties(
-        "AWS::Lambda::Url",
-        {
-            "AuthType": "NONE",
-            "InvokeMode": "RESPONSE_STREAM",
-            "TargetFunctionArn": Match.any_value(),
-        },
+        "AWS::ApiGateway::RestApi",
+        {"Name": "hr-chat-start", "EndpointConfiguration": {"Types": ["REGIONAL"]}},
+    )
+    resources = template.find_resources("AWS::ApiGateway::Resource")
+    parts = {logical: r["Properties"]["PathPart"] for logical, r in resources.items()}
+    methods = list(template.find_resources("AWS::ApiGateway::Method").values())
+    routes = sorted(parts[m["Properties"]["ResourceId"]["Ref"]] for m in methods)
+    assert routes == ["report", "start"]
+    for method in methods:
+        props = method["Properties"]
+        assert props["HttpMethod"] == "POST"
+        # The function verifies the Okta token itself (D57): no authorizer.
+        assert props["AuthorizationType"] == "NONE"
+        assert props["Integration"]["Type"] == "AWS_PROXY"
+        assert props["Integration"]["IntegrationHttpMethod"] == "POST"
+        # A standard integration: buffered, one JSON body (no response streaming).
+        assert props["Integration"].get("ResponseTransferMode", "BUFFERED") == "BUFFERED"
+        assert "invocations" in json.dumps(props["Integration"]["Uri"])
+        assert "response-streaming" not in json.dumps(props["Integration"]["Uri"])
+
+
+def test_the_stage_throttles_each_method_and_logs_no_headers_or_bodies(template):
+    (stage,) = template.find_resources("AWS::ApiGateway::Stage").values()
+    props = stage["Properties"]
+    assert props["StageName"] == "prod"
+    limits = {
+        s["ResourcePath"]: (s["HttpMethod"], s["ThrottlingRateLimit"], s["ThrottlingBurstLimit"])
+        for s in props["MethodSettings"]
+    }
+    assert limits == {
+        "/~1api~1hr~1chat~1start": ("POST", 2, 5),
+        "/~1api~1hr~1chat~1report": ("POST", 10, 20),
+    }
+    log_format = props["AccessLogSetting"]["Format"]
+    for field in ("$context.requestId", "$context.status", "$context.resourcePath"):
+        assert field in log_format
+    for hidden in ("header", "body", "$input", "authorizer", "identity.user"):
+        assert hidden not in log_format.lower(), hidden
+    template.has_resource_properties(
+        "AWS::Logs::LogGroup",
+        {"LogGroupName": "/aws/apigateway/hr-chat-start", "RetentionInDays": 30},
     )
 
 
-def test_the_environment_names_okta_connect_the_gateway_and_the_provider(template):
+def test_no_web_acl_is_attached(template):
+    # Accepted for the POC (D57), as for the token issuer (D48).
+    assert not template.find_resources("AWS::WAFv2::WebACLAssociation")
+    assert not template.find_resources("AWS::WAFv2::WebACL")
+
+
+def test_the_environment_names_okta_connect_and_the_provider(template):
     env = function(template)["Environment"]["Variables"]
     assert env["CONTACT_FLOW_ID"] == "flow-123"
     assert env["OBO_WORKLOAD"] == "hr-chat-start"
-    assert env["WARM_DOMAINS"] == "profile,pay,travel"
     assert "OBO" not in env, "OBO=off would pass the Okta token through (guppi-hr D48)"
+    # The chat start warms no sub-agent (D57), so it needs no agents gateway.
+    assert "AGENTS_GATEWAY_URL" not in env and "WARM_DOMAINS" not in env
     for name in (
         "OKTA_ISSUER",
         "OKTA_AUDIENCE",
         "OKTA_CLIENTS",
-        "AGENTS_GATEWAY_URL",
         "OBO_PROVIDER",
         "CONNECT_INSTANCE_ID",
     ):
@@ -99,7 +146,6 @@ def test_the_environment_names_okta_connect_the_gateway_and_the_provider(templat
         "/guppi/okta/harness-client-id",
         "/guppi/obo/hr-bridge/provider-name",
         "/guppi/obo/hr-bridge/provider-arn",
-        "/guppi-hr/agents-gateway-url",
     ):
         assert name in parameters(template), name
     assert "secret" not in json.dumps(env).lower()
@@ -132,15 +178,21 @@ def test_the_exchange_goes_through_the_hr_bridge_provider_as_its_own_workload(te
     assert not granted(template, "bedrock-agentcore:GetWorkloadAccessTokenForUserId")
 
 
-def test_the_host_parameter_is_the_url_host_for_cloudfront(template):
+def ssm_value(template: Template, name: str):
     (found,) = [
-        p["Properties"]
+        p["Properties"]["Value"]
         for p in template.find_resources("AWS::SSM::Parameter").values()
-        if p["Properties"]["Name"] == HOST_PARAMETER
+        if p["Properties"]["Name"] == name
     ]
-    select = found["Value"]["Fn::Select"]
-    assert select[0] == 2
-    assert select[1]["Fn::Split"][0] == "/"
+    return found
+
+
+def test_the_host_and_path_parameters_name_the_api_and_its_stage_for_cloudfront(template):
+    host = json.dumps(ssm_value(template, HOST_PARAMETER))
+    assert ".execute-api.us-east-1.amazonaws.com" in host
+    (api,) = template.find_resources("AWS::ApiGateway::RestApi")
+    assert f'"Ref": "{api}"' in host
+    assert ssm_value(template, PATH_PARAMETER) == "/prod"
 
 
 def test_chat_problems_raise_an_alarm(template):
