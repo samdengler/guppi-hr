@@ -53,6 +53,10 @@ Status values: **kept** (deployed and measured), **built** (deployed, not yet me
 
 ## Time found but not yet cut
 
+The step by step timelines of every /p/hr/ path after D57 (4 October, 29 chats, 52 turns) are in
+`docs/latency-timelines-2026-10-04.md`, with the ranked time sinks and the questions they raise.
+The tables below are the earlier breakdown of 3 October, kept for comparison.
+
 Where a turn's time went on 3 October after L1 to L7 (05:01 to 05:04 UTC):
 
 | Hop | New chat, first message | Follow-up |
