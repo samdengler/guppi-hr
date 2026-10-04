@@ -144,14 +144,17 @@ As a result:
 
 ### Verification
 
-- **The standard library, with no dependencies to bundle.** guppi-gpt's stack synthesizes
-  without Docker, and `cryptography` has native code.
+- **Rust since 4 October (D51).** The first version was Python with the standard library
+  alone; it took 1.5 to 1.9 s on a cold start (L25). The Rust binary keeps the same rules,
+  refusals and log lines, and its tests are the Python tests ported one for one.
 - **The signature check:** RS256 only, no `crit`. It re-encodes PKCS#1 v1.5 and compares
   in constant time, with the RFC 8017 length and range checks and a 2048-bit minimum.
 - **The claim checks:** `kid`, `iss`, `aud`, `exp`, `nbf` and `iat`, with 60 seconds of
   leeway, plus `typ` `at+jwt` on its own tokens.
-- **Okta's keys** are cached for an hour, survive an Okta outage, and an unknown `kid`
-  refetches at most once a minute.
+- **Okta's keys** are built into the binary (`okta-keys.json`, written by guppi-gpt
+  `scripts/okta.py`), so a cold start does not wait on Okta. An unknown `kid` is fetched
+  at most once a minute; keys older than an hour are refreshed in the background, and the
+  cached ones survive an Okta outage.
 - **Errors are generic** (`invalid_client`, `invalid_grant`, `invalid_scope`), never a
   500.
 - **32 unit tests** cover the rules and verification.
