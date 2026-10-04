@@ -226,6 +226,12 @@ tool call. Every hop below is AWS.
 | P4 | 3 Oct | SES production access is a request reviewed by AWS; until then a sandbox account sends only to verified addresses, which a "you're in" email to a new user cannot be. | waiting (requested 3 Oct) |
 | P5 | 3 Oct | CloudFormation's template validation warns "SecretString: length 0 is below minimum 1" for a secret whose value is `Fn::If` on a condition with a non-empty fallback; the warning reads the blank parameter default, not the deployed value. | open (noise) |
 
+## Amazon CloudFront and AWS Lambda function URLs
+
+| Id | Date | Finding | Status |
+| --- | --- | --- | --- |
+| F1 | 4 Oct | A Lambda function URL in `RESPONSE_STREAM` mode behind CloudFront: the browser got 503 for `POST /api/hr/chat/report`, whose function answered 204 with no body through the streaming response's prelude, while the function's log shows every report accepted and its invocation ending normally. curl got 204 for the same request both straight from the function URL (HTTP/1.1, and two requests on one keep-alive connection) and through CloudFront (HTTP/2), so the failing combination is not settled; Chrome may have reached CloudFront over HTTP/3. Answering 200 with a small JSON body ended it (`hr-chat-start` a149372, 4 Oct 16:44 UTC). Ask: say in the response streaming documentation how a streamed response with a no-body status (204, 304) reaches CloudFront and viewers, or reject such a prelude with an error the function can log. | to verify |
+
 ## Not AWS: other tools in the POC
 
 Kept here so every finding is in one place; these are not for the AWS teams.

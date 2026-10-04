@@ -70,8 +70,8 @@ restart, `previousContactId`. The function URL streams its answer as NDJSON: lin
 `expiresAt` and `restarted` once the greeting has come and the token attributes are blank;
 line 2 with the number of sub-agents warmed. The page connects with
 `amazon-connect-chatjs` on the participant token from line 1 and needs nothing from line 2.
-Measured on 4 Oct (L28): line 1 at 2.7 s on a warm function, 3.8 s on the first start of
-a new instance; line 2 at 7.0 to 8.0 s.
+Measured on 4 Oct (L28), inside the function: line 1 at 2.7 s warm, 2.8 s on a new
+instance, 3.8 s when the token issuer was cold as well; line 2 at 7.0 to 8.1 s.
 
 ```mermaid
 sequenceDiagram
@@ -97,7 +97,7 @@ sequenceDiagram
         Issuer-->>Identity: hop tokens, each naming the employee
         Identity-->>Start: hop tokens
     end
-    Note over Start,Issuer: 0.25 s warm, about 1 s on a new instance's first start
+    Note over Start,Issuer: 0.25 to 0.31 s, about 1 s when the issuer is cold
     Start->>Connect: StartChatContact, hop tokens and employeeId as attributes, 60 minutes
     Start-->>Page: 200, application/x-ndjson (headers only so far)
     par the designer starts
