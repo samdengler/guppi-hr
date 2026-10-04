@@ -117,7 +117,7 @@ available if the cost proves too high. The tools target carries its tool list in
 ## The issuer
 
 One Lambda function (`guppi-gpt-obo-issuer`, 1024 MB, reserved concurrency 10) behind a
-regional REST API with a web ACL. Routes: `GET /.well-known/openid-configuration`,
+regional REST API. Routes: `GET /.well-known/openid-configuration`,
 `GET /jwks.json`, `POST /token` (RFC 8693 only). An RSA 2048 KMS key signs; the private key
 never leaves KMS.
 
@@ -158,8 +158,12 @@ As a result:
 
 ### Exposure and cost controls
 
-- **The token endpoint is public by nature.** A web ACL blocks any source IP that sends
-  more than 600 requests in five minutes.
+- **The token endpoint is public by nature, with no web ACL in front.** This is an accepted
+  risk for the POC (Sam, 3 October 2026). Anyone who sends more than the token throttle,
+  about 20 requests a second, makes the issuer refuse every exchange until they stop, and
+  every caller then fails closed; HR tool calls stop. A regional web ACL with a per-IP
+  rate rule would close it for about 6 dollars a month. A REST API can take one later
+  with no other change.
 - **Throttles:** `/token` at 20 a second with a burst of 40. Key and discovery reads have
   their own limit, 50 a second with a burst of 100, so a flood of token requests never
   starves authorizers' key fetches. Those reads may be cached for five minutes.
@@ -261,13 +265,12 @@ The latency log has the details (L23).
 | --- | --- |
 | KMS key | 1.00 dollar |
 | Secrets Manager, five client secrets | 2.00 dollars |
-| Web ACL with one rule | 6.00 dollars |
 | Lambda, REST API, access logs | under 0.50 dollars |
 | Policy, $0.000025 per authorization | about 3 cents per thousand tool calls |
 | Identity | no charge through Runtime and Gateway; $0.01 per thousand tokens otherwise |
 
-About 10 dollars a month. The web ACL is most of it; without it, anyone could drain the
-issuer's throttle and stop every HR tool call.
+About 3.50 dollars a month. A web ACL in front of the issuer would add about 6; Sam
+accepted the risk instead.
 
 ## Rollback
 
@@ -291,7 +294,8 @@ Nothing was deployed.
 | Gateway-side exchange on the agents gateway | Not possible: HTTP targets fall back to client credentials (A13) |
 | Gateway-side exchange on the tools gateway | Built; about 430 ms per tool call until the gateway reuses tokens (A14) |
 | IAM actor tokens instead of client secrets | Needs outbound web identity federation turned on for the account; not decided |
-| The issuer on an HTTP API | Cheaper, but no web ACL can sit in front of it (D48) |
+| The issuer on an HTTP API | Same cost, but no per-method throttles and no web ACL if one is ever needed (D48) |
+| A web ACL with a per-IP rate rule in front of the issuer | About 6 dollars a month; Sam accepted the risk for the POC |
 
 ## Spike results that shaped the design
 
@@ -320,5 +324,5 @@ D48 (proposed, after the critique of the build):
 - the pay-statements scope;
 - the tools server's own per-tool check;
 - fail-closed exchangers;
-- the REST API and web ACL;
+- the REST API, with the missing web ACL as an accepted risk;
 - the issuer's other hardening.
