@@ -1,7 +1,9 @@
 # Plan: questions straight to Connect with amazon-connect-chatjs
 
 Status: approved direction (D55, Sam, 4 October 2026); plan revision 2 after the independent
-review of revision 1 (findings H1 to H4, M1 to M9, L1 to L7, V1 to V8). Not built.
+review of revision 1 (findings H1 to H4, M1 to M9, L1 to L7, V1 to V8). Built and deployed
+4 October 2026 as the default for /p/hr/; the bridge path stays behind `?ff=connect-bridge` for
+rollback. Stage 1's pass mark passed on every suggestion (L29); results below.
 
 /p/hr/ takes the shape of AWS's Touchpoint front end. A chat-start function (Rust, Lambda)
 starts the chat; the browser sends each question to Amazon Connect's participant service and
