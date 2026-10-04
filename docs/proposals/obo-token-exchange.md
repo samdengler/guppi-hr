@@ -1,6 +1,6 @@
 # On-behalf-of token exchange for `/p/hr/` (D20)
 
-Status: design, revision 3, 3 October 2026. Revision 1 was reviewed by an independent
+Status: design, revision 3, decided 3 October 2026 (D47). Revision 1 was reviewed by an independent
 critique ([OBO Exchange Design Critique](https://claude.ai/artifact/FP3jciuzGA4PVVyoPWXwJK),
 16 findings), and a spike on the prototype tested the alternatives the critique raised
 (revision 2). Revision 3 puts the design on the AgentCore stack the POC is committed to,
@@ -74,7 +74,8 @@ Two things stay as they are, and the threat list keeps them:
 | T0 | page, bridge, `/p/hr-diy/` orchestrator | sign-in | `api://guppi` | `openid email profile offline_access` | edge gateway, bridge runtime, platform |
 | T1 | the designer (contact attribute `hrAgentsToken`), the bridge's warm calls | T0, by the bridge | `api://hr-agents` | `hr.agents` | agents gateway, sub-agent runtimes |
 | T1p | the designer (contact attribute `hrToolsToken`) | T0, by the bridge | `api://hr-tools` | `hr.tools.policy hr.tools.profile.read hr.tools.pay.read` | the canvas's own tool calls |
-| T2 | each sub-agent | T1, by that sub-agent | `api://hr-tools` | its domain's scopes (below) | the sub-agent's tool calls |
+| T2 | each sub-agent | T1, by that sub-agent | `api://hr-tools` | its domain's scopes (below) | the sub-agent's tool calls to the tools gateway |
+| T3 | the tools gateway, per tool call | T1p or T2, by the gateway's target through Identity | `api://hr-tools-runtime` | the scopes of the token it came from | the gateway's call to the tools runtime |
 
 Scopes per tool, enforced by Gateway Policy on the tools gateway (and checked again by
 the tools server for `commit_change`):
@@ -126,20 +127,28 @@ The spikes tested letting the gateways do the exchange instead (critique finding
   tools gateway with the same client (A14). A sub-agent turn with two tool calls would pay
   close to a second.
 
-The tools path therefore keeps today's shape for the hop from gateway to runtime, and puts
-the per-tool decision in Gateway Policy:
+Sam chose gateway-side exchange on the tools gateway (D47), the Delta-shaped path D20
+describes, accepting about 430 ms per tool call until the gateway reuses tokens (A14):
 
 1. The caller (a sub-agent with T2, or the canvas with T1p) calls the tools gateway with
-   the token in `Authorization` and again in `X-Hr-User-Token`.
+   the token in `Authorization` only. `X-Hr-User-Token` is retired.
 2. The gateway's authorizer checks issuer, audience, client and scope.
 3. Gateway Policy allows the tool only if the token holds its scope.
-4. The gateway calls the tools runtime with its own role (SigV4, D19) and forwards
-   `X-Hr-User-Token`.
-5. The tools server verifies that token as today, which tells it the employee.
+4. The gateway's target exchanges that token through Identity for T3, with the client
+   `hr-tools-gateway`, and calls the tools runtime with T3. SigV4 on this hop is retired
+   (D19).
+5. The tools runtime's JWT authorizer verifies T3 (issuer, audience
+   `api://hr-tools-runtime`, client `hr-tools-gateway`). The tools server reads the
+   employee from T3, passed through to it in `Authorization`.
 
-This uses all four pieces with no exchange per call. Gateway-side exchange on the tools
-gateway is the Delta-shaped option D20 describes. It becomes the better choice once the
-gateway reuses an exchanged token until it expires, which is the request in A14.
+T3 has its own audience, so a T1p or T2 cannot call the tools runtime directly and skip
+Policy. The tools target carries its tool list inline (`mcpToolSchema`), so the gateway
+never needs a token without an employee to list tools (A14), and the issuer grants no
+`client_credentials`.
+
+The other option was to keep the gateway's SigV4 call to the runtime and forward the
+caller's token in `X-Hr-User-Token`, with no added time per call. It stays the fallback if
+the per-call cost proves too high in the latency run.
 
 ## The issuer
 
@@ -158,10 +167,12 @@ outside it:
 | `hr-agent-profile` | the Profile sub-agent | this issuer's, audience `api://hr-agents`, `client_id` `hr-bridge`, `act` one deep | the Profile T2 scopes |
 | `hr-agent-pay` | the Pay sub-agent | the same | the Pay T2 scopes |
 | `hr-agent-travel` | the Travel sub-agent | the same | `hr.tools.policy` |
+| `hr-tools-gateway` | the tools gateway's target, through Identity | this issuer's, audience `api://hr-tools`, `client_id` `hr-bridge` or an agent client | T3 for `api://hr-tools-runtime`, carrying the subject token's scopes whatever the gateway requests |
 
-So a Travel runtime cannot mint a pay token, a T1p cannot become a T1, and no token can
-be exchanged more than twice from Okta. One client per domain costs three secrets more
-than the shared agent client of revision 1, about 1.20 dollars a month.
+So a Travel runtime cannot mint a pay token, a T1p cannot become a T1, a T3 cannot be
+exchanged again, and no chain is more than three exchanges from Okta. One client per
+domain costs three secrets more than the shared agent client of revision 1, and the tools
+gateway's client one more: five secrets, 2 dollars a month.
 
 AgentCore Identity's IAM actor token (`actorTokenContent: AWS_IAM_ID_TOKEN_JWT`) would
 identify each runtime by its role with no client secrets. It needs outbound web identity
@@ -222,6 +233,7 @@ The spike confirmed what each authorizer enforces:
 | Agents gateway | exchange service | `api://hr-agents` | `hr-bridge` | `hr.agents` |
 | Sub-agent runtimes | exchange service | `api://hr-agents` | `hr-bridge` | `hr.agents` |
 | Tools gateway | exchange service | `api://hr-tools` | `hr-bridge`, the three agent clients | `hr.tools.policy` (every T1p and T2 holds it) |
+| Tools runtime | exchange service | `api://hr-tools-runtime` | `hr-tools-gateway` | none (Policy decided) |
 
 Binding the runtimes to `hr-bridge` and `hr.agents` means a T1p or a T2 cannot call a
 sub-agent runtime directly. A T1 still can, outside the agents gateway's rate limit (part
@@ -251,16 +263,18 @@ Every claim reaches Cedar as a string, so scope names must not be prefixes of on
 (A15). The rules live in the HR stack beside the gateway, and the engine runs in ENFORCE
 mode.
 
-The HR tools server keeps a second, smaller check on `X-Hr-User-Token` (critique findings
-3 and 15):
+The HR tools server reads T3 from `Authorization`, which the runtime's authorizer already
+verified and the runtime passes through (critique findings 3 and 15):
 
-- it accepts this issuer's tokens only, with audience `api://hr-tools`, `client_id` on the
-  list above, and a `uid`-shaped `sub`;
-- the token must hold the tool's scope, so a caller cannot pair an `Authorization` token
-  that Policy allowed with a different employee token;
+- it verifies T3 again with its existing verifier (issuer, audience
+  `api://hr-tools-runtime`, `client_id` `hr-tools-gateway`, a `uid`-shaped `sub`), so it
+  does not depend on the runtime's settings alone;
 - `commit_change` loads the proposal first and requires the write scope of its domain,
   which Policy cannot see (it knows only the proposal id);
 - the `act` chain is written to the audit table with each change.
+
+Because the caller's token and the employee token are now the same token, the mismatch the
+critique raised between `Authorization` and `X-Hr-User-Token` cannot arise.
 
 During the switch the server accepts Okta's tokens as well. That needs code, since the
 verifier takes one issuer today. A later step removes Okta.
@@ -285,8 +299,10 @@ Where the cost lands:
   focus, or when the issuer is cold.
 - **A cold issuer costs about 1.5 s at 256 MB.** The fixes above should cut that; if
   they do not, provisioned concurrency of one instance costs about 3 dollars a month.
-- **A turn adds no exchange** while T2 is cached. A sub-agent restarted by AgentCore
-  re-exchanges once.
+- **Every tool call adds about 430 ms**, the gateway's exchange for T3 (A14). A turn
+  with two tool calls adds close to a second. The caller's own exchanges add nothing per
+  turn while T2 is cached; a sub-agent restarted by AgentCore re-exchanges once. The
+  latency log records the measured cost after the switch.
 - **The first delegation to each sub-agent on `/p/hr-diy/`** pays for one exchange, since
   that page has no warm start.
 
@@ -357,7 +373,7 @@ first three checks; `spike.py` ran the rest after the critique.
 | Item | Monthly |
 | --- | --- |
 | KMS key | 1.00 dollar |
-| Secrets Manager, four client secrets (referenced, not copied) | 1.60 dollars |
+| Secrets Manager, five client secrets (referenced, not copied) | 2.00 dollars |
 | Lambda, HTTP API, AgentCore Identity calls at POC volume | under 0.50 dollars |
 | Policy in AgentCore, one authorization per tool call and per `tools/list` | not yet priced; to confirm on the pricing page before the switch |
 
@@ -376,10 +392,11 @@ Everything that can be built ahead is built first, then one deploy switches it a
    - alarms.
 
    No caller uses it yet. Measure cold and warm exchanges from inside a runtime.
-2. **Tools server and Policy.** The tools server accepts both issuers, checks scopes on
-   exchanged tokens, and records `act`. The Policy engine and its rules are created in
-   LOG_ONLY mode on today's tools gateway, so their decisions show in the logs without
-   blocking. With Okta tokens unchanged, the HR path is unaffected.
+2. **Tools server and Policy.** The tools server reads the employee from `Authorization`
+   when it holds a T3, and from `X-Hr-User-Token` otherwise; it checks `commit_change`'s
+   domain scope and records `act`. The Policy engine and its rules are created in LOG_ONLY
+   mode on today's tools gateway, so their decisions show in the logs without blocking.
+   With Okta tokens unchanged, the HR path is unaffected.
 3. **Callers' code** behind one setting, `OBO=off`:
    - the bridge's exchange, attributes, blanking and failure message;
    - the sub-agents' exchange and cache;
@@ -387,8 +404,9 @@ Everything that can be built ahead is built first, then one deploy switches it a
    - the page's refresh before the warm start.
 4. **The switch**, one deploy plus a canvas publish:
    - `OBO=on`;
-   - the authorizers on the agents gateway, the three sub-agent runtimes and the tools
-     gateway;
+   - the authorizers on the agents gateway, the three sub-agent runtimes, the tools
+     gateway and the tools runtime;
+   - the tools target to OAuth `TOKEN_EXCHANGE` with its inline tool list;
    - the Policy engine to ENFORCE;
    - `hr.js` reading `hrAgentsToken` and `hrToolsToken`.
 
@@ -399,11 +417,12 @@ Everything that can be built ahead is built first, then one deploy switches it a
    - T1p at the agents gateway and at a runtime;
    - a Travel T2 calling a pay tool;
    - T1p calling a write tool;
-   - a T2 exchanged a third time;
+   - a T1p or T2 sent straight to the tools runtime;
+   - a T3 presented for exchange again;
    - the issuer at concurrency 0.
 
    Also a Dynatrace query showing that no token appears in a span.
-6. **Remove Okta from the tools server.**
+6. **Remove Okta and `X-Hr-User-Token` from the tools server.**
 7. **Clean up** the prototype stack, workload identity, credential provider, test
    runtime and test gateways. Also remove the Okta objects from the first attempt:
    - the `hr-agents` authorization server;
@@ -412,16 +431,14 @@ Everything that can be built ahead is built first, then one deploy switches it a
    - the `okta-hr-bridge` and `okta-hr-agent` providers;
    - `/guppi/hr/obo/*`.
 
-## Decisions for Sam
+## Decisions (Sam, 3 October 2026)
 
-1. Approve the issuer as a Lambda in the request path. It runs about five times per chat,
-   never per turn.
-2. On the tools path, Gateway Policy decides each tool and `X-Hr-User-Token` carries the
-   employee to the runtime (recommended), or the gateway exchanges on every call and the
-   runtime verifies the token itself, at about 430 ms per tool call until AWS adds token
-   reuse (A14).
-3. A client per domain with secrets (recommended for now), or turn on outbound web
-   identity federation for the account and use IAM actor tokens.
-4. The issuer in the platform stack (recommended) or the HR stack.
-5. One switch with a scripted rollback (recommended), or new gateways and runtimes side
-   by side, which costs a second set of runtimes during the move.
+1. The issuer is approved as a Lambda in the request path.
+2. The tools gateway exchanges the token itself on every call, and the tools runtime
+   verifies T3 with a JWT authorizer; `X-Hr-User-Token` is retired. The alternative,
+   SigV4 with the header forwarded, is the fallback if the per-call cost proves too high.
+3. A client per domain with secrets, plus one for the tools gateway. IAM actor tokens wait
+   for a decision on the account-wide setting.
+4. The issuer lives in the guppi-gpt platform stack (Claude's default; Sam did not
+   object).
+5. One switch with a scripted rollback.
