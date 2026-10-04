@@ -16,7 +16,8 @@ participant token (change 5); when that fails the run polls the transcript. Item
 than the run's own message are a previous turn's and are not shown. The relayed items are
 saved however the run ends.
 
-A warm start does the contact's start ahead of the first message (D39) and warms each
+A warm start, which the page sends as soon as it is in view (D50), does the contact's
+start ahead of the first message (D39) and warms each
 sub-agent through the agents gateway on the runtime session and thread the canvas will use
 (D41). A run that finds another run starting the contact waits for it. A stored contact
 that refuses the message gets a fresh connection, and then, if it has ended, one new
@@ -499,7 +500,7 @@ class ConnectTurn:
     def start_contact(self, key: str, token_exp: float) -> Session:
         settings = self.settings
         # The designer reads attributes only when the flow starts (C2), so the exchange comes
-        # first; the page sends the warm start as soon as it is in view (D50).
+        # first; the warm start runs on the first focus on the composer (D44).
         sign_in_exp = token_exp
         agents_tokens, canvas_token = self.hop_tokens()
         self.agents_tokens = agents_tokens
