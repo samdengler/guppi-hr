@@ -95,6 +95,7 @@ from hr_super_agent_infra.obo import (
     workload_identity,
 )
 from hr_super_agent_infra.runtime_role import runtime_execution_role
+from hr_super_agent_infra.runtime_role import use_platform_version
 from hr_super_agent_infra.sub_agents import AGENTS_GATEWAY_NAME, SubAgents, sub_agent_runtime_name
 
 # ---- Platform contract ---------------------------------------------------------------
@@ -1288,6 +1289,10 @@ class HrSuperAgentStack(cdk.Stack):
                 delivery.node.add_dependency(traces_destination)
 
             return log_group
+
+        # The runtimes behind Connect on the new AgentCore Runtime (runtime_role.py).
+        for agent_runtime in (hr_tools.runtime, *sub_agents.runtimes.values()):
+            use_platform_version(agent_runtime)
 
         vended_log_groups = {
             "ToolsGateway": _vended_log_delivery(

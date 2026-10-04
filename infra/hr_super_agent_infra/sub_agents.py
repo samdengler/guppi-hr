@@ -29,7 +29,7 @@ from hr_super_agent_infra.obo import (
     grant_exchange,
     workload_identity,
 )
-from hr_super_agent_infra.runtime_role import runtime_execution_role, use_platform_version
+from hr_super_agent_infra.runtime_role import runtime_execution_role
 
 SUB_AGENT_NAMES = ("profile", "pay", "travel")  # AGENT_ROLE values and target names (D4)
 AGENTS_GATEWAY_NAME = "hr-super-agent-agents"
@@ -152,7 +152,6 @@ class SubAgents(Construct):
                 },
             )
             runtime.node.add_dependency(role)
-            use_platform_version(runtime)
             self.runtimes[name] = runtime
             self.roles[name] = role
 
