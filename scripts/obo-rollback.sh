@@ -36,7 +36,7 @@ set -euo pipefail
 
 # The on-behalf-of commits, newest first (D47, D48 and their follow-ups).
 # Later commits that are not part of on-behalf-of tokens and stay through a rollback.
-KEPT_COMMITS=(9567cb8 6741086 ff444ea 840a238 a3bbf38 912db71 787551b f83dfa4 57d9209 076a455 aef2626 25c246b f445501 a149372 8927c3c)
+KEPT_COMMITS=(9567cb8 6741086 ff444ea 840a238 a3bbf38 912db71 787551b f83dfa4 57d9209 076a455 aef2626 25c246b f445501 a149372 8927c3c 9d883b9)
 OBO_COMMITS=(8e1ac71 8040b10 9a18c00 454f90d 91f9580 c6d96e0)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)/guppi-hr-rollback"
