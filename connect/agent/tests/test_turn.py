@@ -119,8 +119,10 @@ class FakeClients:
         ws.next += 1
         return json.dumps({"topic": "aws/chat", "content": json.dumps(item)})
 
-    def touch_websocket(self, url: str) -> None:
+    def start_flow(self, url: str) -> FakeSocket:
+        # The socket that starts the flow; not one of a run's sockets.
         self.touched.append(url)
+        return FakeSocket(self.participant)
 
     def post_json(self, url: str, headers: dict, body: dict, timeout: float) -> int:
         self.posted.append({"url": url, "headers": headers, "body": body})
@@ -337,7 +339,7 @@ async def test_the_canvass_end_of_turn_line_ends_the_turn_and_is_never_shown(mon
     assert turn.usage()["connect_end_of_turn"] is True
 
 
-def test_the_websocket_closes_once_connect_acknowledges_with_no_fixed_wait(monkeypatch):
+def test_the_flow_socket_is_ready_once_connect_acknowledges_with_no_fixed_wait(monkeypatch):
     calls = []
 
     class FakeSocket:
@@ -357,11 +359,12 @@ def test_the_websocket_closes_once_connect_acknowledges_with_no_fixed_wait(monke
     monkeypatch.setitem(__import__("sys").modules, "websocket", fake_module)
 
     def no_fixed_wait(_seconds):
-        raise AssertionError("touch_websocket must not sleep")
+        raise AssertionError("start_flow must not sleep")
 
     monkeypatch.setattr(turn_module.time, "sleep", no_fixed_wait)
-    turn_module.ConnectClients.touch_websocket("wss://example")
-    assert calls == [("send", "aws/subscribe"), ("recv",), ("close",)]
+    turn_module.ConnectClients.start_flow("wss://example")
+    # The socket stays open: the canvas's greeting comes over it (D53).
+    assert calls == [("send", "aws/subscribe"), ("recv",)]
 
 
 # ---- warm start and start claims (D39) ----------------------------------------------

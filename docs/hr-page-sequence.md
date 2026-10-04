@@ -77,21 +77,22 @@ sequenceDiagram
 
     Page->>Edge: POST /api/hr/invocations, no messages, warm, Okta token
     Edge->>Bridge: token checked, passed through
-    opt the page left a chat
+    par the page left a chat (L27)
         Bridge->>Connect: end the old chat's contact
-    end
-    par four exchanges at once
+    and four exchanges at once
         Bridge->>Identity: Okta token for 3 agents tokens and the canvas tools token
         Identity->>Issuer: RFC 8693 token exchange, client hr-bridge
         Issuer-->>Identity: hop tokens, each naming the employee
         Identity-->>Bridge: hop tokens
     end
-    Note over Bridge,Issuer: about 0.4 s, 2.3 s when the issuer is cold (L25)
+    Note over Bridge,Issuer: about 0.3 s, 0.7 s when the issuer is cold (L25); none when this bridge session already holds them
     Bridge->>Connect: StartChatContact, hop tokens as attributes, 60 minutes
     Bridge->>Connect: CreateParticipantConnection and open the WebSocket
     par the canvas starts
         Connect->>Connect: the flow runs, the canvas reads the tokens and greets
-        Connect-->>Bridge: greeting (not shown), the bridge blanks the token attributes
+        Connect-->>Bridge: greeting (not shown), pushed over the WebSocket (L27)
+        Bridge->>Bridge: store the contact: a question waiting for it sends now
+        Bridge->>Connect: blank the token attributes, beside that question (D53)
     and each sub-agent warms
         Bridge->>AgentsGW: A2A warm message, the sub-agent's agents token
         AgentsGW->>Sub: on the canvas's runtime session and thread
@@ -105,7 +106,7 @@ sequenceDiagram
         ToolsGW->>Tools: MCP tools/call with the runtime token
         Tools-->>Sub: the record or passages, cached for the conversation
     end
-    Note over Bridge,Connect: starting the contact is 2.6 to 3.2 s of this
+    Note over Bridge,Connect: starting the contact is 2.0 to 2.5 s of this (L27)
     Bridge-->>Page: RUN_FINISHED
 ```
 
@@ -113,8 +114,9 @@ sequenceDiagram
 
 A suggestion press or a typed question after the warm start finds the contact, the
 sub-agent sessions and the record ready. First words in 1.3 to 5.0 s, depending on the
-question (L24). A question sent while the warm start is still running waits for its end;
-under D44 a suggestion press always did, at 8.5 s median.
+question (L24). A question sent while the warm start is still starting the contact waits
+until the contact is stored at the canvas's greeting (L27, D53); the rest of the warm start
+goes on beside it. Under D44 a suggestion press always waited, at 8.5 s median.
 
 ```mermaid
 sequenceDiagram
@@ -150,3 +152,64 @@ sequenceDiagram
     Bridge-->>Page: TEXT_MESSAGE events, RUN_FINISHED
     Page-->>Employee: the answer
 ```
+
+## One turn's timeline from the logs
+
+No single trace covers a turn: the bridge's spans go to Dynatrace, while the Agentic CX
+designer exports none and keeps its per-step times in a log reachable only through its
+own `QueryLogs` API (aws-feedback A19, TC1). `connect/scripts/turn_timeline.py` joins the
+four logs that do exist by time and the Connect contact id: the bridge's run lines, the
+designer's log (`connect/acxd/logs.js --json`), the token issuer's Lambda log, and the
+sub-agents' run lines.
+
+```
+uv run connect/scripts/turn_timeline.py --since 30m          # every run in the window
+uv run connect/scripts/turn_timeline.py --contact <id>       # one contact, last day
+uv run connect/scripts/turn_timeline.py --since 2026-10-04T12:20 --until 2026-10-04T12:25 --questions-only
+```
+
+Each bridge run prints as a block, times in milliseconds from the bridge receiving the run.
+A question shows the Connect hand-off (the designer's `NluRequestReceived`), the routing
+model, each data request with the designer's own `responseTime`, the journey agent, any
+sub-agent call under the data request that delegated it, the designer's `NluResponded`,
+and the bridge's first delta, then the first delta split into those parts. A warm start
+shows the hop token exchanges (issuer cold or warm), the designer's greeting, the contact
+start, and each sub-agent's warm-up with its own exchanges. Work of the same contact from
+another run, usually the warm start still running under a question, is listed after the
+run's own steps and marked `=`; steps at one level that run at the same time are marked
+`*`. `SendMessage` is in none of these logs: its span is in the bridge's trace, whose id
+the block prints for Dynatrace. The designer's log arrives some time after a turn and is
+kept for a limited time; a turn outside that prints without the designer's steps.
+
+The PTO question of 4 October (contact 1b067d05), 4.3 s after its warm start began:
+
+```
+Question at 12:22:36.384 UTC, contact 1b067d05-7df1-479e-bf48-ede5bbdba357
+  "How much PTO do I earn per year?"
+  bridge run 858cc1b9, trace 6ac2450b50012d562a1db2674df9d262, first delta 4,133 ms, total 4,949 ms
+
+        start       end      ms  step (ms from the bridge receiving the run)
+           +0                    bridge receives the question
+            .                    SendMessage done: not in these logs; its span is in the bridge's trace
+         +493                    designer NluRequestReceived, the Connect hand-off
+         +573      +936     363  routing model
+         +984    +1,814     830  data request PolicySearch (tools gateway /mcp); responseTime 750 ms, status 200
+       +1,817    +3,880   2,063  journey agent (PolicyFlow); 4 MCP tools
+       +3,922                    designer NluResponded (PolicyFlow); responseTime 3,430 ms
+       +4,133                    bridge first delta
+       +4,949                    bridge run ends; finished
+    same contact, another run, at the same time:
+  =    -4,320    +3,348   7,668  warm start of the same contact, run aa496b6c
+  =    -1,616    +3,313   4,929    sub-agent pay warm-up; outcome warm, 0 tool calls
+  =    +1,827    +1,837      10      token exchange hr-tools-gateway for api://hr-tools-runtime; issuer warm, 10 ms
+  (the travel and profile warm-ups and three JWKS reads left out here)
+
+  first delta 4,133 ms: Connect hand-off 493; designer 3,429 (routing model 363, data requests 830,
+  journey agent 2,063, the rest 173); Connect to the bridge's first delta 211
+```
+
+In the split, half of the first delta is the journey agent writing the answer (2.1 s), a
+fifth is the policy search (0.8 s), and Connect's own path in and out is 0.7 s. The warm
+start's sub-agents were still warming throughout, on their own runtimes; the question did
+not call them. A question that waited for its contact shows a "waits for the warm
+start to start the contact" step first, and its split begins with that wait.

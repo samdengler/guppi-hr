@@ -3,9 +3,10 @@
 A thread's first run, or the page's warm start before it, starts a Connect chat contact on
 the contact flow that holds the Agentic CX block, with the caller's token and subject as
 contact attributes and a 60-minute chat duration. The bridge opens the customer's WebSocket
-once (the flow runs only after it connects), waits for the canvas's greeting, and then
-blanks the token attribute: the designer session keeps the value it read at its start
-(phase 0), so the token is on the contact record for a few seconds at most (D42).
+once (the flow runs only after it connects) and waits on it for the canvas's greeting. The
+contact is then stored for the thread, and its token attributes are blanked beside the
+first message (D53): the designer session keeps the values it read at its start (phase 0),
+so the tokens are on the contact record for a few seconds at most (D42).
 
 Every run sends the latest user message with the participant API and relays each canvas
 message as an AG-UI text message. The canvas ends each turn with a hidden END_OF_TURN line,
@@ -36,10 +37,11 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ag_ui.core import (
@@ -87,6 +89,12 @@ POLL_INTERVAL = 0.3
 # The canvas drops a message sent before it greets, so a new contact waits for the
 # greeting, and only for it (change 3); no greeting in this long is a failed start.
 GREETING_LIMIT = 12.0
+# The greeting comes over the socket that starts the flow; when that socket is quiet this
+# long, the transcript is read in case Connect pushed nothing.
+GREETING_CHECK_SECONDS = 1.0
+# A run waiting for another run's contact reads the store this often; a consistent read
+# takes about 5 ms (L27).
+CLAIM_POLL_INTERVAL = 0.1
 # A run starting a contact claims the thread this long, longer than the slowest start:
 # the API calls, a WebSocket connect (10 s at most) and the greeting.
 START_LIMIT = 45.0
@@ -248,20 +256,26 @@ class ConnectClients:
             return None
 
     @staticmethod
-    def touch_websocket(url: str) -> None:
+    def start_flow(url: str) -> Any:
+        """The customer's WebSocket, connected and subscribed. The flow starts once Connect
+        acknowledges the subscription, and the canvas's greeting then comes over this socket,
+        which the caller closes."""
         import websocket
 
-        # The flow starts once the customer's WebSocket has connected and subscribed;
-        # Connect's acknowledgement says so, and the socket can close at once.
         ws = websocket.create_connection(url, timeout=20)
         try:
             ws.send(json.dumps({"topic": "aws/subscribe", "content": {"topics": ["aws/chat"]}}))
             ws.recv()
-        finally:
+        except BaseException:
             ws.close()
+            raise
+        return ws
 
 
 class ConnectTurn:
+    # The threads blanking the token attributes of contacts this run started (D53).
+    blanking: tuple[threading.Thread, ...] = ()
+
     def __init__(
         self,
         token: str,
@@ -343,8 +357,11 @@ class ConnectTurn:
             if session.closed:
                 await asyncio.to_thread(self.end_contact, session)
         finally:
-            # The relayed items and the newest connection token are kept however the run
-            # ends, so a later run never shows this turn's replies again (finding 4).
+            # A contact this run started has its token blanked by now (D53), which the save
+            # records with the relayed items and the newest connection token. They are kept
+            # however the run ends, so a later run never shows this turn's replies again
+            # (finding 4).
+            await asyncio.to_thread(self.finish_blanking)
             self.save(session)
         self.stats.update({"contact": session.contact_id, "replied": replied, "closed": session.closed})
         yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=STEP_NAME)
@@ -379,8 +396,11 @@ class ConnectTurn:
         the page just left ended."""
         props = run_input.forwarded_props if isinstance(run_input.forwarded_props, dict) else {}
         previous = props.get("previousThreadId")
+        ending: asyncio.Future | None = None
         if isinstance(previous, str) and previous and previous != run_input.thread_id:
-            await asyncio.to_thread(self.end_thread, previous)
+            # Ending the left contact takes about 0.4 s, and this thread's start does not
+            # need it, so the two run side by side (L27).
+            ending = asyncio.ensure_future(asyncio.to_thread(self.end_thread, previous))
         warming: list[concurrent.futures.Future] = []
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(WARM_DOMAINS))
 
@@ -389,6 +409,7 @@ class ConnectTurn:
 
         if self.settings.agents_gateway_url:
             self.on_contact = warm_sub_agents
+        session: Session | None = None
         try:
             session = await asyncio.to_thread(self.session_for, run_input.thread_id)
             mark_span(session.contact_id)
@@ -399,6 +420,15 @@ class ConnectTurn:
         finally:
             self.on_contact = None
             pool.shutdown(wait=False)
+            await asyncio.to_thread(self.finish_blanking)
+            if session is not None and self.stats.get("started") and not session.token_cleared:
+                # The store said the blanking was under way; it failed (the problem line
+                # and the alarm report it), and the store now says so too.
+                self.save(session)
+            if ending is not None:
+                (outcome,) = await asyncio.gather(ending, return_exceptions=True)
+                if isinstance(outcome, BaseException):
+                    problem("contact_not_ended", "-", type(outcome).__name__)
 
     def warm_sub_agent(self, contact_id: str, domain: str) -> bool:
         """One sub-agent's warm message, as the canvas would address it; False on failure."""
@@ -456,7 +486,7 @@ class ConnectTurn:
             waiting = isinstance(found, Pending) and found.until >= now
             if waiting and time.monotonic() < deadline:
                 self.stats["waited"] = True
-                time.sleep(POLL_INTERVAL)
+                time.sleep(CLAIM_POLL_INTERVAL)
                 continue
             if time.monotonic() >= deadline or self.store.claim(key, now + START_LIMIT, now):
                 break
@@ -470,7 +500,14 @@ class ConnectTurn:
         except Exception:
             self.store.release(key)
             raise
-        self.store.put(session)
+        # The contact can take a message from its greeting on (finding 3), so it is stored
+        # at once and a run waiting on the claim sends while the token attributes are blanked
+        # beside it (D53). The stored flag counts the blanking as done; a failure reaches the
+        # store with the save of the run that started the contact.
+        try:
+            self.store.put(replace(session, token_cleared=True))
+        finally:
+            self.blank_token(session)
         self.stats["started"] = True
         return session
 
@@ -538,24 +575,60 @@ class ConnectTurn:
             self.take_credentials(session, conn["ConnectionCredentials"])
             # The flow runs only once the customer's WebSocket connects; after that the
             # participant API alone carries the conversation (phase 0).
-            self.clients.touch_websocket(conn["Websocket"]["Url"])
-            self.skip_greeting(session)
+            self.await_greeting(session, self.clients.start_flow(conn["Websocket"]["Url"]))
         except Exception:
             self.end_contact(session)
-            raise
-        finally:
             # The designer read the token when the flow started; the contact record no
-            # longer needs it, whatever happens next (finding 1).
+            # longer needs it, whatever happens next (finding 1). A contact that greeted
+            # has it blanked once it is stored (session_for, D53).
             self.clear_token(session)
+            raise
         log.info("started contact %s", session.contact_id)
         return session
 
-    def skip_greeting(self, session: Session) -> None:
-        """Waits for the canvas's greeting and marks it seen; the page has its own empty
-        state. The canvas ignores a message sent before it greets, so a contact that never
-        greets is a failed start (finding 3)."""
+    def blank_token(self, session: Session) -> None:
+        """Blanks the token attributes on a thread of its own (D53); finish_blanking joins it."""
+        thread = threading.Thread(target=self.clear_token, args=(session,), name="blank-token")
+        thread.start()
+        self.blanking = (*self.blanking, thread)
+
+    def finish_blanking(self) -> None:
+        for thread in self.blanking:
+            thread.join()
+        self.blanking = ()
+
+    def await_greeting(self, session: Session, ws: Any) -> None:
+        """Waits for the canvas's greeting on the socket that started the flow, marks it
+        seen, and closes the socket. Connect pushes the greeting about 0.5 s before a read
+        of the transcript shows it (L27); the transcript is still read whenever the socket
+        is quiet for GREETING_CHECK_SECONDS, and a socket that fails leaves the rest of the
+        wait to polling. The canvas ignores a message sent before it greets, so a contact
+        that never greets is a failed start (finding 3)."""
+        deadline = time.monotonic() + GREETING_LIMIT
+        try:
+            while (left := deadline - time.monotonic()) > 0:
+                frame = self.clients.receive(ws, min(left, GREETING_CHECK_SECONDS))
+                items = self.new_items(session) if frame is None else [chat_item(frame) or {}]
+                for item in items:
+                    if item.get("Id"):
+                        session.remember([item["Id"]])
+                    if classify(item):
+                        return
+        except Exception as error:  # noqa: BLE001 - the transcript still has the greeting
+            reason = type(error).__name__
+            log.warning("greeting socket failed for contact %s (%s); polling", session.contact_id, reason)
+            self.skip_greeting(session, deadline - time.monotonic())
+            return
+        finally:
+            close_quietly(ws)
+        problem("no_greeting", session.contact_id)
+        raise StartFailed(f"contact {session.contact_id} did not greet in {GREETING_LIMIT:.0f} s")
+
+    def skip_greeting(self, session: Session, limit: float = GREETING_LIMIT) -> None:
+        """Polls the transcript for the canvas's greeting for up to `limit` seconds and marks
+        it seen; the page has its own empty state. No greeting is a failed start."""
         start = time.monotonic()
-        while time.monotonic() - start < GREETING_LIMIT:
+        while time.monotonic() - start < limit:
             if any(classify(item) for item in self.new_items(session)):
                 return
             time.sleep(POLL_INTERVAL)
