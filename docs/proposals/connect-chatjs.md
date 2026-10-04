@@ -151,3 +151,101 @@ presses at a quiet time). Stage 2: about 3 to 5 hours of building and 2 hours of
 with waiting, if stage 1 passes. The review's estimate for the bridge-hand-over version was
 5 to 8 hours plus 2 to 3; the Lambda removes the kit change but adds the function and its
 stack.
+
+## Results, 4 October
+
+The new path has been the page's default since D55; the bridge answers with
+`?ff=connect-bridge`. Measured live on chat.dengler.io from 16:51 to 17:21 UTC by a headless
+Playwright page signed in with the harness's test session: the page's IndexedDB session was
+seeded before load, as guppi-gpt `scripts/browser-check.mjs` does, and `/config.json` was
+routed so the page refreshes with the harness's Okta client (M7), which was in place from the
+first load; the page was not tried without it. Signed in this way, /p/hr/ showed the chat
+and its four suggestions, not the sign-in screen. No deploy fell in the window (GuppiConnect last
+updated 16:43:52 UTC, GuppiGpt 16:27:59 UTC). Every test contact was ended with
+`StopContact` afterwards.
+
+### Stage 1 measurement (step 5)
+
+Two browser contexts, A (default) and B (`?ff=connect-bridge`), both with `?ff=debug`;
+presses interleaved A, B, A, B; each press on a fresh page 10 s after the chat showed; 8
+presses per suggestion per arm (64), 17:01 to 17:17 UTC. First words run from the click to
+the first reply text in the DOM, done to the debug block's "done". p90 is linearly
+interpolated. Times in seconds.
+
+| Suggestion | Arm | First words median | p90 | min | max | Done median | p90 | min | max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Update my information | new | 1.08 | 1.31 | 1.04 | 1.38 | 1.08 | 1.31 | 1.04 | 1.38 |
+| Update my information | bridge | 1.54 | 1.81 | 1.36 | 1.89 | 1.55 | 1.81 | 1.36 | 1.89 |
+| Change my address | new | 2.40 | 2.84 | 2.33 | 3.55 | 2.40 | 2.84 | 2.33 | 3.55 |
+| Change my address | bridge | 2.84 | 3.00 | 2.72 | 3.08 | 2.84 | 3.00 | 2.72 | 3.09 |
+| PTO policy | new | 3.07 | 3.44 | 2.81 | 3.48 | 3.87 | 4.24 | 3.61 | 4.27 |
+| PTO policy | bridge | 3.68 | 4.12 | 3.35 | 4.36 | 4.50 | 4.92 | 4.14 | 5.18 |
+| Buddy passes | new | 4.44 | 4.86 | 4.06 | 5.03 | 4.44 | 4.86 | 4.06 | 5.03 |
+| Buddy passes | bridge | 4.75 | 5.60 | 4.53 | 5.70 | 4.75 | 5.60 | 4.53 | 5.70 |
+
+The pass mark passes on all three parts: the median saving is 0.47, 0.44, 0.61 and 0.31 s
+(at least 0.25 s on every suggestion), no suggestion is slower, and "Change my address" is at
+2.40 s against the bridge's 2.84 s. All 64 presses answered; the debug blocks name transport
+`connect` for every A press and the bridge for every B press.
+
+Quick presses, 1 s after the chat showed, 2 per suggestion per arm (16), 17:18 to 17:21 UTC,
+first words median new against bridge: 2.40 against 3.18 s, 4.63 against 5.40 s, 4.41 against
+5.33 s, 6.29 against 6.69 s. Every new-path quick press waited for the chat start (median
+0.76 to 1.27 s per suggestion), as the page's "waiting for the chat start" step shows.
+
+A cross-check with `turn_timeline.py`: at 17:05:30 UTC a new-path "Change my address" had
+Connect's first reply item 2.10 s after the question and first words on the page at 2.33 s;
+at 17:05:45 the bridge's first delta came 2.34 s after the bridge got the run and first
+words at 2.86 s. The designer's own time was about the same on both (1.77 and 1.69 s).
+
+### Live checks on the new path
+
+1. CSP and SendEvent: pass. A five-turn conversation (16:52 UTC, contact 2d19fbc0) raised no
+   `securitypolicyviolation` event and made no `/participant/event` call; the participant
+   calls were `/participant/connection`, `/participant/transcript` and five
+   `/participant/message`. The 40 new-path presses of the measurement showed the same.
+2. The report route: pass. The five turns' reports to `/api/hr/chat/report` answered 200,
+   and so did all 40 reports of the measurement's new-path presses. The function logged a
+   `chat_report` line for each.
+3. 30 s offline in the middle of a reply: fail. The question went out at 16:53:30 UTC
+   (contact d87de09f), the context went offline once SendMessage had answered, and came back
+   online 30 s later. The designer answered at 16:53:32.9, while the page was offline. At
+   28 s the turn limit ended the turn with the no-reply line, and the answer never appeared:
+   20 s after the network came back the thread held only "No answer came back from the HR
+   assistant." Chromium's offline emulation left the WebSocket open (no frames while
+   offline, no close), so no reconnect or catch-up ran; and a turn that has ended drops a
+   later reply in any case. The turn's report was sent while offline and was lost
+   (`ERR_INTERNET_DISCONNECTED`), so no `chat_problem` line or alarm came from it. An outage
+   longer than the 28 s turn limit loses the answer, and the report has no retry.
+4. A hidden tab: pass. The page was set hidden (the `visibilitychange` event with
+   `document.visibilityState` overridden) at 16:55:11 UTC for 5 minutes with the network up;
+   it made no request while hidden, read the transcript once on becoming visible, and a
+   question then got one answer in 5.17 s with nothing duplicated. Chromium does not throttle
+   timers under this emulation as it would for a real background tab.
+5. Restart: pass. New chat after the five turns started contact ec937473, whose `chat_start`
+   line names `previous` 2d19fbc0 with `previous_outcome` ended and `restarted` true.
+   `describe-contact` shows 2d19fbc0 disconnected at 16:52:45.29 UTC (reason API) and
+   ec937473 initiated at 16:52:45.18 and still open.
+6. The rollback flag: pass. All 32 bridge-arm pages called `/api/hr/invocations` twice (the
+   warm start and the question) and made no `/api/hr/chat/start` or participant call; their
+   debug blocks show the bridge's steps.
+7. The alarm path: pass, by reading and a filter test, without posting a report. The metric
+   filter on `/aws/lambda/hr-chat-start` is `{ $.event = "chat_problem" }` to
+   `GuppiConnect/ChatStart` `Problems`, which the alarm `guppi-connect-chat-start-problems`
+   (threshold 1 in 5 minutes, SNS `guppi-connect-alarms`) counts. An accepted report with
+   endReason `no_reply` writes `{"event":"chat_problem","kind":"no_reply",...}`
+   (`report_problems` in `connect/chat_start/src/lib.rs`, unit test
+   `reports_raise_problems_for_no_reply_designer_errors_and_sockets`), and
+   `aws logs test-metric-filter` matches that line. A synthetic report was not posted,
+   because it would have raised the real alarm. All three alarms stayed OK.
+
+### Other things seen
+
+- PolicyFlow's replies carry no end mark, so a PTO turn ends 0.8 s after its reply on quiet,
+  on both paths (`quiet after the reply` in every PTO debug block).
+- Every page load logs CORS errors and a 400 for Dynatrace's RUM beacon
+  (`bf49265sdi.bf.dynatrace.com`) in the headless browser.
+- One chat start at 17:05:28 UTC (contact e7decab6) spent 1.05 s on the `api://hr-tools`
+  exchange with the issuer warm, against 22 to 28 ms for the other three.
+- During the window something else posted test reports to the report route (runs named
+  `repro-*`, `seq-*`, `after-*`) and requests without a token to the start route.
