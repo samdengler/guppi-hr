@@ -1,7 +1,7 @@
 # On-behalf-of token exchange for `/p/hr/` (D20, D47, D48)
 
 Status: built and deployed 3 October 2026; this is revision 4, the system as built after
-the first critique of the build (D48). `scripts/obo-checks.py` checks every hop and Policy
+the first critique of the build (D48, approved). `scripts/obo-checks.py` checks every hop and Policy
 rule against the deployed stacks; `scripts/obo-rollback.sh` reverts the change.
 
 History, briefly:
@@ -331,7 +331,7 @@ D47 (Sam, 3 October 2026):
 5. One switch with a scripted rollback. It happened as a single cut-over: no LOG_ONLY
    phase and no `OBO` setting, which made the window shorter.
 
-D48 (proposed, after the critique of the build):
+D48 (Sam, 4 October 2026, after the critique of the build):
 - agents tokens per sub-agent;
 - the pay-statements scope;
 - the tools server's own per-tool check;
