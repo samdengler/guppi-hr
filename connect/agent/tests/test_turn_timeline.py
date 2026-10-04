@@ -441,8 +441,21 @@ def test_a_function_start_shows_its_own_steps():
     assert "previous contact: ended" in text
     assert "+700    +2,880   2,180  greeting wait [connect]" in text
     assert "designer greeting (the flow started; the canvas read the tokens)" in text
-    assert "chat start stream closes; ok, 3 sub-agents warmed" in text
+    # A line from before D57 still carries the warm-up count of its second NDJSON line.
+    assert "chat start answers; ok, 3 sub-agents warmed" in text
     assert "contact started, the chat start function saw the greeting" in text
+
+
+def test_a_start_since_d57_has_credentials_ms_and_no_warm_ups():
+    line = {k: v for k, v in START_LINE.items() if k not in ("line1_ms", "warmed")}
+    line["credentials_ms"] = 2950
+    events = [(ms("12:22:39.664"), "s", json.dumps(line))]
+    (start,) = tt.parse_function_runs(events)
+    src = tt.Sources([start], ms("12:22:34.944"), tt.designer_turns(DESIGNER), [], {})
+    text = "\n".join(tt.render_run(start, src))
+    assert "outcome ok, credentials at 2950 ms" in text
+    assert "chat start answers; ok\n" in text + "\n"
+    assert "warmed" not in text
 
 
 def test_a_reported_question_is_on_connects_clock():

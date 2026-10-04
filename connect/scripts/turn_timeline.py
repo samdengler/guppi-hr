@@ -181,8 +181,8 @@ def function_line(message: str) -> dict | None:
 
 
 def parse_chat_start(ts: int, d: dict) -> Run | None:
-    """A chat_start line as a warm start: logged when the stream closes, so it starts
-    total_ms before its timestamp."""
+    """A chat_start line as a warm start: logged just before the function answers, so it
+    starts total_ms before its timestamp."""
     if d.get("event") != "chat_start" or not d.get("contact"):
         return None
     total = int(d.get("total_ms") or 0)
@@ -729,8 +729,12 @@ def warm_start_steps(run: Run, src: Sources) -> list[Step]:
             )
         )
     if run.source == "chat-start":
-        detail = f"{run.fields.get('outcome', '')}, {run.fields.get('warmed')} sub-agents warmed"
-        steps.append(Step(run.end, None, "chat start stream closes", detail))
+        # Lines before D57 streamed a second line with the warm-up count.
+        warmed = run.fields.get("warmed")
+        detail = run.fields.get("outcome", "")
+        if warmed is not None:
+            detail += f", {warmed} sub-agents warmed"
+        steps.append(Step(run.end, None, "chat start answers", detail))
     else:
         steps.append(Step(run.end, None, "bridge run ends", run.fields.get("outcome", "")))
     return steps
@@ -915,7 +919,9 @@ def render_run(run: Run, src: Sources) -> list[str]:
             cold = "cold" if run.fields.get("cold") else "warm"
             lines.append(
                 f"  chat start function ({cold}), outcome {run.fields.get('outcome')},"
-                f" credentials at {run.fields.get('line1_ms')} ms, total {run.total_ms:,} ms"
+                f" credentials at"
+                f" {run.fields.get('credentials_ms', run.fields.get('line1_ms'))} ms,"
+                f" total {run.total_ms:,} ms"
             )
         else:
             lines.append(
