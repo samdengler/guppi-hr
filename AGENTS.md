@@ -110,7 +110,8 @@ touches the HR stack, and reads the HR stack's gateway URLs from the root
   approval before building it. Approved so far: the Lambda functions inside Dynatrace's
   own AWS activation stack (`GuppiGPT-Dynatrace`, 7 Sep 2026), which sits outside
   `HrSuperAgent`; and `hr-chat-start` in the `GuppiConnect` stack (`connect/chat_start`,
-  Rust behind a streaming function URL), which starts each /p/hr/ chat (D55, 4 Oct 2026).
+  Rust behind a regional API Gateway REST API with a standard Lambda proxy integration),
+  which starts each /p/hr/ chat (D55, 4 Oct 2026; front door D57, 4 Oct 2026).
 - Secrets never enter files, `cdk.context.json`, or `-c` context values. Values the stack
   cannot produce (the Dynatrace token) are CloudFormation parameters with `no_echo`
   supplied by `scripts/deploy.sh` from 1Password. The GitHub token for the image build

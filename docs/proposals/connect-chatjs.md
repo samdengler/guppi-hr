@@ -5,6 +5,19 @@ review of revision 1 (findings H1 to H4, M1 to M9, L1 to L7, V1 to V8). Built an
 4 October 2026 as the default for /p/hr/; the bridge path stays behind `?ff=connect-bridge` for
 rollback. Stage 1's pass mark passed on every suggestion (L29); results below.
 
+Revision 3, 4 October 2026 (D57, Sam): the front door is a regional API Gateway REST API,
+stage `prod`, with a standard (buffered) Lambda proxy integration on `POST
+/api/hr/chat/start` and `POST /api/hr/chat/report`, the shape of AWS's StartChatContact
+sample, in place of the streaming function URL; the function URL is removed. The start
+route answers one JSON body (the fields of the first NDJSON line below) and warms no
+sub-agent: there is no second line. The stage throttles start at 2 a second with a burst
+of 5 and report at 10 a second with a burst of 20; reserved concurrency stays 10. No web
+ACL (accepted risk, as D48). The function still verifies the Okta token itself. The
+sections below are revision 2 as built before this change; where they speak of the
+function URL, streaming, line 2 or the warm-ups in the chat start, revision 3 holds. The
+measured start time is L30 and the cost of dropping the warm-ups L31;
+`docs/proposals/touchpoint-alignment.md`, "Applied, 4 October", lists what changed.
+
 /p/hr/ takes the shape of AWS's Touchpoint front end. A chat-start function (Rust, Lambda)
 starts the chat; the browser sends each question to Amazon Connect's participant service and
 reads the reply on its own WebSocket through `amazon-connect-chatjs` 5.2.0. Nothing behind

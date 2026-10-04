@@ -12,7 +12,7 @@ Who is who in the diagrams:
 | Page | guppi-gpt's page with this project's manifest (`connect/web/manifest.json`), `web/src/app.js` |
 | Okta | The Okta org: the app `chat.dengler.io`, its sign-in policy (D49), the authorization server `guppi` (audience `api://guppi`, members of `chat-users` only) |
 | Edge | CloudFront and the platform's edge gateway (AWS WAF, per-user limits, JWT check) |
-| Chat start | Lambda `hr-chat-start` (Rust, `connect/chat_start`) behind its function URL, which CloudFront reaches at `/api/hr/chat/*` (D55) |
+| Chat start | Lambda `hr-chat-start` (Rust, `connect/chat_start`) behind the regional REST API `hr-chat-start` (stage `prod`, a standard Lambda proxy integration), which CloudFront reaches at `/api/hr/chat/*` (D55, D57) |
 | Bridge | AgentCore Runtime `guppi_connect_bridge`: one AG-UI run as one Connect chat turn (`connect/agent/src/connect_bridge/turn.py`); since D55 the fallback behind `?ff=connect-bridge` |
 | Identity | AgentCore Identity: holds each client's secret and makes the RFC 8693 exchange (D47) |
 | Issuer | guppi-gpt's token issuer: API Gateway and the Lambda `guppi-gpt-obo-issuer` |
@@ -65,13 +65,16 @@ bridge's warm start below it is the fallback.
 ### The chat start function
 
 The page posts `/api/hr/chat/start` with the Okta access token and, on New chat or a
-restart, `previousContactId`. The function URL streams its answer as NDJSON: line 1 with
-`data.startChatResult` (the contact, the participant and its token), `startedAt`,
-`expiresAt` and `restarted` once the greeting has come and the token attributes are blank;
-line 2 with the number of sub-agents warmed. The page connects with
-`amazon-connect-chatjs` on the participant token from line 1 and needs nothing from line 2.
-Measured on 4 Oct (L28), inside the function: line 1 at 2.7 s warm, 2.8 s on a new
-instance, 3.8 s when the token issuer was cold as well; line 2 at 7.0 to 8.1 s.
+restart, `previousContactId`. The function answers one JSON body (D57, the shape of AWS's
+StartChatContact sample): `data.startChatResult` (the contact, the participant and its
+token), `region`, `startedAt`, `expiresAt`, `restarted` and `timing`, once the greeting has
+come and the token attributes are blank. The page connects with `amazon-connect-chatjs` on
+the participant token. The chat start warms no sub-agent (D57), so a contact's first call
+to each sub-agent opens that sub-agent's runtime and MCP sessions itself (L31). Measured on
+4 Oct (L30), 10 starts through chat.dengler.io: the body at the client a median 2.16 s
+(1.80 to 3.21 s), inside the function 1.99 s (1.69 to 2.64 s; the slowest was a new
+instance). API Gateway's stage throttles each route: start 2 a second with a burst of 5,
+report 10 a second with a burst of 20; past them it answers 429.
 
 ```mermaid
 sequenceDiagram
@@ -82,11 +85,9 @@ sequenceDiagram
     participant Identity
     participant Issuer
     participant Connect
-    participant AgentsGW as Agents GW
-    participant Sub as Sub-agent (x3)
 
     Page->>CF: POST /api/hr/chat/start, Okta token, previousContactId?
-    CF->>Start: the function URL, path unchanged
+    CF->>Start: REST API stage prod (throttled per route), Lambda proxy, path unchanged
     Start->>Start: verify the token (RS256, Okta's keys built in; issuer, audience, client, expiry, uid)
     par the page left a chat
         Start->>Connect: GetContactAttributes: is it the caller's (employeeId)?
@@ -99,26 +100,19 @@ sequenceDiagram
     end
     Note over Start,Issuer: 0.25 to 0.31 s, about 1 s when the issuer is cold
     Start->>Connect: StartChatContact, hop tokens and employeeId as attributes, 60 minutes
-    Start-->>Page: 200, application/x-ndjson (headers only so far)
-    par the designer starts
-        Start->>Connect: CreateParticipantConnection, open the WebSocket, subscribe
-        Connect->>Connect: the flow runs, the designer reads the tokens and greets
-        Connect-->>Start: greeting, pushed over the WebSocket
-        Start->>Connect: blank the four token attributes (D42, D53)
-        Start-->>Page: line 1: startChatResult, startedAt, expiresAt, restarted, timing
-        Page->>Connect: chatjs connects with the participant token
-    and each sub-agent warms (D41)
-        Start->>AgentsGW: A2A warm message, the sub-agent's agents token, session {contact}-{domain}
-        AgentsGW->>Sub: opens its runtime session and MCP session, reads the record
-        Sub-->>Start: 200
-    end
-    Start-->>Page: line 2: warmed 3, timing; the stream closes
+    Start->>Connect: CreateParticipantConnection, open the WebSocket, subscribe
+    Connect->>Connect: the flow runs, the designer reads the tokens and greets
+    Connect-->>Start: greeting, pushed over the WebSocket
+    Start->>Connect: blank the four token attributes (D42, D53)
+    Start-->>CF: proxy response: 200, one JSON body
+    CF-->>Page: startChatResult, region, startedAt, expiresAt, restarted, timing
+    Page->>Connect: chatjs connects with the participant token
 ```
 
-A failed exchange answers line 1 `{"error":"signin"}` and starts nothing; a failure after
-the contact started (no greeting in 12 s, a failed connection) blanks the attributes, ends
-the contact and answers `{"error":"unavailable"}`. A token the function refuses gets 401
-before anything streams.
+A failed exchange answers 200 `{"error":"signin"}` and starts nothing; a failure after the
+contact started (no greeting in 12 s, a failed connection) blanks the attributes, ends the
+contact and answers 200 `{"error":"unavailable"}`. A token the function refuses gets 401
+`{"error":"unauthorized"}`.
 
 ### The bridge's warm start (fallback)
 
@@ -182,6 +176,13 @@ sub-agent sessions and the record ready. First words in 1.3 to 5.0 s, depending 
 question (L24). A question sent while the warm start is still starting the contact waits
 until the contact is stored at the canvas's greeting (L27, D53); the rest of the warm start
 goes on beside it. Under D44 a suggestion press always waited, at 8.5 s median.
+
+That is the bridge path. On the default path the page sends the question to Connect
+itself, and since D57 the chat start warms no sub-agent, so a contact's first call to a
+sub-agent opens that sub-agent's runtime session and MCP session inside the question:
+median first words 6.50 s for "Change my address" and 6.35 s for "Buddy passes", 10 s after
+the page loaded, against 2.40 s and 4.44 s with the warm-ups (L31). A policy question does
+not call a sub-agent and does not pay this.
 
 ```mermaid
 sequenceDiagram

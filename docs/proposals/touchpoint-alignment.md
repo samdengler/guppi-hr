@@ -1,6 +1,7 @@
 # /p/hr/ chat start and client against AWS's Touchpoint reference
 
-Review of 4 October 2026. Read only: no code was changed and nothing was deployed. Two
+Review of 4 October 2026. Read only: no code was changed and nothing was deployed. What
+Sam decided and what was then built are in "Applied, 4 October" near the end. Two
 read-only CloudWatch Logs Insights queries and two read-only Lambda calls
 (`get-function-url-config`, `get-policy`) were run against the live account.
 
@@ -684,6 +685,39 @@ f. Memory to 256 MB (V10).
 g. When a Touchpoint widget page is built, whether its chats skip the server's greeting
    wait (which changes when the tokens are blanked) or replay the greeting in the widget.
 h. D56's status and the `AGENTS.md` wording once a is decided.
+
+## Applied, 4 October
+
+Sam's answers to the decisions above (D57, Approved, Sam, 4 Oct), and what was built that day.
+
+| Item | Sam's answer | What changed |
+| --- | --- | --- |
+| a. Front door (V1, V2) | A regional REST API with a standard (buffered, non-streaming) Lambda proxy integration, the sample's shape; the function keeps the token check | REST API `hr-chat-start`, stage `prod`, `POST` on `/api/hr/chat/start` and `/api/hr/chat/report`, `AWS_PROXY`, no authorizer. The function reads the REST proxy event (`path` or `resource`, `httpMethod`, `headers`, `body`, `isBase64Encoded`) and answers `statusCode`, `headers`, `body`. The function URL and its `Principal: *` grants are gone; the old `lambda-url` host answers 403 |
+| E5, E6 (warm-ups, NDJSON) | No sub-agent warm-ups in the chat start ("a premature optimization ... hacky", to revisit); so no streaming | The start route answers one JSON body with line 1's fields; no line 2. The bridge path keeps its warm-ups |
+| b. WAF (V3) | None for the POC; accepted risk, as D48 | No web ACL |
+| c. Throttles (V4) | Start 2 a second, burst 5; report 10 a second, burst 20; reserved concurrency stays 10 | Method settings on the stage; access log without headers or bodies, one month |
+| d. Receipts and typing (V5) | Stay off; recorded as a decision | D57 |
+| e. Persistent chat (V9) | Later | Nothing |
+| f. Memory (V10) | Stays 1024 MB | Nothing |
+| h. D56 and `AGENTS.md` | D56 superseded for the front door and the in-call warm-ups; its other parts stay Proposed | D56's status, `AGENTS.md` names the REST API and D57 |
+
+The deploys, in the order that kept CloudFront working: `GuppiConnect` with the API beside
+the function URL (the function answered both, streaming one line through the URL), then
+`GuppiGpt` with the HR chat origin on the API's host and `/prod` as its origin path
+(`/guppi/hr/chat-start-host`, `/guppi/hr/chat-start-path`) and the page reading one JSON
+body, then `GuppiConnect` without the function URL.
+
+Live checks through chat.dengler.io after the last deploy: 10 starts, the body at the client
+a median 2.16 s and inside the function 1.99 s (L30); a report answered 200, one on another
+contact 403, a malformed one 400; no token answered 401 on both routes; the stage answered
+429 past the start throttle, though the first bursts after the deploy passed well above it
+(aws-feedback P6); `?ff=connect-bridge` answered through the bridge with no chat start
+call; the page answered "Update my information", "Change my address" and "Buddy passes".
+Dropping the warm-ups costs a contact's first sub-agent question 1.9 to 4.1 s of first
+words (L31).
+
+Of "Not verified here" below: the API Gateway hop costs no measurable time against L28
+(L30), and a 204 can no longer be retested, since no route answers one (F1).
 
 ## Not verified here
 
