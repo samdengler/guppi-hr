@@ -23,7 +23,7 @@
 set -euo pipefail
 
 # The on-behalf-of commits, newest first (D47, D48 and their follow-ups).
-OBO_COMMITS=(9a18c00 454f90d 91f9580 c6d96e0)
+OBO_COMMITS=(8040b10 9a18c00 454f90d 91f9580 c6d96e0)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)/guppi-hr-rollback"
 MODE="${1:-deploy}"
