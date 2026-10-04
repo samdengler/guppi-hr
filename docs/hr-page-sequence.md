@@ -12,7 +12,8 @@ Who is who in the diagrams:
 | Page | guppi-gpt's page with this project's manifest (`connect/web/manifest.json`), `web/src/app.js` |
 | Okta | The Okta org: the app `chat.dengler.io`, its sign-in policy (D49), the authorization server `guppi` (audience `api://guppi`, members of `chat-users` only) |
 | Edge | CloudFront and the platform's edge gateway (AWS WAF, per-user limits, JWT check) |
-| Bridge | AgentCore Runtime `guppi_connect_bridge`: one AG-UI run as one Connect chat turn (`connect/agent/src/connect_bridge/turn.py`) |
+| Chat start | Lambda `hr-chat-start` (Rust, `connect/chat_start`) behind its function URL, which CloudFront reaches at `/api/hr/chat/*` (D55) |
+| Bridge | AgentCore Runtime `guppi_connect_bridge`: one AG-UI run as one Connect chat turn (`connect/agent/src/connect_bridge/turn.py`); since D55 the fallback behind `?ff=connect-bridge` |
 | Identity | AgentCore Identity: holds each client's secret and makes the RFC 8693 exchange (D47) |
 | Issuer | guppi-gpt's token issuer: API Gateway and the Lambda `guppi-gpt-obo-issuer` |
 | Connect | The chat contact, its contact flow and the Agentic CX canvas (`connect/acxd/hr.js`) |
@@ -55,11 +56,75 @@ sequenceDiagram
 
 ## Warm start
 
-For each new chat the page posts a run with no messages and `forwardedProps.warm`. It goes
-out as soon as the signed-in page is in view: at load, at sign-in, on New chat, or when a
-hidden tab comes into view; a chat still empty 50 minutes later is warmed again when the
-employee comes back (D50, guppi-gpt `warmDue`). It takes 6.4 to 8.4 s, all of it before
-the employee asks anything.
+For each new chat the page starts the chat as soon as the signed-in page is in view: at
+load, at sign-in, on New chat, or when a hidden tab comes into view; a chat still empty 50
+minutes later is started again when the employee comes back (D50, guppi-gpt `warmDue`).
+Since D55 the page calls the chat start function and then talks to Connect itself; the
+bridge's warm start below it is the fallback.
+
+### The chat start function
+
+The page posts `/api/hr/chat/start` with the Okta access token and, on New chat or a
+restart, `previousContactId`. The function URL streams its answer as NDJSON: line 1 with
+`data.startChatResult` (the contact, the participant and its token), `startedAt`,
+`expiresAt` and `restarted` once the greeting has come and the token attributes are blank;
+line 2 with the number of sub-agents warmed. The page connects with
+`amazon-connect-chatjs` on the participant token from line 1 and needs nothing from line 2.
+Measured on 4 Oct (L28): line 1 at 2.7 s on a warm function, 3.8 s on the first start of
+a new instance; line 2 at 7.0 to 8.0 s.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Page
+    participant CF as CloudFront
+    participant Start as Chat start
+    participant Identity
+    participant Issuer
+    participant Connect
+    participant AgentsGW as Agents GW
+    participant Sub as Sub-agent (x3)
+
+    Page->>CF: POST /api/hr/chat/start, Okta token, previousContactId?
+    CF->>Start: the function URL, path unchanged
+    Start->>Start: verify the token (RS256, Okta's keys built in; issuer, audience, client, expiry, uid)
+    par the page left a chat
+        Start->>Connect: GetContactAttributes: is it the caller's (employeeId)?
+        Start->>Connect: StopContact
+    and four exchanges at once
+        Start->>Identity: one workload token (hr-chat-start), then 3 agents tokens and the tools token
+        Identity->>Issuer: RFC 8693 token exchange, client hr-bridge
+        Issuer-->>Identity: hop tokens, each naming the employee
+        Identity-->>Start: hop tokens
+    end
+    Note over Start,Issuer: 0.25 s warm, about 1 s on a new instance's first start
+    Start->>Connect: StartChatContact, hop tokens and employeeId as attributes, 60 minutes
+    Start-->>Page: 200, application/x-ndjson (headers only so far)
+    par the designer starts
+        Start->>Connect: CreateParticipantConnection, open the WebSocket, subscribe
+        Connect->>Connect: the flow runs, the designer reads the tokens and greets
+        Connect-->>Start: greeting, pushed over the WebSocket
+        Start->>Connect: blank the four token attributes (D42, D53)
+        Start-->>Page: line 1: startChatResult, startedAt, expiresAt, restarted, timing
+        Page->>Connect: chatjs connects with the participant token
+    and each sub-agent warms (D41)
+        Start->>AgentsGW: A2A warm message, the sub-agent's agents token, session {contact}-{domain}
+        AgentsGW->>Sub: opens its runtime session and MCP session, reads the record
+        Sub-->>Start: 200
+    end
+    Start-->>Page: line 2: warmed 3, timing; the stream closes
+```
+
+A failed exchange answers line 1 `{"error":"signin"}` and starts nothing; a failure after
+the contact started (no greeting in 12 s, a failed connection) blanks the attributes, ends
+the contact and answers `{"error":"unavailable"}`. A token the function refuses gets 401
+before anything streams.
+
+### The bridge's warm start (fallback)
+
+With `?ff=connect-bridge` the page posts a run with no messages and
+`forwardedProps.warm` to the bridge instead. It takes 6.4 to 8.4 s, all of it before the
+employee asks anything.
 
 ```mermaid
 sequenceDiagram
@@ -160,7 +225,11 @@ designer exports none and keeps its per-step times in a log reachable only throu
 own `QueryLogs` API (aws-feedback A19, TC1). `connect/scripts/turn_timeline.py` joins the
 four logs that do exist by time and the Connect contact id: the bridge's run lines, the
 designer's log (`connect/acxd/logs.js --json`), the token issuer's Lambda log, and the
-sub-agents' run lines.
+sub-agents' run lines. On the D55 path it also reads the chat start function's log
+(`/aws/lambda/hr-chat-start`): a `chat_start` line stands in for the warm start, with the
+function's own steps, and a `chat_report` line, which the page sends after each question,
+is placed on Connect's clock, with the sent message's `AbsoluteTime` as zero and the first
+and last reply items' as the first delta and the end.
 
 ```
 uv run connect/scripts/turn_timeline.py --since 30m          # every run in the window
