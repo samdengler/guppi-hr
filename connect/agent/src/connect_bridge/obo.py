@@ -124,7 +124,7 @@ class TokenExchanger:
         except Exception as exc:  # noqa: BLE001 - every failure refuses the same way
             # The message names the error class only; Identity's messages can quote claims.
             log.warning("token exchange through %s failed: %s", self.provider, type(exc).__name__)
-            raise ExchangeError(type(exc).__name__) from exc
+            raise ExchangeError(type(exc).__name__) from None
         with self._lock:
             now = self._clock()
             for stale in [k for k, (_, exp) in self._cache.items() if exp - MARGIN_SECONDS <= now]:

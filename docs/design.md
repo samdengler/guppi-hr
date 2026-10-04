@@ -8,7 +8,7 @@ after the employee confirms it. This document describes the system as deployed o
 2 Oct 2026, after phase 8 moved it onto the chat.dengler.io platform. The decisions behind
 it are D1 on in [decision-log.md](decision-log.md). The platform (guppi-gpt's `GuppiGpt`
 stack, described in guppi-gpt's `docs/proposals/platform.md` and `guppigpt-design.html`
-section 13) owns the page, Google sign-in through Cognito, CloudFront, AWS WAF, the edge
+section 13) owns the page, sign-in through Okta (D46), CloudFront, AWS WAF, the edge
 gateway with its per-user limits, reply feedback and feature flags; this stack reads the
 platform's identifiers from `/guppi/platform/*` SSM parameters and owns everything that is
 HR (D31, D34).
@@ -35,7 +35,7 @@ profile, pay, or travel (`agent/src/hr_agent/__main__.py`, D11).
 1. The platform's page posts the whole thread (text only) to `/api/hr/invocations`. The
    extension's `onSend` hook puts on it the AG-UI `state` kept from the previous run's
    `STATE_SNAPSHOT`: `activeDomain` and `pendingAction` (D6, D23, D32). The request carries
-   the user's access token from the platform's Cognito pool.
+   the user's Okta access token (D46).
 2. CloudFront rewrites the path to `/hr/invocations` on the platform's edge gateway, which
    applies WAF and the per-user limits, checks the token, and passes it through to the
    orchestrator runtime through the target named `hr`; the runtime checks it again.

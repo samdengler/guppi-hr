@@ -8,8 +8,12 @@
 # Only the commits in OBO_COMMITS are reverted, newest first; add each later on-behalf-of
 # commit to the list in the same commit. Everything else at HEAD is kept.
 #
+#   scripts/obo-rollback.sh --check    # the revert step only (infra/tests runs this)
 #   scripts/obo-rollback.sh --diff     # show the CloudFormation changes, deploy nothing
 #   scripts/obo-rollback.sh            # deploy the rollback (asks first)
+#
+# Each listed commit is reverse-applied with this script itself left out, so a commit that
+# adds itself to the list cannot make the revert conflict (critique round 3, finding 1).
 #
 # Known risks, from the critique of the build (finding 6):
 # - between the HR stack's deploy and the bridge's, /p/hr/ fails: the gateways want the
@@ -32,10 +36,20 @@ git -C "$ROOT" worktree add --detach "$WORK" HEAD >/dev/null
 trap 'git -C "$ROOT" worktree remove --force "$WORK" || true' EXIT
 
 echo "reverting, newest first:"
-for commit in "${OBO_COMMITS[@]}"; do git -C "$WORK" log --oneline -1 "$commit"; done
-git -C "$WORK" -c user.name=rollback -c user.email=rollback@localhost revert --no-edit "${OBO_COMMITS[@]}" >/dev/null
+for commit in "${OBO_COMMITS[@]}"; do
+  git -C "$WORK" log --oneline -1 "$commit"
+  patch="$(git -C "$WORK" show --binary --format= "$commit" -- . ':(exclude)scripts/obo-rollback.sh')"
+  if [[ -n "$patch" ]]; then
+    printf '%s\n' "$patch" | git -C "$WORK" apply -R --3way --index
+  fi
+done
+git -C "$WORK" -c user.name=rollback -c user.email=rollback@localhost commit -q -m "Roll back on-behalf-of tokens"
 echo "paths the rollback changes:"
-git -C "$WORK" diff --stat HEAD~${#OBO_COMMITS[@]} HEAD | tail -n +1
+git -C "$WORK" diff --stat HEAD~1 HEAD
+
+if [[ "$MODE" == "--check" ]]; then
+  exit 0
+fi
 
 if [[ "$MODE" == "--diff" ]]; then
   (cd "$WORK" && uv sync --all-packages --dev -q &&

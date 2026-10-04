@@ -254,7 +254,7 @@ monitoring and reply feedback are the platform's.
 The knowledge base corpus is refreshed by `scripts/seed-content.sh` (Markdown from
 `content/hr/`, `aws s3 sync --delete` to `docs/` in the content bucket) followed by
 `scripts/ingest.sh`. A scheduler runs the same ingestion nightly. The tools gateway target
-is named `docs`, so the MCP tools are `docs___Retrieve` and `docs___AgenticRetrieveStream`.
+is named `docs`, so the MCP tool is `docs___Retrieve` (AgenticRetrieveStream was removed, D48).
 
 Two context keys exist for experiments and default off: `-c bind_runtime_to_gateway=true`
 adds `allowedWorkloadConfiguration` naming the platform's edge gateway to the

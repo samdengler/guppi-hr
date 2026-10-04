@@ -160,11 +160,11 @@ As a result:
 
 - **The token endpoint is public by nature, with no web ACL in front.** This is an accepted
   risk for the POC (Sam, 3 October 2026). Anyone who sends more than the token throttle,
-  about 20 requests a second, makes the issuer refuse every exchange until they stop, and
+  100 requests a second, makes the issuer refuse every exchange until they stop, and
   every caller then fails closed; HR tool calls stop. A regional web ACL with a per-IP
   rate rule would close it for about 6 dollars a month. A REST API can take one later
   with no other change.
-- **Throttles:** `/token` at 20 a second with a burst of 40. Key and discovery reads have
+- **Throttles:** `/token` at 100 a second with a burst of 200. Key and discovery reads have
   their own limit, 50 a second with a burst of 100, so a flood of token requests never
   starves authorizers' key fetches. Those reads may be cached for five minutes.
 - **Access logs** go to `/aws/apigateway/guppi-obo-issuer`. Alarms watch the function's

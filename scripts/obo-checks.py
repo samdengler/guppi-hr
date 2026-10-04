@@ -118,7 +118,9 @@ class Mcp:
 
 
 def main() -> None:
-    if WORKLOAD not in {w["name"] for w in control.list_workload_identities().get("workloadIdentities", [])}:
+    try:
+        control.get_workload_identity(name=WORKLOAD)
+    except control.exceptions.ResourceNotFoundException:
         # The stack owns it; creating it here would block the stack's own create.
         sys.exit(f"workload identity {WORKLOAD} is missing: deploy HrSuperAgent first")
     t0 = subprocess.run([str(GUPPI_GPT / "scripts" / "test-token.sh")], capture_output=True, text=True, check=True).stdout.strip()
@@ -151,7 +153,8 @@ def main() -> None:
         status = a2a(f"{agents_url}/travel/invocations", token, session)
         check(f"{label} is refused", status in (401, 403), f"HTTP {status}")
 
-    runtimes = {r["agentRuntimeName"]: r for r in control.list_agent_runtimes()["agentRuntimes"]}
+    runtimes = {r["agentRuntimeName"]: r for page in control.get_paginator("list_agent_runtimes").paginate()
+                for r in page["agentRuntimes"]}
 
     def runtime_url(name: str) -> str:
         arn = control.get_agent_runtime(agentRuntimeId=runtimes[name]["agentRuntimeId"])["agentRuntimeArn"]
@@ -164,7 +167,8 @@ def main() -> None:
         status = a2a(travel, token, session)
         check(f"{label} is refused", status in (401, 403), f"HTTP {status}")
 
-    tools_url = next(g for g in control.list_gateways()["items"] if g["name"] == "hr-super-agent-tools")
+    tools_url = next(g for page in control.get_paginator("list_gateways").paginate() for g in page["items"]
+                     if g["name"] == "hr-super-agent-tools")
     tools_url = control.get_gateway(gatewayIdentifier=tools_url["gatewayId"])["gatewayUrl"]
     print("tools gateway and Gateway Policy")
     for label, token in (("the Okta token", t0), ("an agents token", t1["pay"]), ("the runtime token", t3)):

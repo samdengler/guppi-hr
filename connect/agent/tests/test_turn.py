@@ -982,3 +982,16 @@ async def test_a_missing_provider_setting_never_puts_the_okta_token_on_a_contact
     events = await collect(ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep), "hello")
     assert clients.connect.started == []
     assert "".join(getattr(e, "delta", "") for e in events) == turn_module.SIGNIN_LINE
+
+
+def test_a_contact_is_replaced_only_for_a_fresher_okta_token():
+    # Critique round 3, finding 3: the hop tokens may expire before the Okta token they came
+    # from; only an Okta token newer than the contact's own starts a new contact.
+    from connect_bridge.store import Session
+
+    now = 1_800_000_000.0
+    turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, FakeClients(FakeParticipant({})), clock=lambda: now)
+    session = Session(key="k", contact_id="c", connection_token="t", connection_expires_at=now + 3000,
+                      token_expires_at=now + 120, started_at=now - 600, sign_in_expires_at=now + 5400)
+    assert turn.usable(session, token_exp=now + 5400, now=now)  # the same Okta token: keep it
+    assert not turn.usable(session, token_exp=now + 7000, now=now)  # a fresher one: replace it

@@ -480,7 +480,9 @@ class ConnectTurn:
             # Connect ends the chat at its duration; a new one before that, not mid-turn.
             return False
         near_expiry = session.token_expires_at - now < TOKEN_REFRESH_MARGIN
-        refreshed = token_exp > session.token_expires_at
+        # A fresher Okta token than the one the contact started with; compared with the Okta
+        # token's own expiry, since the hop tokens' may be shorter (critique round 3, finding 3).
+        refreshed = token_exp > (session.sign_in_expires_at or session.token_expires_at)
         if near_expiry and refreshed:
             log.info("token near expiry for contact %s; starting a new contact", session.contact_id)
             return False
@@ -498,6 +500,7 @@ class ConnectTurn:
         settings = self.settings
         # The designer reads attributes only when the flow starts (C2), so the exchange comes
         # first; the warm start runs on the first focus on the composer (D44).
+        sign_in_exp = token_exp
         agents_tokens, canvas_token = self.hop_tokens()
         self.agents_tokens = agents_tokens
         if CANVAS_TOKENS.enabled:
@@ -525,6 +528,7 @@ class ConnectTurn:
             token_expires_at=token_exp,
             participant_token=started["ParticipantToken"],
             started_at=self.clock(),
+            sign_in_expires_at=sign_in_exp,
         )
         try:
             conn = self.clients.participant.create_participant_connection(

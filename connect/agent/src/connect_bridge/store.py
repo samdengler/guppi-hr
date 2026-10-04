@@ -39,6 +39,9 @@ class Session:
     participant_token: str = ""
     # Epoch seconds; 0 for a contact stored before Connect chats got a 60-minute duration.
     started_at: float = 0.0
+    # The Okta token's expiry when the contact started (guppi-hr D47); token_expires_at is the
+    # hop tokens'. 0 for a contact stored before; token_expires_at stands in for it.
+    sign_in_expires_at: float = 0.0
 
     def remember(self, ids: list[str]) -> None:
         for item_id in ids:
@@ -75,6 +78,7 @@ class DynamoSessionStore:
             closed=bool(item.get("closed", False)),
             participant_token=str(item.get("participantToken", "")),
             started_at=float(item.get("startedAt", 0)),
+            sign_in_expires_at=float(item.get("signInExpiresAt", 0)),
         )
 
     def put(self, session: Session) -> None:
@@ -90,6 +94,7 @@ class DynamoSessionStore:
                 "closed": session.closed,
                 "participantToken": session.participant_token,
                 "startedAt": int(session.started_at),
+                "signInExpiresAt": int(session.sign_in_expires_at),
                 "ttl": int(time.time()) + ITEM_TTL_SECONDS,
             }
         )
