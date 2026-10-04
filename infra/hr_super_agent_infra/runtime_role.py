@@ -98,11 +98,12 @@ def runtime_execution_role(
 
 # The platform version of the runtimes behind Connect, set explicitly because an update that
 # omits it keeps the current one. V2 (the new AgentCore Runtime, September 2026) restores a
-# fresh instance from a snapshot for every new session; with our short sessions, and a new
-# tools runtime session per tool call (A23), that made first answers 2.7 to 4.8 s slower than
-# V1's warm pool (latency log L32, L33; aws-feedback A25), so they run on V1. CloudFormation
-# takes PlatformVersion and updates it in place; CDK 2.268's CfnRuntime has no property yet.
-PLATFORM_VERSION = "V1"
+# fresh instance from a snapshot for every new session. With our short sessions and a new
+# tools runtime session per tool call (A23), first answers were 2.7 to 4.8 s slower than on
+# V1 (latency log L32, L33; aws-feedback A25). Sam keeps V2 while its cold start is studied
+# (docs/handoff-runtime-v2.md). CloudFormation takes PlatformVersion and updates it in place;
+# CDK 2.268's CfnRuntime has no property for it yet.
+PLATFORM_VERSION = "V2"
 
 
 def use_platform_version(runtime: agentcore.CfnRuntime) -> None:

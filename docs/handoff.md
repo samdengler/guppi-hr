@@ -1,5 +1,8 @@
 # Handoff: HR Super Agent MVP
 
+Current work (4 Oct 2026): the AgentCore Runtime V2 cold start study. Start with
+`docs/handoff-runtime-v2.md`, which holds Sam's instructions for it.
+
 Written 28 Sep 2026 by Claude in a Cowork session with Sam, for the Claude Code session
 that builds the MVP. Sam reviews the plan in the Claude Docs artifact "HR Super Agent
 MVP: Plan and Handoff" (https://claude.ai/code/artifact/656e39e0-4038-4509-ad94-91c6ad671a3e);
