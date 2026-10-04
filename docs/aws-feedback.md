@@ -159,6 +159,27 @@ tool call. Every hop below is AWS.
   authorization, target invocation, cold start) as span attributes or vended logs with
   the trace id.
 
+### TC10. Trace context stops at AgentCore Identity and at the agents gateway's runtime target
+
+- Date: 4 Oct 2026. Services: AgentCore Identity, AgentCore Gateway. Status: **open**.
+- Expected: an on-behalf-of exchange through Identity carries the caller's trace to the
+  credential provider's token endpoint, and the agents gateway's request to a runtime target
+  continues the gateway's trace into the runtime (TC8 found that on 3 Oct).
+- Happened (29 chats, 4 Oct 20:19 to 20:34 UTC): none of the 161 token issuer calls made by
+  Identity shared the caller's trace (116 hop exchanges from the chat start's X-Ray trace, 24
+  sub-agent exchanges from the sub-agent's trace, 21 tools gateway runtime-token exchanges from
+  the gateway's trace); each started a new X-Ray trace at the issuer's API Gateway. None of the
+  37 agents gateway requests had the trace id of the sub-agent request it delivered: the
+  gateway logs one `trace_id` and the sub-agent's root span starts another, with a parent span
+  that is in neither the customer's backend nor `aws/spans`. The tools gateway does pass its
+  trace to the tools runtime (21 of 21 tool calls joined by trace id). So an exchange or a
+  sub-agent call can only be tied to its caller by time; Identity's request id appears only in
+  the caller's botocore span and in CloudTrail (second resolution).
+- Evidence: `docs/latency-timelines-2026-10-04-evidence.json` (issuer `xray_trace` against the
+  caller's trace; `gateway_trace_id` against `dynatrace_trace_id`).
+- Ask: propagate `traceparent` (or `X-Amzn-Trace-Id`) on Identity's calls to the token endpoint
+  and on the agents gateway's calls to a runtime target, as the tools gateway does.
+
 ## Amazon Connect
 
 | Id | Date | Finding | Status |
