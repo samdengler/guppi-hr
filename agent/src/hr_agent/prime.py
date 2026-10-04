@@ -9,7 +9,8 @@ heavy imports, the clients and one pass through the app's routes happen here. No
 holds a value that is per user, per request, or that expires: tokens, MCP sessions and
 the employee's records stay in the handlers.
 
-Set HR_PRIME=0 to skip it (the tests do).
+The container image sets HR_PRIME=1 (agent/Dockerfile); elsewhere, the tests included, it
+is off.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ _SESSIONS: dict[str | None, Any] = {}
 
 
 def enabled() -> bool:
-    return os.environ.get("HR_PRIME", "1") != "0"
+    return os.environ.get("HR_PRIME") == "1"
 
 
 def boto_session(region: str | None = None) -> Any:

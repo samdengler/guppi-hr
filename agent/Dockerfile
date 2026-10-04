@@ -44,6 +44,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --package hr-agent --no-dev --no-editable
 
 EXPOSE 8080 8000 9000
+# Prime each server before it listens, so AgentCore Runtime V2's snapshot holds the
+# imports and clients (hr_agent/prime.py).
+ENV HR_PRIME=1
 # opentelemetry-instrument (from aws-opentelemetry-distro, a hr-agent dependency) is
 # the documented AgentCore entrypoint wrapper: it installs the ADOT tracer provider and
 # the FastAPI, httpx, MCP, and botocore instrumentation before the app is imported,
