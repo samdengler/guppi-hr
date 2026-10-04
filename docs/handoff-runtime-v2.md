@@ -55,7 +55,7 @@ file covers only the Runtime V2 work and what Sam asked for next.
 - Transaction Search indexing stays at 1 percent (GuppiGpt stack); every span still reaches
   `aws/spans`.
 - Commits of the day on main: db53b19, 470ba07, 5f85653, bf2785b (V2, priming), 7006127
-  (records L32, L33, A25), f0faae4 (V2 timelines), and the commit that adds this file. The
+  (records L32, L33, A25), f0faae4 (V2 timelines), 805fabd (this file and the V2 setting), and the rollback list commit after it. The
   `KEPT_COMMITS` list in `scripts/obo-rollback.sh` holds each code commit; keep
   `scripts/obo-rollback.sh --check` and `uv run -- pytest` green. New code goes in new
   files where possible: edits next to the OBO changes in `agents/server.py`,
