@@ -4,11 +4,13 @@
 # ///
 """One merged latency timeline per chat turn on /p/hr/, the Connect project.
 
-A slow answer on /p/hr/ crosses four logs with no shared trace: the bridge's run lines,
-the Agentic CX designer's runtime log (reachable only through its own QueryLogs API, keyed
-by the Connect contact id), the token issuer's Lambda log, and the sub-agents' run lines.
-This script reads all four for a time window and prints, for each bridge run, the steps on
-one clock in milliseconds from the moment the bridge received the run:
+A slow answer on /p/hr/ crosses several logs with no shared trace: the bridge's run lines,
+or, when the page talks to Connect itself (guppi-hr D55), the chat start function's start
+and report lines; the Agentic CX designer's runtime log (reachable only through its own
+QueryLogs API, keyed by the Connect contact id); the token issuer's Lambda log; and the
+sub-agents' run lines. This script reads them for a time window and prints, for each run,
+the steps on one clock in milliseconds from the moment the bridge or the chat start
+function received it:
 
 - a question: the Connect hand-off (the designer's NluRequestReceived), the routing model,
   each data request, the journey agent, sub-agent calls, the designer's NluResponded and the
@@ -18,7 +20,16 @@ one clock in milliseconds from the moment the bridge received the run:
 
 Work of the same contact from another run (the warm start still running under a question)
 is listed after the run's own steps. Steps at one level that run at the same time are
-marked. The time SendMessage finished comes from the run line's `connect_sent_ms` (D54); a
+marked.
+
+The chat start function (`hr-chat-start`) logs one `chat_start` line per start with its own
+steps, which stand in for the bridge's warm start. A question the page sent to Connect
+itself has no server-side run; the page reports it, and the function logs a `chat_report`
+line with Connect's AbsoluteTime for the sent message and the first and last reply items.
+Such a question is placed on Connect's clock: its zero is the sent message's AbsoluteTime,
+which the designer's own times are close to.
+
+The time SendMessage finished comes from the run line's `connect_sent_ms` (D54); a
 run line from before it has none, and its SendMessage span is in the bridge's trace, whose
 id is printed so the trace can be opened in Dynatrace.
 
@@ -53,6 +64,8 @@ REGION = "us-east-1"
 BRIDGE_PREFIX = "/aws/bedrock-agentcore/runtimes/guppi_connect_bridge-"
 SUB_AGENT_PREFIX = "/aws/bedrock-agentcore/runtimes/hr_super_agent_"
 ISSUER_GROUP = "/aws/lambda/guppi-gpt-obo-issuer"
+CHAT_START_GROUP = "/aws/lambda/hr-chat-start"
+CHAT_START_PATTERN = '{ ($.event = "chat_start") || ($.event = "chat_report") }'
 DOMAINS = ("profile", "pay", "travel")
 # A contact lives at most 60 minutes (CHAT_DURATION_MINUTES in the bridge), so a question's
 # warm start is never further back than this.
@@ -117,6 +130,18 @@ class Run:
     def is_warm_start(self) -> bool:
         return self.warm or self.messages == 0
 
+    @property
+    def source(self) -> str:
+        """ "bridge", "chat-start" (a start by the function) or "report" (a question the page
+        sent to Connect itself and reported)."""
+        return self.fields.get("source", "bridge")
+
+    @property
+    def receiver(self) -> str:
+        return {"chat-start": "the chat start function", "report": "Connect"}.get(
+            self.source, "the bridge"
+        )
+
 
 def parse_run(message: str) -> Run | None:
     d = log_json(message)
@@ -142,6 +167,79 @@ def parse_runs(events: list[tuple[int, str, str]]) -> list[Run]:
         if run is not None:
             runs.setdefault(run.fields.get("request_id") or run.run_id, run)
     return sorted(runs.values(), key=lambda r: r.start)
+
+
+def function_line(message: str) -> dict | None:
+    """A JSON line of the chat start function (it prints JSON alone on the line)."""
+    if not message.startswith("{"):
+        return None
+    try:
+        value = json.loads(message)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def parse_chat_start(ts: int, d: dict) -> Run | None:
+    """A chat_start line as a warm start: logged when the stream closes, so it starts
+    total_ms before its timestamp."""
+    if d.get("event") != "chat_start" or not d.get("contact"):
+        return None
+    total = int(d.get("total_ms") or 0)
+    fields = {
+        "source": "chat-start",
+        "connect_started": True,
+        "connect_restarted": bool(d.get("restarted")),
+        "connect_ended": d.get("previous_outcome") == "ended",
+        "outcome": d.get("outcome", ""),
+        **d,
+    }
+    return Run(ts - total, total, d["contact"], 0, True, "", f"start-{ts}", None, fields)
+
+
+def parse_report(d: dict) -> Run | None:
+    """A chat_report line as a question on Connect's clock: zero is the sent message's
+    AbsoluteTime, the first delta is the first reply item's, and the run ends at the last
+    reply item (or when the report arrived)."""
+    if d.get("event") != "chat_report" or not d.get("contact") or not d.get("sent_at"):
+        return None
+    sent = iso_ms(d["sent_at"])
+    first = iso_ms(d["first_item_at"]) - sent if d.get("first_item_at") else None
+    if d.get("last_item_at"):
+        end = iso_ms(d["last_item_at"])
+    elif isinstance(d.get("received_at"), int):
+        end = d["received_at"]
+    else:
+        end = sent
+    fields = {"source": "report", "connect_sent_ms": 0, "outcome": d.get("end_reason", ""), **d}
+    return Run(
+        sent, max(0, end - sent), d["contact"], 1, False, "", d.get("run", ""), first, fields
+    )
+
+
+def parse_function_runs(events: list[tuple[int, str, str]]) -> list[Run]:
+    """The chat start function's start and report lines, one run per start and per run id."""
+    runs: dict[str, Run] = {}
+    for ts, _, message in events:
+        d = function_line(message)
+        if not d:
+            continue
+        run = parse_chat_start(ts, d) if d.get("event") == "chat_start" else parse_report(d)
+        if run is not None:
+            runs.setdefault(run.run_id, run)
+    return sorted(runs.values(), key=lambda r: r.start)
+
+
+def function_contact_starts(runs: list[Run]) -> dict[str, int]:
+    """When each function start saw the greeting: the end of its greeting wait step."""
+    starts: dict[str, int] = {}
+    for run in runs:
+        if run.source != "chat-start":
+            continue
+        for step in run.fields.get("steps") or []:
+            if step.get("name") == "greeting wait" and isinstance(step.get("end_ms"), int):
+                starts.setdefault(run.contact, run.start + step["end_ms"])
+    return starts
 
 
 def parse_contact_starts(events: list[tuple[int, str, str]]) -> dict[str, int]:
@@ -587,9 +685,31 @@ def issuer_steps(steps: list[Step], src: Sources, run: Run) -> None:
         steps.append(place(step, parent))
 
 
+def function_steps(steps: list[Step], run: Run) -> None:
+    """The chat start function's own steps from its line (the guppi.timing shape, D54)."""
+    for step in run.fields.get("steps") or []:
+        start, end = step.get("start_ms"), step.get("end_ms")
+        if not isinstance(start, int):
+            continue
+        lane = step.get("lane") or ""
+        steps.append(
+            Step(
+                run.start + start,
+                run.start + end if isinstance(end, int) else None,
+                f"{step.get('name', '')} [{lane}]" if lane else str(step.get("name", "")),
+            )
+        )
+
+
 def warm_start_steps(run: Run, src: Sources) -> list[Step]:
     detail = "ended the previous chat's contact first" if run.fields.get("connect_ended") else ""
-    steps = [Step(run.start, None, "bridge receives the warm start", detail)]
+    if run.source == "chat-start":
+        restarted = "a new chat (previousContactId); " if run.fields.get("restarted") else ""
+        detail = f"{restarted}previous contact: {run.fields.get('previous_outcome') or 'none'}"
+        steps = [Step(run.start, None, "chat start function receives the start", detail)]
+        function_steps(steps, run)
+    else:
+        steps = [Step(run.start, None, "bridge receives the warm start", detail)]
     overlapping_runs(steps, src, run)
     greeting_steps(steps, src, run)
     sub_agent_steps(steps, src, run)
@@ -598,19 +718,26 @@ def warm_start_steps(run: Run, src: Sources) -> list[Step]:
         (c.token or {}).get("client") == "hr-bridge" and run.start <= c.end <= run.end
         for c in src.issuer
     ):
+        holder_name = "this function instance" if run.source == "chat-start" else "the bridge"
         steps.append(
             Step(
                 run.start,
                 None,
-                "no hop token exchange in this run: the bridge holds hop tokens per Okta token",
+                f"no hop token exchange in this run: {holder_name} holds hop tokens per Okta token",
                 untimed=True,
             )
         )
-    steps.append(Step(run.end, None, "bridge run ends", run.fields.get("outcome", "")))
+    if run.source == "chat-start":
+        detail = f"{run.fields.get('outcome', '')}, {run.fields.get('warmed')} sub-agents warmed"
+        steps.append(Step(run.end, None, "chat start stream closes", detail))
+    else:
+        steps.append(Step(run.end, None, "bridge run ends", run.fields.get("outcome", "")))
     return steps
 
 
 def turn_steps(run: Run, turn: DesignerTurn | None, src: Sources) -> list[Step]:
+    if run.source == "report":
+        return report_steps(run, turn, src)
     steps = [Step(run.start, None, "bridge receives the question")]
     overlapping_runs(steps, src, run)
     if (
@@ -635,6 +762,36 @@ def turn_steps(run: Run, turn: DesignerTurn | None, src: Sources) -> list[Step]:
             parent.detail += f"; {before:,} ms before the sub-agent, {after:,} ms after"
     issuer_steps(steps, src, run)
     steps.append(Step(run.end, None, "bridge run ends", run.fields.get("outcome", "")))
+    return steps
+
+
+def report_steps(run: Run, turn: DesignerTurn | None, src: Sources) -> list[Step]:
+    """A question the page sent to Connect itself, from its report: Connect's AbsoluteTime
+    for the message and the reply items, the designer's steps, and the sub-agents'."""
+    transport = run.fields.get("transport", "connect")
+    steps = [Step(run.start, None, f"Connect records the question (sentAt; transport {transport})")]
+    overlapping_runs(steps, src, run)
+    greeting_steps(steps, src, run)
+    if turn is not None:
+        steps.extend(designer_steps(turn, "designer NluRequestReceived, the Connect hand-off"))
+    if run.first_delta_ms is not None:
+        steps.append(Step(run.start + run.first_delta_ms, None, "first reply item (firstItemAt)"))
+    sub_agent_steps(steps, src, run)
+    for step in steps:
+        parent = step.parent
+        if step.kind == "sub-agent" and parent is not None and parent.kind == "data request":
+            before, after = step.start - parent.start, parent.end - step.end
+            parent.detail += f"; {before:,} ms before the sub-agent, {after:,} ms after"
+    issuer_steps(steps, src, run)
+    end_reason = run.fields.get("end_reason", "")
+    error = run.fields.get("error")
+    detail = f"end reason {end_reason}" + (f", error {error}" if error else "")
+    label = (
+        "last reply item (lastItemAt)"
+        if run.fields.get("last_item_at")
+        else "the page's report arrives"
+    )
+    steps.append(Step(run.end, None, label, detail))
     return steps
 
 
@@ -693,9 +850,8 @@ def split_line(run: Run, turn: DesignerTurn | None, src: Sources, steps: list[St
     rest = responded - received - sum(sums.values())
     inner = f"{inner}, the rest {rest:,}" if inner else ""
     parts.append(f"designer {responded - received:,}" + (f" ({inner})" if inner else ""))
-    parts.append(
-        f"Connect to the bridge's first delta {run.start + run.first_delta_ms - responded:,}"
-    )
+    target = "the first reply item" if run.source == "report" else "the bridge's first delta"
+    parts.append(f"Connect to {target} {run.start + run.first_delta_ms - responded:,}")
     return f"first delta {run.first_delta_ms:,} ms: " + "; ".join(parts)
 
 
@@ -743,7 +899,7 @@ def render_steps(steps: list[Step], t0: int) -> list[str]:
     return lines
 
 
-HEADER = "        start       end      ms  step (ms from the bridge receiving the run)"
+HEADER = "        start       end      ms  step (ms from {receiver} receiving the run)"
 LEGEND = (
     "  * runs at the same time as another step at its level;"
     " = work of the same contact from another run"
@@ -754,9 +910,16 @@ def render_run(run: Run, src: Sources) -> list[str]:
     lines = []
     if run.is_warm_start:
         lines.append(f"Warm start at {clock(run.start)} UTC, contact {run.contact}")
-        lines.append(
-            f"  bridge run {run.run_id[:8]}, trace {run.trace_id}, total {run.total_ms:,} ms"
-        )
+        if run.source == "chat-start":
+            cold = "cold" if run.fields.get("cold") else "warm"
+            lines.append(
+                f"  chat start function ({cold}), outcome {run.fields.get('outcome')},"
+                f" credentials at {run.fields.get('line1_ms')} ms, total {run.total_ms:,} ms"
+            )
+        else:
+            lines.append(
+                f"  bridge run {run.run_id[:8]}, trace {run.trace_id}, total {run.total_ms:,} ms"
+            )
         steps = warm_start_steps(run, src)
         turn = None
     else:
@@ -774,9 +937,16 @@ def render_run(run: Run, src: Sources) -> list[str]:
             if run.first_delta_ms is not None
             else "no reply, "
         )
-        lines.append(
-            f"  bridge run {run.run_id[:8]}, trace {run.trace_id}, {first}total {run.total_ms:,} ms"
-        )
+        if run.source == "report":
+            lines.append(
+                f"  reported by the page, run {run.run_id[:8]}, {first}"
+                f"to the last reply item {run.total_ms:,} ms (Connect's AbsoluteTime)"
+            )
+        else:
+            lines.append(
+                f"  bridge run {run.run_id[:8]}, trace {run.trace_id}, {first}"
+                f"total {run.total_ms:,} ms"
+            )
         steps = turn_steps(run, turn, src)
     if src.designer is None:
         lines.append("  designer log: not read (logs.js failed; see the message above)")
@@ -788,7 +958,7 @@ def render_run(run: Run, src: Sources) -> list[str]:
     elif not run.is_warm_start and turn is None:
         lines.append("  designer log: no request inside this run")
     lines.append("")
-    lines.append(HEADER)
+    lines.append(HEADER.format(receiver=run.receiver))
     lines.extend(render_steps(steps, run.start))
     if not run.is_warm_start:
         split = split_line(run, turn, src, steps)
@@ -879,18 +1049,27 @@ def main() -> None:
     until = parse_when(args.until, now) if args.until else now
     logs = boto3.client("logs", region_name=REGION)
     bridge = find_group(logs, BRIDGE_PREFIX)
-    if bridge is None:
-        sys.exit(f"no log group under {BRIDGE_PREFIX}")
-
-    pattern = '"connect_contact"' + (f' "{args.contact}"' if args.contact else "")
-    runs = parse_runs(fetch(logs, bridge, since - CONTACT_LOOKBACK_MS, until + 60_000, pattern))
+    lo, hi = since - CONTACT_LOOKBACK_MS, until + 60_000
+    runs: list[Run] = []
+    if bridge is not None:
+        pattern = '"connect_contact"' + (f' "{args.contact}"' if args.contact else "")
+        runs += parse_runs(fetch(logs, bridge, lo, hi, pattern))
+    try:
+        function_runs = parse_function_runs(
+            fetch(logs, CHAT_START_GROUP, lo, hi, CHAT_START_PATTERN)
+        )
+    except logs.exceptions.ResourceNotFoundException:
+        function_runs = []
+    runs = sorted(runs + function_runs, key=lambda r: r.start)
+    if bridge is None and not function_runs:
+        sys.exit(f"no log group under {BRIDGE_PREFIX} and no lines in {CHAT_START_GROUP}")
     if args.contact:
         runs = [r for r in runs if r.contact == args.contact]
     selected = [r for r in runs if since <= r.start <= until]
     if args.questions_only:
         selected = [r for r in selected if not r.is_warm_start]
     if not selected:
-        print(f"No bridge runs between {stamp(since)} and {stamp(until)} UTC")
+        print(f"No runs between {stamp(since)} and {stamp(until)} UTC")
         return
 
     contacts = list(dict.fromkeys(r.contact for r in selected))
@@ -901,11 +1080,12 @@ def main() -> None:
             for rs in by_contact.values()
         ]
     )
-    starts = {}
+    starts = function_contact_starts(runs)
     issuer_events, sub_events = [], []
     sub_groups = [g for d in DOMAINS if (g := find_group(logs, f"{SUB_AGENT_PREFIX}{d}-"))]
     for lo, hi in windows:
-        starts.update(parse_contact_starts(fetch(logs, bridge, lo, hi, '"started contact"')))
+        if bridge is not None:
+            starts.update(parse_contact_starts(fetch(logs, bridge, lo, hi, '"started contact"')))
         issuer_events += fetch(logs, ISSUER_GROUP, lo, hi)
         for group in sub_groups:
             sub_events += fetch(logs, group, lo, hi, '"outcome" "context"')
@@ -913,8 +1093,7 @@ def main() -> None:
     sub_agents = [c for ts, _, m in sub_events if (c := parse_sub_agent(ts, m))]
 
     print(
-        f"Bridge runs: {len(selected)}, contacts: {len(contacts)},"
-        f" {stamp(since)} to {stamp(until)} UTC\n"
+        f"Runs: {len(selected)}, contacts: {len(contacts)}, {stamp(since)} to {stamp(until)} UTC\n"
     )
     for contact in contacts:
         rs = by_contact[contact]

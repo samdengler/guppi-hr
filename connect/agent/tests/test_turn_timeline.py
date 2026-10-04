@@ -369,3 +369,101 @@ def test_the_send_message_mark_from_the_run_line(sources):
     assert "      +61                    SendMessage done\n" in text
     assert "not in these logs" not in text
     assert "first delta 4,133 ms: SendMessage 61; Connect hand-off 432; designer 3,429" in text
+
+
+# The chat start function (guppi-hr D55): its start line stands in for the warm start, and a
+# question the page sent to Connect itself is its report line, on Connect's AbsoluteTime.
+
+START_LINE = {
+    "event": "chat_start",
+    "outcome": "ok",
+    "contact": CONTACT,
+    "restarted": True,
+    "previous": "0f0e0d0c-0000-4000-8000-000000000000",
+    "previous_outcome": "ended",
+    "cold": False,
+    "exchange_cached": False,
+    "token_cleared": True,
+    "line1_ms": 2950,
+    "warmed": 3,
+    "total_ms": 7600,
+    "steps": [
+        {"name": "hop token exchanges", "start_ms": 1, "end_ms": 320, "lane": "exchange"},
+        {"name": "StartChatContact", "start_ms": 320, "end_ms": 480, "lane": "connect"},
+        {"name": "greeting wait", "start_ms": 700, "end_ms": 2880, "lane": "connect"},
+        {"name": "credentials sent", "start_ms": 2950, "end_ms": None, "lane": "chat-start"},
+    ],
+}
+REPORT_LINE = {
+    "event": "chat_report",
+    "contact": CONTACT,
+    "run": "858cc1b9-1103-4025-bb9f-3b32ca139f80",
+    "transport": "connect",
+    "end_reason": "end_mark",
+    "error": None,
+    "sent_at": "2026-10-04T12:22:36.500Z",
+    "first_item_at": "2026-10-04T12:22:40.700Z",
+    "last_item_at": "2026-10-04T12:22:40.700Z",
+    "received_at": ms("12:22:40.900"),
+}
+
+
+def function_events() -> list[tuple[int, str, str]]:
+    return [
+        (ms("12:22:39.664"), "s", json.dumps(START_LINE)),
+        (ms("12:22:40.950"), "s", json.dumps(REPORT_LINE)),
+        (ms("12:22:41.100"), "s", json.dumps(REPORT_LINE)),  # the same run reported twice
+        (ms("12:22:41.200"), "s", "REPORT RequestId: x\tDuration: 3.0 ms"),
+        (ms("12:22:41.300"), "s", json.dumps({"event": "chat_problem", "kind": "no_reply"})),
+    ]
+
+
+def test_function_lines_become_a_start_and_a_question():
+    start, question = tt.parse_function_runs(function_events())
+    assert (start.source, start.is_warm_start, start.contact) == ("chat-start", True, CONTACT)
+    assert (start.start, start.total_ms) == (ms("12:22:32.064"), 7600)
+    assert start.fields["connect_ended"] and start.fields["connect_restarted"]
+    assert (question.source, question.is_warm_start) == ("report", False)
+    assert (question.start, question.first_delta_ms, question.total_ms) == (
+        ms("12:22:36.500"),
+        4200,
+        4200,
+    )
+    assert tt.function_contact_starts([start, question]) == {CONTACT: ms("12:22:34.944")}
+
+
+def test_a_function_start_shows_its_own_steps():
+    start, question = tt.parse_function_runs(function_events())
+    src = tt.Sources([start, question], ms("12:22:34.944"), tt.designer_turns(DESIGNER), [], {})
+    text = "\n".join(tt.render_run(start, src))
+    assert "chat start function (warm), outcome ok, credentials at 2950 ms" in text
+    assert "ms from the chat start function receiving the run" in text
+    assert "previous contact: ended" in text
+    assert "+700    +2,880   2,180  greeting wait [connect]" in text
+    assert "designer greeting (the flow started; the canvas read the tokens)" in text
+    assert "chat start stream closes; ok, 3 sub-agents warmed" in text
+
+
+def test_a_reported_question_is_on_connects_clock():
+    start, question = tt.parse_function_runs(function_events())
+    src = tt.Sources([start, question], ms("12:22:34.944"), tt.designer_turns(DESIGNER), [], {})
+    text = "\n".join(tt.render_run(question, src))
+    assert '"How much PTO do I earn per year?"' in text
+    assert "reported by the page, run 858cc1b9, first delta 4,200 ms" in text
+    assert "ms from Connect receiving the run" in text
+    assert "Connect records the question (sentAt; transport connect)" in text
+    assert "+377                    designer NluRequestReceived, the Connect hand-off" in text
+    assert "+4,200                    first reply item (firstItemAt)" in text
+    assert "last reply item (lastItemAt); end reason end_mark" in text
+    assert "Connect to the first reply item 394" in text
+
+
+def test_a_report_without_reply_times_ends_at_its_arrival():
+    line = {**REPORT_LINE, "first_item_at": None, "last_item_at": None, "end_reason": "no_reply"}
+    (question,) = tt.parse_function_runs([(ms("12:23:10.000"), "s", json.dumps(line))])
+    assert question.first_delta_ms is None
+    assert question.end == REPORT_LINE["received_at"]
+    src = tt.Sources([question], None, [], [], {})
+    assert "the page's report arrives; end reason no_reply" in "\n".join(
+        tt.render_run(question, src)
+    )
