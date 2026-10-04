@@ -37,13 +37,15 @@ from aws_cdk import aws_sns as sns
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
-from guppi_connect_infra.bridge import CONNECT_INSTANCE_ID, DOMAINS_FILE, OBO
+from guppi_connect_infra.bridge import CONNECT_INSTANCE_ID, DOMAINS_FILE
 
 CHAT_START_DIR = Path(__file__).resolve().parents[2] / "chat_start"
 FUNCTION_NAME = "hr-chat-start"
 BINARY = "hr-chat-start"
 WORKLOAD_NAME = "hr-chat-start"
 HOST_PARAMETER = "/guppi/hr/chat-start-host"
+# guppi-gpt publishes the on-behalf-of providers here (bridge.py reads the same).
+OBO = "/guppi/obo"
 OKTA = "/guppi/okta"
 RESERVED_CONCURRENCY = 10
 NAMESPACE = "GuppiConnect/ChatStart"
@@ -278,6 +280,11 @@ class ChatStart(Construct):
                 treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
             ).add_alarm_action(action)
 
-        cdk.CfnOutput(stack, "ChatStartUrl", value=self.url.url)
-        cdk.CfnOutput(stack, "ChatStartHost", value=self.host)
-        cdk.CfnOutput(stack, "ChatStartLogGroup", value=self.log_group.log_group_name)
+        # Outputs inside the construct, named as stack outputs, so the bridge's tests can
+        # leave the whole chat start out.
+        for name, value in (
+            ("ChatStartUrl", self.url.url),
+            ("ChatStartHost", self.host),
+            ("ChatStartLogGroup", self.log_group.log_group_name),
+        ):
+            cdk.CfnOutput(self, name, value=value).override_logical_id(name)
