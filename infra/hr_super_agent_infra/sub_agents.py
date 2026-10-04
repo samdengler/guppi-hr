@@ -86,7 +86,6 @@ class SubAgents(Construct):
                 )
             ),
             # protocol_type is left unset: runtime targets cannot join MCP gateways.
-            exception_level="DEBUG",
         )
 
         self.runtimes: dict[str, agentcore.CfnRuntime] = {}

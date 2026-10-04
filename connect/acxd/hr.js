@@ -759,4 +759,4 @@ const DATA_REQUESTS = [
 const FLOWS = [welcomeFlow(), clarifyFlow(), ...DOMAINS.map(domainFlow), policyFlow(), goodbyeFlow(), escalationFlow()];
 
 module.exports = {
-  agentsTokenName, DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS, END_MARK, CLOSED_MARK };
+  agentsTokenName, HR_TOOLS, DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS, END_MARK, CLOSED_MARK };

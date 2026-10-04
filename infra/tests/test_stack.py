@@ -1183,7 +1183,7 @@ def test_each_caller_reads_only_its_own_clients_secret(template):
                     granted.setdefault(name, []).append(json.dumps(resource))
     def has(prefix: str, client: str) -> bool:
         # By the secret's stable name, so a replaced secret keeps its grant (finding 9).
-        name = f":secret:guppi/obo/{client}-*"
+        name = f":secret:guppi/obo/{client}-??????"
         return any(n.startswith(prefix) and name in r for n, rs in granted.items() for r in rs)
     assert has("ToolsGatewayRoleDefaultPolicy", "hr-tools-gateway")
     assert has("RuntimeRoleDefaultPolicy", "hr-bridge")
@@ -1264,3 +1264,37 @@ def test_the_hr_side_matches_the_issuers_rules():
         assert platform.agents_audience(domain) == obo.agents_audience(domain)
         assert platform.agents_scope(domain) == obo.agents_scope(domain)
     assert set(platform.CLIENTS) == {obo.BRIDGE_CLIENT, obo.TOOLS_GATEWAY_CLIENT, *obo.AGENT_CLIENTS}
+
+
+
+def test_no_runtime_switches_the_exchange_off(template):
+    # OBO=off passes the Okta token through; it is for local runs and tests only (D48).
+    for runtime in template.find_resources("AWS::BedrockAgentCore::Runtime").values():
+        assert "OBO" not in runtime["Properties"].get("EnvironmentVariables", {})
+
+
+def test_hard_coded_caller_scopes_match_the_issuer_tables():
+    import re
+    import subprocess
+    from pathlib import Path
+
+    from hr_agent import agent, orchestrator
+    from hr_agent.tools import scopes as server
+    from hr_super_agent_infra import obo
+
+    # The /p/hr-diy/ orchestrator: one agents scope per sub-agent, and a policy-only tools token.
+    assert {d: e.scopes for d, e in orchestrator.AGENTS_TOKENS.items()} == {
+        d: [obo.agents_scope(d)] for d in obo.DOMAIN_SCOPES}
+    assert agent.TOOLS_TOKENS.scopes == [obo.POLICY_SCOPE]
+    # The Connect bridge (its own project): the canvas scopes and the agents scope pattern.
+    turn = (Path(__file__).resolve().parents[2] / "connect" / "agent" / "src" / "connect_bridge" / "turn.py").read_text()
+    canvas = re.search(r"CANVAS_TOKENS = TokenExchanger\((\[[^\]]*\])\)", turn).group(1)
+    assert eval(canvas) == obo.CANVAS_SCOPES  # noqa: S307 - a literal list from our own source
+    assert 'TokenExchanger([f"hr.agents.{domain}"])' in turn
+    # The canvas's journey enables only tools its token may call.
+    script = "const r=require('./connect/acxd/hr.js');console.log(JSON.stringify(r.HR_TOOLS.filter(t=>t.enabled).map(t=>t.name)))"
+    enabled = json.loads(subprocess.run(["node", "-e", script], cwd=Path(__file__).resolve().parents[2],
+                                        capture_output=True, text=True, check=True).stdout)
+    allowed = {t for s in obo.CANVAS_SCOPES for t in obo.TOOL_SCOPES.get(s, [])}
+    assert set(enabled) <= allowed, set(enabled) - allowed
+    assert all(server.allowed(t.removeprefix("hr___"), frozenset(obo.CANVAS_SCOPES)) for t in enabled if t.startswith("hr___"))

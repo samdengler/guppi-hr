@@ -52,9 +52,8 @@ def agent_client(domain: str) -> str:
 AGENT_CLIENTS = [agent_client(d) for d in DOMAIN_SCOPES]
 
 # Gateway Policy on the tools gateway: each tool for the tokens that hold its scope (A15).
-# A request is allowed only when a rule permits it, so a tool missing here is refused:
-# docs___AgenticRetrieveStream, which no caller uses and which runs managed models, is not
-# permitted. The HR tools server checks the same table again (hr_agent.tools.scopes; a
+# A request is allowed only when a rule permits it, so a tool missing here is refused. The
+# knowledge base target no longer offers docs___AgenticRetrieveStream at all (D48). The HR tools server checks the same table again (hr_agent.tools.scopes; a
 # test holds the two together).
 TOOL_SCOPES: dict[str, list[str]] = {
     POLICY_SCOPE: ["docs___Retrieve", "hr___open_ticket"],
@@ -123,7 +122,9 @@ class Obo:
         """The client secret by its stable name (guppi-gpt names it guppi/obo/<client>), so a
         replaced secret keeps its grant."""
         stack = Stack.of(scope)
-        return f"arn:aws:secretsmanager:{stack.region}:{stack.account}:secret:guppi/obo/{client}-*"
+        # Secrets Manager adds a six-character suffix; matching exactly six keeps
+        # guppi/obo/hr-bridge from also matching a later guppi/obo/hr-bridge-<anything>.
+        return f"arn:aws:secretsmanager:{stack.region}:{stack.account}:secret:guppi/obo/{client}-??????"
 
 
 def workload_identity(scope: Construct, construct_id: str, runtime_name: str) -> agentcore.CfnWorkloadIdentity:

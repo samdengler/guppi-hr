@@ -157,7 +157,7 @@ class ConnectBridge(Construct):
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=["secretsmanager:GetSecretValue"],
-                resources=[f"arn:aws:secretsmanager:{region}:{account}:secret:guppi/obo/hr-bridge-*"],
+                resources=[f"arn:aws:secretsmanager:{region}:{account}:secret:guppi/obo/hr-bridge-??????"],
             )
         )
         role.add_to_policy(

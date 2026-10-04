@@ -130,3 +130,41 @@ async def test_hr_diy_general_answer_says_so_when_the_tools_exchange_fails(monke
     text = "".join(getattr(e, "delta", "") for e in events)
     assert text == "HR could not confirm the sign-in. Try again in a minute."
     assert events[-1].type == "RUN_FINISHED"
+
+
+async def test_hr_diy_sends_each_sub_agent_its_own_agents_token(monkeypatch):
+    import httpx
+    from hr_agent import orchestrator
+
+    class Named:
+        enabled = True
+
+        def __init__(self, domain: str) -> None:
+            self.domain = domain
+
+        async def aexchange(self, subject: str) -> str:
+            return f"{self.domain}-agents-token"
+
+    sent: list[tuple[str, str]] = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc) -> None:
+            return None
+
+        async def post(self, url, json=None, headers=None):
+            sent.append((url, headers["Authorization"]))
+            return httpx.Response(200, json={"result": {"parts": [{"kind": "text", "text": "ok"}]}})
+
+    monkeypatch.setattr(orchestrator, "AGENTS_TOKENS", {d: Named(d) for d in orchestrator.DOMAINS})
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    settings = orchestrator.Settings()
+    settings.agents_gateway_url = "https://agents.example"
+    for domain in orchestrator.DOMAINS:
+        await orchestrator.send_to_sub_agent(domain, "okta-token", "t1", "hi", [], None, settings)
+    assert sent == [(f"https://agents.example/{d}/invocations", f"Bearer {d}-agents-token") for d in orchestrator.DOMAINS]

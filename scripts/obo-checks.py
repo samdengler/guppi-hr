@@ -6,8 +6,8 @@
 own token and refuses the others, and Gateway Policy allows each tool only for its scope.
 
 Tokens are minted the way the hops mint them, through AgentCore Identity with the
-production credential providers, under the workload identity hr-obo-checks (created on
-first use; only an administrator's credentials may call Identity for it). The test session's Okta token comes
+production credential providers, under the workload identity hr-obo-checks (the HR stack
+creates it; only an administrator's credentials may call Identity for it). The test session's Okta token comes
 from guppi-gpt's scripts/test-token.sh. Prints statuses and verdicts only, never a token
 or a record.
 
@@ -119,7 +119,8 @@ class Mcp:
 
 def main() -> None:
     if WORKLOAD not in {w["name"] for w in control.list_workload_identities().get("workloadIdentities", [])}:
-        control.create_workload_identity(name=WORKLOAD)
+        # The stack owns it; creating it here would block the stack's own create.
+        sys.exit(f"workload identity {WORKLOAD} is missing: deploy HrSuperAgent first")
     t0 = subprocess.run([str(GUPPI_GPT / "scripts" / "test-token.sh")], capture_output=True, text=True, check=True).stdout.strip()
     print("minting hop tokens through Identity")
     t1 = {d: exchange("hr-bridge", t0, [f"hr.agents.{d}"]) for d in DOMAIN}

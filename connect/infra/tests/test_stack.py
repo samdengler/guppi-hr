@@ -112,3 +112,9 @@ def test_the_bridge_exchanges_only_through_its_own_provider_and_workload(templat
     assert len(grant["Resource"]) == 4  # the provider, the vault, the directory, the workload
     names = {w["Properties"]["Name"] for w in template.find_resources("AWS::BedrockAgentCore::WorkloadIdentity").values()}
     assert names == {"guppi_connect_bridge-obo"}
+
+
+def test_the_bridge_never_switches_the_exchange_off(template):
+    # OBO=off passes the Okta token through; for local runs and tests only (guppi-hr D48).
+    runtime = next(iter(template.find_resources("AWS::BedrockAgentCore::Runtime").values()))["Properties"]
+    assert "OBO" not in runtime["EnvironmentVariables"]

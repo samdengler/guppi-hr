@@ -280,8 +280,8 @@ def test_the_audit_record_names_the_clients_that_acted(client, aws):
 
 
 @pytest.mark.parametrize("scope", [
-    "hr.tools.policy hr.tools.pay.read hr.tools.pay.write",  # the Pay agent's token
-    "hr.tools.policy hr.tools.profile.read hr.tools.pay.read",  # the canvas's token
+    "hr.tools.policy hr.tools.pay.statements.read hr.tools.pay.read hr.tools.pay.write",  # the Pay agent's
+    "hr.tools.policy hr.tools.profile.read hr.tools.pay.statements.read",  # the canvas's
     "",
 ])
 def test_a_commit_needs_the_write_scope_of_the_fields_domain(client, scope):

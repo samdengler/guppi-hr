@@ -2,9 +2,9 @@
 
 Each hop trades the token it received for the next hop's, still naming the employee:
 
-- the `/p/hr-diy/` orchestrator trades the employee's Okta token for an agents token
-  (`hr.agents`) to call the agents gateway, and for a tools token (`hr.tools.policy`) for
-  its general agent's policy search and tickets;
+- the `/p/hr-diy/` orchestrator trades the employee's Okta token for one sub-agent's agents
+  token (`hr.agents.<name>`, which only that sub-agent accepts) each time it delegates, and
+  for a tools token (`hr.tools.policy`) for its general agent's policy search and tickets;
 - each sub-agent trades the agents token for its own domain's tools token.
 
 A caller names its credential provider and workload identity in the environment

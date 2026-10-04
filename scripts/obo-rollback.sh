@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Rolls the HR hops back from on-behalf-of tokens (D47) to the employee's Okta token
-# everywhere. In a temporary worktree it reverts every commit since BEFORE on top of HEAD
-# (so later unrelated work is kept unless it sits in that range), then deploys the result:
+# everywhere. In a temporary worktree it reverts the on-behalf-of commits on top of HEAD,
+# then deploys the result:
 # the HR stack, the Connect bridge, the canvas and its contact flow. The issuer in
 # guppi-gpt's platform stack stays; nothing calls it after a rollback.
+#
+# Only the commits in OBO_COMMITS are reverted, newest first; add each later on-behalf-of
+# commit to the list in the same commit. Everything else at HEAD is kept.
 #
 #   scripts/obo-rollback.sh --diff     # show the CloudFormation changes, deploy nothing
 #   scripts/obo-rollback.sh            # deploy the rollback (asks first)
@@ -19,7 +22,8 @@
 # After a rollback, run the harness (connect/scripts/latency_bench.py --rounds 2).
 set -euo pipefail
 
-BEFORE="73c346b" # D47 decisions recorded; the last commit before the code switched
+# The on-behalf-of commits, newest first (D47, D48 and their follow-ups).
+OBO_COMMITS=(9a18c00 454f90d 91f9580 c6d96e0)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)/guppi-hr-rollback"
 MODE="${1:-deploy}"
@@ -28,8 +32,10 @@ git -C "$ROOT" worktree add --detach "$WORK" HEAD >/dev/null
 trap 'git -C "$ROOT" worktree remove --force "$WORK" || true' EXIT
 
 echo "reverting, newest first:"
-git -C "$WORK" log --oneline "$BEFORE..HEAD"
-git -C "$WORK" -c user.name=rollback -c user.email=rollback@localhost revert --no-edit "$BEFORE..HEAD" >/dev/null
+for commit in "${OBO_COMMITS[@]}"; do git -C "$WORK" log --oneline -1 "$commit"; done
+git -C "$WORK" -c user.name=rollback -c user.email=rollback@localhost revert --no-edit "${OBO_COMMITS[@]}" >/dev/null
+echo "paths the rollback changes:"
+git -C "$WORK" diff --stat HEAD~${#OBO_COMMITS[@]} HEAD | tail -n +1
 
 if [[ "$MODE" == "--diff" ]]; then
   (cd "$WORK" && uv sync --all-packages --dev -q &&

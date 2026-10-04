@@ -135,7 +135,7 @@ SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 # prefix ("Pass custom headers to Amazon Bedrock AgentCore Runtime", devguide).
 TRACE_HEADER = "traceparent"
 TOOLS_GATEWAY_NAME = "hr-super-agent-tools"
-KB_TARGET_NAME = "docs"  # tools are named docs___Retrieve and docs___AgenticRetrieveStream
+KB_TARGET_NAME = "docs"  # the tool is docs___Retrieve (AgenticRetrieveStream removed, D48)
 KB_NAME = "hr-super-agent-docs"
 CONTENT_PREFIX = "docs/"  # scripts/seed-content.sh writes docs/<source>/... to the content bucket
 RETRIEVE_TOOL = f"{KB_TARGET_NAME}___Retrieve"
@@ -874,10 +874,6 @@ class HrSuperAgentStack(cdk.Stack):
                 resources=[knowledge_base.attr_knowledge_base_arn],
             )
         )
-        # AgenticRetrieveStream is not resource-scoped; the gateway target validation asks for it.
-        tools_gateway_role.add_to_policy(
-            iam.PolicyStatement(actions=["bedrock:AgenticRetrieveStream"], resources=["*"])
-        )
         # Gateway Policy on the tools gateway (D47, A15): Cedar rules on the caller token's
         # scopes; a tool no rule permits is refused, and tools/list shows a caller only its own.
         tools_policy_engine = agentcore.CfnPolicyEngine(
@@ -923,7 +919,6 @@ class HrSuperAgentStack(cdk.Stack):
             policy_engine_configuration=agentcore.CfnGateway.GatewayPolicyEngineConfigurationProperty(
                 arn=tools_policy_engine.attr_policy_engine_arn, mode="ENFORCE"
             ),
-            exception_level="DEBUG",
         )
         # Attaching the policy engine checks the role's GetPolicyEngine grant, so the gateway
         # waits for the role's whole policy, not only the role (observed 3 Oct 2026).
@@ -958,27 +953,6 @@ class HrSuperAgentStack(cdk.Stack):
                                 # base rejects a string numberOfResults. Service defaults apply.
                                 parameter_values={
                                     "knowledgeBaseId": knowledge_base.attr_knowledge_base_id,
-                                },
-                            ),
-                            agentcore.CfnGatewayTarget.ConnectorConfigurationProperty(
-                                name="AgenticRetrieveStream",
-                                parameter_values={
-                                    "retrievers": [
-                                        {
-                                            "description": "HR policy documents",
-                                            "configuration": {
-                                                "knowledgeBase": {
-                                                    "knowledgeBaseId": (
-                                                        knowledge_base.attr_knowledge_base_id
-                                                    )
-                                                }
-                                            },
-                                        }
-                                    ],
-                                    "agenticRetrieveConfiguration": {
-                                        "foundationModelType": "MANAGED",
-                                        "rerankingModelType": "MANAGED",
-                                    },
                                 },
                             ),
                         ],
