@@ -18,6 +18,10 @@ opened once to start the flow and closed, then SendMessage and GetTranscript pol
 CloudWatch log for the contact says which token each sub-agent call carried, and
 GetContactAttributes says what the contact record kept (attribute names and a marker only).
 
+Predates guppi-hr D47: the production canvas now reads one agents token per sub-agent
+(`hrProfileToken`, `hrPayToken`, `hrTravelToken`) and `hrToolsToken`, which only the bridge
+can mint; this script's `hrToken` reaches only the spike's development application.
+
     uv run scripts/token_gate.py
 """
 

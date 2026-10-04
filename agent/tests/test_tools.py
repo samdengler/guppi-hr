@@ -32,7 +32,8 @@ TRACEPARENT = f"00-{TRACE_ID}-b7ad6b7169203331-01"
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 OTHER_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 TABLES = Tables(employees="employees", proposals="proposals", tickets="tickets", audit="audit")
-ALL_SCOPES = "hr.tools.policy hr.tools.profile.read hr.tools.profile.write hr.tools.pay.read hr.tools.pay.write"
+ALL_SCOPES = ("hr.tools.policy hr.tools.profile.read hr.tools.profile.write hr.tools.pay.statements.read "
+              "hr.tools.pay.read hr.tools.pay.write")
 
 
 def token(sub="user-1", key=KEY, **overrides) -> str:
@@ -288,7 +289,8 @@ def test_a_commit_needs_the_write_scope_of_the_fields_domain(client, scope):
     proposal_id = call(client, "propose_address_change", ADDRESS)[1]["proposal_id"]
     limited = {"authorization": f"Bearer {token('user-1', scope=scope)}"}
     error, text = call(client, "commit_change", {"proposal_id": proposal_id}, headers=limited)
-    assert error and "may not change home_address" in text
+    # Without any write scope the tool itself is refused; with the other domain's, the store.
+    assert error and ("may not change home_address" in text or "not allowed to use that tool" in text)
     assert call(client, "commit_change", {"proposal_id": proposal_id})[1]["committed"]
 
 
@@ -414,3 +416,19 @@ def test_an_okta_shaped_token_for_another_audience_is_refused():
     )
     with pytest.raises(IdentityError):
         okta.verify(other)
+
+
+
+@pytest.mark.parametrize("tool,arguments,scope", [
+    ("get_profile", {}, "hr.tools.policy hr.tools.pay.read"),
+    ("get_direct_deposit", {}, "hr.tools.policy hr.tools.profile.read hr.tools.pay.statements.read"),
+    ("list_pay_statements", {}, "hr.tools.policy hr.tools.pay.read"),
+    ("propose_address_change", ADDRESS, "hr.tools.policy hr.tools.profile.read"),
+    ("commit_change", {"proposal_id": "x"}, "hr.tools.policy hr.tools.profile.read hr.tools.pay.statements.read"),
+    ("open_ticket", {"summary": "help"}, "hr.tools.profile.read"),
+])
+def test_every_tool_needs_its_scope_on_the_runtime_token(client, tool, arguments, scope):
+    # The server checks the table Policy enforces, so it holds without Policy (D47).
+    limited = {"authorization": f"Bearer {token('user-1', scope=scope)}"}
+    error, text = call(client, tool, arguments, headers=limited)
+    assert error and "not allowed to use that tool" in text

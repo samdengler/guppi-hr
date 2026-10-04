@@ -6,8 +6,8 @@
 
 The flow sets the contact language, then runs the Agentic CX block with the deployed
 application's alias (from .deploy/acxd.json, written by acxd/deploy.js). The block maps
-the contact attributes `hrAgentsToken`, `hrToolsToken` (the bridge's hop tokens, guppi-hr
-D47) and `employeeId` to ACXD context variables. The
+the contact attributes `hrProfileToken`, `hrPayToken`, `hrTravelToken`, `hrToolsToken` (the
+bridge's hop tokens, guppi-hr D47) and `employeeId` to ACXD context variables. The
 canvas's EscalationFlow opens a ticket and ends the conversation, so the Escalation branch
 to the instance's BasicQueue is no longer taken; an error says so in the chat and
 disconnects. A production run publishes the flow id and the canvas alias to SSM for the
@@ -57,7 +57,9 @@ def flow_content(application_id: str, alias: str, queue_arn: str) -> dict:
                         "ApplicationId": application_id,
                         "Alias": alias,
                         "ContextVariables": {
-                            "hrAgentsToken": "$.Attributes.hrAgentsToken",
+                            "hrProfileToken": "$.Attributes.hrProfileToken",
+                            "hrPayToken": "$.Attributes.hrPayToken",
+                            "hrTravelToken": "$.Attributes.hrTravelToken",
                             "hrToolsToken": "$.Attributes.hrToolsToken",
                             "employeeId": "$.Attributes.employeeId",
                         },

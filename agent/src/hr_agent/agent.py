@@ -11,13 +11,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ag_ui.core import BaseEvent, RunAgentInput
+from ag_ui.core import (
+    BaseEvent,
+    EventType,
+    RunAgentInput,
+    RunFinishedEvent,
+    RunStartedEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
+)
 from guppi_agent import conversation_log
 
-from hr_agent.obo import TokenExchanger
+from hr_agent.obo import ExchangeError, TokenExchanger
 from hr_agent.pending import PENDING_KEY
 
 log = logging.getLogger("hr_agent")
@@ -112,7 +122,13 @@ class StrandsRun:
         run_input = without_pending(run_input)
         # A tools token for this hop (D47); the gateway exchanges it again for the tools
         # runtime. The thread id binds a ticket or proposal to its conversation.
-        tools_token = await TOOLS_TOKENS.aexchange(self._token)
+        try:
+            tools_token = await TOOLS_TOKENS.aexchange(self._token)
+        except ExchangeError:
+            # Fail closed with a plain line; no tool call goes out with the Okta token.
+            for event in signin_events(run_input):
+                yield event
+            return
         client = MCPClient(
             url=settings.tools_gateway_url,
             headers={"Authorization": f"Bearer {tools_token}", "X-Hr-Thread-Id": run_input.thread_id},
@@ -166,6 +182,19 @@ class StrandsRun:
                 "output_tokens": int(accumulated.get("outputTokens", 0)),
             }
         return {}
+
+
+def signin_events(run_input: RunAgentInput) -> list[BaseEvent]:
+    from hr_agent.orchestrator import SIGNIN_LINE
+
+    message_id = uuid.uuid4().hex
+    return [
+        RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_input.run_id),
+        TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=message_id, role="assistant"),
+        TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, message_id=message_id, delta=SIGNIN_LINE),
+        TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id),
+        RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=run_input.thread_id, run_id=run_input.run_id),
+    ]
 
 
 def build_general_agent(token: str) -> StrandsRun:

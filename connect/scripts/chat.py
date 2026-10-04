@@ -8,6 +8,10 @@ Starts a chat contact on the spike's contact flow with the contact attributes `h
 and `employeeId`, connects the customer participant's WebSocket (the flow does not run
 until it does), then sends each message once the application has gone quiet.
 
+Predates guppi-hr D47: the production canvas now reads one agents token per sub-agent
+(`hrProfileToken`, `hrPayToken`, `hrTravelToken`) and `hrToolsToken`, which only the bridge
+can mint; this script's `hrToken` reaches only the spike's development application.
+
     uv run scripts/chat.py "run the header probe"
     uv run scripts/chat.py --token-file ~/.config/guppi-connect/hr_access_token "..." "yes"
 

@@ -12,7 +12,10 @@ from httpx import ASGITransport, AsyncClient
 
 import connect_bridge.turn as turn_module
 from connect_bridge.store import MemorySessionStore
-from connect_bridge.turn import ESCALATED_LINE, ConnectTurn, Settings, classify, session_key
+from connect_bridge.turn import HOP_ATTRIBUTES, ESCALATED_LINE, ConnectTurn, Settings, classify, session_key
+
+
+CLEARED_ALL = {name: "cleared" for name in HOP_ATTRIBUTES}
 
 
 def jwt(sub: str = "employee-1", exp: float | None = None) -> str:
@@ -183,15 +186,15 @@ async def test_first_run_starts_a_contact_relays_the_reply_and_clears_the_token(
     assert events[3].delta == "I can help with your profile."
     started = clients.connect.started[0]
     # Without OBO_PROVIDER (tests) the hop tokens pass the token through unchanged.
-    assert started["Attributes"]["hrAgentsToken"] == token
-    assert started["Attributes"]["hrToolsToken"] == token
+    for name in ("hrProfileToken", "hrPayToken", "hrTravelToken", "hrToolsToken"):
+        assert started["Attributes"][name] == token
     assert "hrToken" not in started["Attributes"]
     assert started["Attributes"]["employeeId"] == "employee-1"
     assert clients.touched == ["wss://example"]
     # The greeting was skipped, and the token left the contact record after the reply.
     assert all("Hi, I'm" not in getattr(e, "delta", "") for e in events)
     assert clients.connect.updated == [
-        {"InitialContactId": "contact-1", "InstanceId": "inst", "Attributes": {"hrAgentsToken": "cleared", "hrToolsToken": "cleared"}}
+        {"InitialContactId": "contact-1", "InstanceId": "inst", "Attributes": CLEARED_ALL}
     ]
     saved = store.get(session_key(token, "t1"))
     assert saved.contact_id == "contact-1" and saved.token_cleared
@@ -241,7 +244,7 @@ async def test_a_token_near_expiry_with_a_fresher_one_gets_a_new_contact():
     fresh = jwt(exp=now + 3600)
     await collect(ConnectTurn(fresh, store, SETTINGS, clients, sleep=no_sleep), "two")
     assert len(clients.connect.started) == 2
-    assert clients.connect.started[1]["Attributes"]["hrAgentsToken"] == fresh
+    assert clients.connect.started[1]["Attributes"]["hrPayToken"] == fresh
 
 
 async def test_threads_and_users_do_not_share_contacts():
@@ -716,7 +719,7 @@ async def test_the_token_leaves_the_contact_right_after_the_greeting():
     turn = ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep)
     await turn.warm(warm_input())
     # A warm start nobody writes in leaves no token on the record (finding 1).
-    assert [u["Attributes"] for u in clients.connect.updated] == [{"hrAgentsToken": "cleared", "hrToolsToken": "cleared"}]
+    assert [u["Attributes"] for u in clients.connect.updated] == [CLEARED_ALL]
     assert clients.connect.started[0]["ChatDurationInMinutes"] == 60
 
 
@@ -729,7 +732,7 @@ async def test_a_contact_that_never_greets_is_a_failed_start(monkeypatch):
         await ConnectTurn(token, store, SETTINGS, clients, sleep=no_sleep).warm(warm_input())
     # The contact is ended, its token cleared, and the claim released for the next run.
     assert clients.connect.stopped == ["contact-1"]
-    assert clients.connect.updated[0]["Attributes"] == {"hrAgentsToken": "cleared", "hrToolsToken": "cleared"}
+    assert clients.connect.updated[0]["Attributes"] == CLEARED_ALL
     assert store.get(session_key(token, "t1")) is None
 
 
@@ -912,7 +915,8 @@ class FakeExchanger:
 def hop_tokens(monkeypatch):
     import connect_bridge.turn as turn_module
 
-    agents, canvas = FakeExchanger("agents"), FakeExchanger("canvas")
+    agents = {d: FakeExchanger(f"{d}-agents") for d in turn_module.DOMAINS}
+    canvas = FakeExchanger("canvas")
     monkeypatch.setattr(turn_module, "AGENTS_TOKENS", agents)
     monkeypatch.setattr(turn_module, "CANVAS_TOKENS", canvas)
     return agents, canvas
@@ -926,9 +930,10 @@ async def test_the_contact_carries_hop_tokens_and_never_the_okta_token(hop_token
     (started,) = clients.connect.started
     attributes = started["Attributes"]
     assert token not in attributes.values()
-    assert subject_of_fake(attributes["hrAgentsToken"]) == "agents-token"
-    assert subject_of_fake(attributes["hrToolsToken"]) == "canvas-token"
-    assert agents.subjects == [token] and canvas.subjects == [token]
+    for domain in ("profile", "pay", "travel"):
+        assert subject_of_fake(attributes[f"hr{domain.capitalize()}Token"]) == f"{domain}-agents-token"
+        assert agents[domain].subjects == [token]
+    assert subject_of_fake(attributes["hrToolsToken"]) == "canvas-token" and canvas.subjects == [token]
 
 
 async def test_the_warm_calls_send_the_agents_token(hop_tokens):
@@ -936,15 +941,19 @@ async def test_the_warm_calls_send_the_agents_token(hop_tokens):
     token = jwt()
     turn = ConnectTurn(token, MemorySessionStore(), GATEWAY, clients, sleep=no_sleep)
     await turn.warm(warm_input())
+    assert len(clients.posted) == 3
     for posted in clients.posted:
+        # Each sub-agent is warmed with its own agents token.
+        domain = posted["url"].split("/")[-2]
         bearer = posted["headers"]["Authorization"].removeprefix("Bearer ")
-        assert bearer != token and subject_of_fake(bearer) == "agents-token"
+        assert bearer != token and subject_of_fake(bearer) == f"{domain}-agents-token"
 
 
 async def test_a_failed_exchange_starts_no_contact_and_says_so(monkeypatch):
     import connect_bridge.turn as turn_module
 
-    monkeypatch.setattr(turn_module, "AGENTS_TOKENS", FakeExchanger("agents", fail=True))
+    monkeypatch.setattr(turn_module, "AGENTS_TOKENS",
+                        {d: FakeExchanger("agents", fail=(d == "pay")) for d in turn_module.DOMAINS})
     monkeypatch.setattr(turn_module, "CANVAS_TOKENS", FakeExchanger("canvas"))
     clients = FakeClients(FakeParticipant({}))
     events = await collect(ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep), "hello")
@@ -958,3 +967,18 @@ def subject_of_fake(token: str) -> str:
     from connect_bridge.turn import claims
 
     return claims(token)["sub"]
+
+
+async def test_a_missing_provider_setting_never_puts_the_okta_token_on_a_contact(monkeypatch):
+    # Critique of the build, finding 4: fail closed, not pass-through.
+    import connect_bridge.turn as turn_module
+    from connect_bridge.obo import TokenExchanger
+
+    monkeypatch.delenv("OBO", raising=False)
+    monkeypatch.delenv("OBO_PROVIDER", raising=False)
+    monkeypatch.setattr(turn_module, "AGENTS_TOKENS", {d: TokenExchanger([f"hr.agents.{d}"]) for d in turn_module.DOMAINS})
+    monkeypatch.setattr(turn_module, "CANVAS_TOKENS", TokenExchanger(["hr.tools.policy"]))
+    clients = FakeClients(FakeParticipant({}))
+    events = await collect(ConnectTurn(jwt(), MemorySessionStore(), SETTINGS, clients, sleep=no_sleep), "hello")
+    assert clients.connect.started == []
+    assert "".join(getattr(e, "delta", "") for e in events) == turn_module.SIGNIN_LINE

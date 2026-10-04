@@ -2,9 +2,10 @@
 agents gateway with runtime targets and JWT passthrough.
 
 The gateway has no protocol type, like the edge gateway, because runtime targets cannot
-join an MCP gateway. The gateway and each runtime accept only the agents token the bridge's
-client gets from the on-behalf-of issuer (D47: audience `api://hr-agents`, client
-`hr-bridge`, scope `hr.agents`); the gateway passes it through, since runtime targets cannot
+join an MCP gateway. The gateway and each runtime accept only an agents token the bridge's
+client gets from the on-behalf-of issuer (D47: client `hr-bridge`, one audience and scope
+per sub-agent, `api://hr-agents/<name>` and `hr.agents.<name>`, so a token for one sub-agent
+cannot drive another); the gateway passes it through, since runtime targets cannot
 exchange (aws-feedback A13). Each runtime lets Authorization through to the container,
 which trades it through AgentCore Identity for its own domain's tools token. Each
 runtime's agent card advertises its gateway path (AGENTCORE_RUNTIME_URL), so an A2A client
@@ -21,10 +22,10 @@ from aws_cdk import aws_iam as iam
 from constructs import Construct
 
 from hr_super_agent_infra.obo import (
-    AGENTS_AUDIENCE,
-    AGENTS_SCOPE,
     BRIDGE_CLIENT,
     DOMAIN_SCOPES,
+    agents_audience,
+    agents_scope,
     grant_exchange,
     workload_identity,
 )
@@ -77,9 +78,11 @@ class SubAgents(Construct):
             authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
                     discovery_url=obo_discovery_url,
-                    allowed_audience=[AGENTS_AUDIENCE],
+                    # One agents audience per sub-agent; the gateway takes any of the three,
+                    # each runtime only its own (critique of the build, finding 3).
+                    allowed_audience=[agents_audience(d) for d in SUB_AGENT_NAMES],
                     allowed_clients=[BRIDGE_CLIENT],
-                    allowed_scopes=[AGENTS_SCOPE],
+                    allowed_scopes=[agents_scope(d) for d in SUB_AGENT_NAMES],
                 )
             ),
             # protocol_type is left unset: runtime targets cannot join MCP gateways.
@@ -130,9 +133,9 @@ class SubAgents(Construct):
                 authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
                     custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
                         discovery_url=obo_discovery_url,
-                        allowed_audience=[AGENTS_AUDIENCE],
+                        allowed_audience=[agents_audience(name)],
                         allowed_clients=[BRIDGE_CLIENT],
-                        allowed_scopes=[AGENTS_SCOPE],
+                        allowed_scopes=[agents_scope(name)],
                     )
                 ),
                 environment_variables={

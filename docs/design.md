@@ -109,10 +109,10 @@ design, and `scripts/obo-checks.py` checks it against the deployed stacks.
 | Hop | Credential presented | Checked by |
 | --- | --- | --- |
 | Page to the platform's edge gateway, and on to the orchestrator or the Connect bridge | The employee's Okta access token (audience `api://guppi`) | Edge gateway and runtime JWT authorizers |
-| Bridge or orchestrator to the agents gateway, and on to a sub-agent (passthrough) | Agents token: audience `api://hr-agents`, scope `hr.agents`, client `hr-bridge`, exchanged by the caller | Gateway and runtime JWT authorizers (audience, client, scope) |
-| Canvas or `/p/hr-diy/` general agent to the tools gateway | Tools token from the bridge's client: `hr.tools.policy` plus read scopes for the canvas | Gateway JWT authorizer, then Gateway Policy per tool |
+| Bridge or orchestrator to the agents gateway, and on to a sub-agent (passthrough) | That sub-agent's agents token: audience `api://hr-agents/<name>`, scope `hr.agents.<name>`, client `hr-bridge`, exchanged by the caller (D48) | Gateway JWT authorizer (any of the three), then the runtime's (its own only) |
+| Canvas or `/p/hr-diy/` general agent to the tools gateway | Tools token from the bridge's client: `hr.tools.policy`, plus `hr.tools.profile.read` and `hr.tools.pay.statements.read` for the canvas | Gateway JWT authorizer, then Gateway Policy per tool |
 | Sub-agent to the tools gateway | Its domain's tools token, exchanged from the agents token | Gateway JWT authorizer, then Gateway Policy per tool |
-| Tools gateway to HR tools runtime | Runtime token (audience `api://hr-tools-runtime`, client `hr-tools-gateway`), exchanged by the gateway's target on every call | Runtime JWT authorizer; the server verifies it again and checks a commit's write scope |
+| Tools gateway to HR tools runtime | Runtime token (audience `api://hr-tools-runtime`, client `hr-tools-gateway`), exchanged by the gateway's target on every call | Runtime JWT authorizer; the server verifies it again and checks each tool's scope and a commit's field |
 | Tools gateway to knowledge base | Gateway role | Bedrock |
 
 The agents gateway passes its token through because runtime targets cannot exchange

@@ -10,8 +10,9 @@
  * - ClarifyFlow answers the ambiguous "update my information" with one question.
  * - ProfileFlow, PayFlow and TravelFlow delegate every turn to their sub-agent with one
  *   A2A message/send (a JSON string template, so nested fields are filled), the
- *   agents token in the Authorization header (guppi-hr D47: the bridge trades the
- *   employee's Okta token for it; the tools calls carry a read-only tools token). A follow-up stays in the flow; a turn
+ *   sub-agent's own agents token in the Authorization header (guppi-hr D47: the bridge
+ *   trades the employee's Okta token for one per sub-agent; the tools calls carry a
+ *   read-only tools token). A follow-up stays in the flow; a turn
  *   the application recognizes as another domain redirects there (sticky context, D6).
  * - A reply that carries a pending change goes to a fixed confirmation step. Only its
  *   "yes" branch sends the pending change back, so nothing commits without it (D7).
@@ -117,8 +118,13 @@ const CONTEXT_VARIABLES = [
   ]),
 ];
 
+// Each sub-agent takes only its own agents token (guppi-hr D47; critique of the build,
+// finding 3), which the bridge puts on the contact as hrProfileToken, hrPayToken and
+// hrTravelToken.
+const agentsTokenName = (domain) => `hr${domain[0].toUpperCase()}${domain.slice(1)}Token`;
+
 const authHeaders = (sessionSuffix) => [
-  hdr('Authorization', 'Bearer {hrAgentsToken:NLX.Context}', { sensitive: true }),
+  hdr('Authorization', `Bearer {${agentsTokenName(sessionSuffix)}:NLX.Context}`, { sensitive: true }),
   hdr('Content-Type', 'application/json'),
   hdr('X-Amzn-Bedrock-AgentCore-Runtime-Session-Id', `${CONV}-${sessionSuffix}`),
 ];
@@ -338,7 +344,7 @@ function domainFlow(d) {
       { name: 'activeDomain', type: 'text' },
       { name: `lastUserText${d.title}`, type: 'text' },
       { name: `lastReply${d.title}`, type: 'text' },
-      { name: 'hrAgentsToken', type: 'text' },
+      { name: agentsTokenName(d.name), type: 'text' },
       { name: 'hrToolsToken', type: 'text' },
       { name: 'employeeId', type: 'text' },
     ],
@@ -752,4 +758,5 @@ const DATA_REQUESTS = [
 
 const FLOWS = [welcomeFlow(), clarifyFlow(), ...DOMAINS.map(domainFlow), policyFlow(), goodbyeFlow(), escalationFlow()];
 
-module.exports = { DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS, END_MARK, CLOSED_MARK };
+module.exports = {
+  agentsTokenName, DOMAINS, CONTEXT_VARIABLES, DATA_REQUESTS, FLOWS, END_MARK, CLOSED_MARK };

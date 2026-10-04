@@ -1,14 +1,15 @@
 """On-behalf-of token exchange through AgentCore Identity (guppi-hr D20, D47).
 
-The bridge trades the employee's Okta token, before it starts a contact, for the two
-tokens the canvas carries: an agents token (`hr.agents`, for the agents gateway and the
-sub-agents) and a read-only tools token (`hr.tools.policy hr.tools.profile.read
-hr.tools.pay.read`, for the canvas's own tool calls). The Okta token itself never reaches
+The bridge trades the employee's Okta token, before it starts a contact, for the tokens
+the canvas carries: one agents token per sub-agent (`hr.agents.<name>`, which only that
+sub-agent accepts) and a read-only tools token (`hr.tools.policy hr.tools.profile.read
+hr.tools.pay.statements.read`, for the canvas's own tool calls). The Okta token itself never reaches
 the contact. A copy of guppi-hr's hr_agent/obo.py, since this project builds its own image.
 
 The credential provider and workload identity come from the environment (OBO_PROVIDER,
 OBO_WORKLOAD); Identity holds the client secret and calls the issuer. Without OBO_PROVIDER
-the token is returned unchanged, which only local runs and tests rely on.
+an exchange fails, so a missing setting never puts the Okta token on a contact; only
+OBO=off, set by hand for a local run or the tests, returns it unchanged.
 """
 
 from __future__ import annotations
@@ -44,15 +45,26 @@ def expires_at(token: str) -> float:
         return time.time()
 
 
-def _identity_client() -> Any:
-    import boto3
-    from botocore.config import Config
+_CLIENT: Any = None
+_CLIENT_LOCK = threading.Lock()
 
-    return boto3.client(
-        "bedrock-agentcore",
-        region_name=os.environ.get("AWS_REGION", "us-east-1"),
-        config=Config(connect_timeout=2, read_timeout=5, retries={"max_attempts": 2, "mode": "standard"}),
-    )
+
+def _identity_client() -> Any:
+    """One client for every exchanger in the process, built once under a lock from its own
+    session: two exchanges start at once on the bridge, and building clients concurrently
+    from the default session is not thread-safe."""
+    global _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            import boto3
+            from botocore.config import Config
+
+            _CLIENT = boto3.session.Session().client(
+                "bedrock-agentcore",
+                region_name=os.environ.get("AWS_REGION", "us-east-1"),
+                config=Config(connect_timeout=2, read_timeout=5, retries={"max_attempts": 2, "mode": "standard"}),
+            )
+        return _CLIENT
 
 
 class TokenExchanger:
@@ -68,14 +80,14 @@ class TokenExchanger:
         self.provider = provider if provider is not None else os.environ.get("OBO_PROVIDER", "")
         self.workload = workload if workload is not None else os.environ.get("OBO_WORKLOAD", "")
         self._client_factory = client_factory
-        self._client: Any = None
         self._clock = clock
         self._cache: dict[str, tuple[str, float]] = {}
         self._lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
-        return bool(self.provider)
+        """False only when exchange is switched off by hand (OBO=off) for a local run."""
+        return bool(self.provider) or os.environ.get("OBO") != "off"
 
     def _key(self, subject: str) -> str:
         return hashlib.sha256(subject.encode()).hexdigest()
@@ -95,15 +107,14 @@ class TokenExchanger:
         cached = self._cached(key)
         if cached:
             return cached
-        if not self.workload:
-            raise ExchangeError("OBO_WORKLOAD is not set")
+        if not self.provider or not self.workload:
+            raise ExchangeError("OBO_PROVIDER or OBO_WORKLOAD is not set")
         try:
-            if self._client is None:
-                self._client = self._client_factory()
-            workload_token = self._client.get_workload_access_token_for_jwt(
+            client = self._client_factory()
+            workload_token = client.get_workload_access_token_for_jwt(
                 workloadName=self.workload, userToken=subject
             )["workloadAccessToken"]
-            token = self._client.get_resource_oauth2_token(
+            token = client.get_resource_oauth2_token(
                 workloadIdentityToken=workload_token,
                 resourceCredentialProviderName=self.provider,
                 oauth2Flow="ON_BEHALF_OF_TOKEN_EXCHANGE",

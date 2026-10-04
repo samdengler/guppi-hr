@@ -43,12 +43,14 @@ from ag_ui.core import (
 )
 
 from hr_agent.agents.domains import DOMAINS
-from hr_agent.obo import TokenExchanger
+from hr_agent.obo import ExchangeError, TokenExchanger
 from hr_agent.pending import PENDING_KEY, parse_pending
 
 log = logging.getLogger("hr_agent")
-# The employee's Okta token traded for an agents token through the bridge's client (D47).
-AGENTS_TOKENS = TokenExchanger(scopes=["hr.agents"])
+# The employee's Okta token traded, through the bridge's client, for an agents token that
+# only the one sub-agent accepts (D47; critique of the build, finding 3).
+AGENTS_TOKENS = {domain: TokenExchanger(scopes=[f"hr.agents.{domain}"]) for domain in DOMAINS}
+SIGNIN_LINE = "HR could not confirm the sign-in. Try again in a minute."
 
 ACTIVE_KEY = "activeDomain"
 GENERAL = "general"
@@ -256,6 +258,7 @@ class SubAgentReply:
     pending: dict[str, Any] | None = None
     committed: bool = False
     error: bool = False
+    signin: bool = False  # the exchange failed, so nothing reached the sub-agent
 
 
 async def send_to_sub_agent(
@@ -270,8 +273,11 @@ async def send_to_sub_agent(
     """One A2A message/send through the agents gateway. Tests replace this."""
     import httpx
 
-    # The agents gateway accepts only an agents token from the bridge's client (D47).
-    token = await AGENTS_TOKENS.aexchange(token)
+    # The agents gateway and the sub-agent accept only that sub-agent's agents token (D47).
+    try:
+        token = await AGENTS_TOKENS[domain].aexchange(token)
+    except ExchangeError:
+        return SubAgentReply(text="", error=True, signin=True)
 
     body = {
         "jsonrpc": "2.0",
@@ -393,7 +399,10 @@ class Orchestrator:
                 self._settings,
             )
             yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=domain)
-            if reply.error or not reply.text:
+            if reply.signin:
+                text = SIGNIN_LINE
+                self._record["exchange_failed"] = True
+            elif reply.error or not reply.text:
                 title = DOMAINS[domain].title
                 text = (
                     f"I could not reach the {title} just now. Please try again in a moment, "

@@ -82,8 +82,9 @@ def runtime_execution_role(
         iam.PolicyStatement(
             actions=[
                 "bedrock-agentcore:GetWorkloadAccessToken",
+                # For the on-behalf-of exchange (D47). Not ForUserId, which would mint a
+                # workload token for any user id with no JWT at all.
                 "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
-                "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
             ],
             resources=[
                 f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default",

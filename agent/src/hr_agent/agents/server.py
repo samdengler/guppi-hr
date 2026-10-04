@@ -39,7 +39,7 @@ from a2a.types import (
 
 from hr_agent.agents.domains import DOMAINS, Domain
 from hr_agent.agents.mcp_sessions import McpSessions
-from hr_agent.obo import TokenExchanger
+from hr_agent.obo import ExchangeError, TokenExchanger
 from hr_agent.agents.snapshot import (
     RECORD_READS,
     WARM_SEARCHES,
@@ -364,6 +364,15 @@ class DomainExecutor(AgentExecutor):
                         }
                     )
                 ),
+            ]
+        except ExchangeError as exc:
+            # The class only: Identity's messages, chained below, can quote token claims.
+            log.warning("%s run failed: token exchange %s", self.domain.name, exc)
+            record["outcome"] = "error"
+            failed = f"The {self.domain.title} could not complete the request."
+            parts = [
+                Part(root=TextPart(text=failed)),
+                Part(root=DataPart(data={"domain": self.domain.name, "error": "exchange_failed"})),
             ]
         except Exception:
             log.exception("%s run failed", self.domain.name)

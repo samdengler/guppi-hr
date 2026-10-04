@@ -32,12 +32,13 @@ ROOT = Path(__file__).resolve().parents[1]
 GUPPI_GPT = ROOT.parent / "guppi-gpt"
 WORKLOAD = "hr-obo-checks"
 ACCESS = "urn:ietf:params:oauth:token-type:access_token"
-CANVAS = ["hr.tools.policy", "hr.tools.profile.read", "hr.tools.pay.read"]
+CANVAS = ["hr.tools.policy", "hr.tools.profile.read", "hr.tools.pay.statements.read"]
 DOMAIN = {
     "profile": ["hr.tools.policy", "hr.tools.profile.read", "hr.tools.profile.write"],
-    "pay": ["hr.tools.policy", "hr.tools.pay.read", "hr.tools.pay.write"],
+    "pay": ["hr.tools.policy", "hr.tools.pay.statements.read", "hr.tools.pay.read", "hr.tools.pay.write"],
     "travel": ["hr.tools.policy"],
 }
+THREAD = f"obo-checks-{int(time.time())}"
 
 identity = boto3.client("bedrock-agentcore", region_name=REGION)
 control = boto3.client("bedrock-agentcore-control", region_name=REGION)
@@ -83,7 +84,7 @@ class Mcp:
     def send(self, method: str, params: dict | None = None) -> tuple[int, dict]:
         self.n += 1
         headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
-                   "X-Hr-Thread-Id": f"obo-checks-{int(time.time())}"}
+                   "X-Hr-Thread-Id": THREAD}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         response = httpx.post(self.url, json={"jsonrpc": "2.0", "id": self.n, "method": method,
@@ -100,13 +101,20 @@ class Mcp:
         return {t["name"] for t in self.send("tools/list")[1].get("result", {}).get("tools", [])}
 
     def call(self, tool: str, arguments: dict | None = None) -> str:
-        """allowed, denied (by Policy), or error."""
+        """allowed, denied (by Policy), refused (by the tools server), or error."""
+        return self.call_with_text(tool, arguments)[0]
+
+    def call_with_text(self, tool: str, arguments: dict | None = None) -> tuple[str, str]:
         status, body = self.send("tools/call", {"name": tool, "arguments": arguments or {}})
         if status != 200:
-            return f"http {status}"
+            return f"http {status}", ""
         if "error" in body:
-            return "denied" if "policy" in json.dumps(body["error"]).lower() else "error"
-        return "error" if body.get("result", {}).get("isError") else "allowed"
+            return ("denied" if "policy" in json.dumps(body["error"]).lower() else "error"), ""
+        result = body.get("result", {})
+        text = ((result.get("content") or [{}])[0]).get("text", "")
+        if result.get("isError"):
+            return ("refused" if "Refused" in text or "not allowed" in text else "error"), text
+        return "allowed", text
 
 
 def main() -> None:
@@ -114,26 +122,30 @@ def main() -> None:
         control.create_workload_identity(name=WORKLOAD)
     t0 = subprocess.run([str(GUPPI_GPT / "scripts" / "test-token.sh")], capture_output=True, text=True, check=True).stdout.strip()
     print("minting hop tokens through Identity")
-    t1 = exchange("hr-bridge", t0, ["hr.agents"])
+    t1 = {d: exchange("hr-bridge", t0, [f"hr.agents.{d}"]) for d in DOMAIN}
     t1p = exchange("hr-bridge", t0, CANVAS)
-    t2 = {d: exchange(f"hr-agent-{d}", t1, s) for d, s in DOMAIN.items()} if t1 else {}
+    t2 = {d: exchange(f"hr-agent-{d}", t1[d], s) for d, s in DOMAIN.items()} if all(t1.values()) else {}
     t3 = exchange("hr-tools-gateway", t2.get("profile") or "", ["hr.tools.policy"])
-    check("bridge gets an agents token and a canvas token", bool(t1 and t1p))
+    check("bridge gets an agents token per sub-agent and a canvas token", all(t1.values()) and bool(t1p))
     check("each sub-agent gets its domain's tools token", len([t for t in t2.values() if t]) == 3)
     check("the tools gateway's client gets a runtime token", bool(t3))
-    if not (t1 and t1p and len(t2) == 3 and t3):
+    if not (all(t1.values()) and t1p and len(t2) == 3 and t3):
         sys.exit("cannot continue without the hop tokens")
 
     print("issuer rules")
-    check("travel cannot get pay scopes", exchange("hr-agent-travel", t1, ["hr.tools.pay.read"]) is None)
-    check("a canvas token cannot become an agents token", exchange("hr-bridge", t1p, ["hr.agents"]) is None)
+    check("travel cannot get pay scopes", exchange("hr-agent-travel", t1["travel"], ["hr.tools.pay.read"]) is None)
+    check("the Travel agents token cannot become a Pay tools token", exchange("hr-agent-pay", t1["travel"], DOMAIN["pay"]) is None)
+    check("the canvas token cannot see bank details", exchange("hr-bridge", t0, ["hr.tools.pay.read"]) is None)
+    check("a canvas token cannot become an agents token", exchange("hr-bridge", t1p, ["hr.agents.pay"]) is None)
     check("a tools token cannot be exchanged by a sub-agent", exchange("hr-agent-pay", t2["pay"], DOMAIN["pay"]) is None)
     check("a runtime token cannot be exchanged again", exchange("hr-tools-gateway", t3, ["hr.tools.policy"]) is None)
 
     agents_url = ssm.get_parameter(Name="/guppi-hr/agents-gateway-url")["Parameter"]["Value"].rstrip("/")
     session = f"obo-checks-{uuid.uuid4().hex}"
     print("agents gateway")
-    check("the agents token gets in", a2a(f"{agents_url}/travel/invocations", t1, session) == 200)
+    check("the Travel agents token reaches Travel", a2a(f"{agents_url}/travel/invocations", t1["travel"], session) == 200)
+    status = a2a(f"{agents_url}/pay/invocations", t1["travel"], session)
+    check("the Travel agents token cannot drive Pay", status != 200, f"HTTP {status}")
     for label, token in (("the Okta token", t0), ("the canvas token", t1p), ("a sub-agent's tools token", t2["pay"]), ("no token", None)):
         status = a2a(f"{agents_url}/travel/invocations", token, session)
         check(f"{label} is refused", status in (401, 403), f"HTTP {status}")
@@ -146,22 +158,23 @@ def main() -> None:
 
     print("sub-agent runtime, called directly")
     travel = runtime_url("hr_super_agent_travel")
-    for label, token in (("the Okta token", t0), ("the canvas token", t1p), ("a tools token", t2["travel"])):
+    for label, token in (("the Okta token", t0), ("the canvas token", t1p), ("a tools token", t2["travel"]),
+                         ("the Pay agents token", t1["pay"])):
         status = a2a(travel, token, session)
         check(f"{label} is refused", status in (401, 403), f"HTTP {status}")
 
     tools_url = next(g for g in control.list_gateways()["items"] if g["name"] == "hr-super-agent-tools")
     tools_url = control.get_gateway(gatewayIdentifier=tools_url["gatewayId"])["gatewayUrl"]
     print("tools gateway and Gateway Policy")
-    for label, token in (("the Okta token", t0), ("the agents token", t1), ("the runtime token", t3)):
+    for label, token in (("the Okta token", t0), ("an agents token", t1["pay"]), ("the runtime token", t3)):
         status = Mcp(tools_url, token).send("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                                            "clientInfo": {"name": "obo-checks", "version": "0"}})[0]
         check(f"{label} is refused", status in (401, 403), f"HTTP {status}")
     expected_lists = {
-        "travel": {"docs___Retrieve", "docs___AgenticRetrieveStream", "hr___open_ticket"},
-        "pay": {"docs___Retrieve", "docs___AgenticRetrieveStream", "hr___open_ticket", "hr___get_direct_deposit",
+        "travel": {"docs___Retrieve", "hr___open_ticket"},
+        "pay": {"docs___Retrieve", "hr___open_ticket", "hr___get_direct_deposit",
                 "hr___list_pay_statements", "hr___propose_direct_deposit_change", "hr___commit_change"},
-        "profile": {"docs___Retrieve", "docs___AgenticRetrieveStream", "hr___open_ticket", "hr___get_profile",
+        "profile": {"docs___Retrieve", "hr___open_ticket", "hr___get_profile",
                     "hr___propose_address_change", "hr___propose_emergency_contact_change", "hr___commit_change"},
     }
     for domain, expected in expected_lists.items():
@@ -169,8 +182,8 @@ def main() -> None:
         check(f"{domain} token lists only its tools", listed == expected, f"{sorted(listed - expected)} extra, {sorted(expected - listed)} missing")
     canvas_listed = Mcp(tools_url, t1p).tools()
     check("canvas token lists reads and tickets only",
-          canvas_listed == {"docs___Retrieve", "docs___AgenticRetrieveStream", "hr___open_ticket", "hr___get_profile",
-                            "hr___get_direct_deposit", "hr___list_pay_statements"}, f"{sorted(canvas_listed)}")
+          canvas_listed == {"docs___Retrieve", "hr___open_ticket", "hr___get_profile", "hr___list_pay_statements"},
+          f"{sorted(canvas_listed)}")
     check("profile token reads the profile", Mcp(tools_url, t2["profile"]).call("hr___get_profile") == "allowed")
     check("travel token cannot read pay", Mcp(tools_url, t2["travel"]).call("hr___list_pay_statements") == "denied")
     check("profile token cannot read pay", Mcp(tools_url, t2["profile"]).call("hr___list_pay_statements") == "denied")
@@ -178,6 +191,16 @@ def main() -> None:
     deposit = {"routing_number": "011000015", "account_number": "000000000", "account_type": "checking"}
     check("canvas token cannot propose a deposit change", Mcp(tools_url, t1p).call("hr___propose_direct_deposit_change", deposit) == "denied")
     check("canvas token cannot commit", Mcp(tools_url, t1p).call("hr___commit_change", {"proposal_id": "x"}) == "denied")
+    check("canvas token cannot read bank details", Mcp(tools_url, t1p).call("hr___get_direct_deposit") == "denied")
+    check("profile token cannot propose a deposit change",
+          Mcp(tools_url, t2["profile"]).call("hr___propose_direct_deposit_change", deposit) == "denied")
+    # A pending proposal on the synthetic record, never committed; it expires on its own.
+    outcome, text = Mcp(tools_url, t2["pay"]).call_with_text("hr___propose_direct_deposit_change", deposit)
+    proposal_id = json.loads(text).get("proposal_id") if outcome == "allowed" else None
+    check("pay token proposes a deposit change", bool(proposal_id), outcome)
+    if proposal_id:
+        outcome, text = Mcp(tools_url, t2["profile"]).call_with_text("hr___commit_change", {"proposal_id": proposal_id})
+        check("profile token cannot commit the pay proposal", outcome == "refused" and "may not change" in text, outcome)
 
     print("tools runtime, called directly")
     tools_runtime = runtime_url("hr_super_agent_tools")

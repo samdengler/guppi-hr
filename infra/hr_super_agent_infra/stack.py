@@ -7,8 +7,8 @@ what is HR's own: the orchestrator runtime and its target named "hr-diy" on the 
 gateway, the three sub-agent runtimes and their agents gateway, the HR tools server and its
 tables, the tools gateway in front of the knowledge base and the HR tools, nightly
 ingestion, the conversation log, alarms, vended log delivery, and the Dynatrace export.
-Every JWT authorizer accepts the platform user pool's token, so the token the page holds
-on chat.dengler.io is the one checked on every hop.
+The orchestrator's authorizer accepts the page's Okta token; every HR hop after it accepts
+only its own on-behalf-of token (D47, D48; hr_super_agent_infra/obo.py).
 
 Resource ordering that matters:
   runtime -> platform gateway role policy -> "hr-diy" target on the platform edge gateway
@@ -413,9 +413,9 @@ class HrSuperAgentStack(cdk.Stack):
         billing_alarm.add_alarm_action(cloudwatch_actions.SnsAction(alarm_topic))
 
         # ---- Platform -------------------------------------------------------------------
-        # The platform's issuer (Okta since D46): every authorizer below accepts the token
-        # the page holds on chat.dengler.io by its audience, and the HR tools server verifies
-        # the same token against the same issuer and audience (D19).
+        # The platform's issuer (Okta since D46): the orchestrator's authorizer accepts the
+        # token the page holds on chat.dengler.io by its audience. The HR hops after it check
+        # on-behalf-of tokens instead (D47).
         discovery_url = ssm.StringParameter.value_for_string_parameter(
             self, PARAM_JWT_DISCOVERY_URL
         )
@@ -1107,6 +1107,9 @@ class HrSuperAgentStack(cdk.Stack):
         )
 
         orchestrator_workload = workload_identity(self, "OrchestratorWorkload", RUNTIME_NAME)
+        # scripts/obo-checks.py mints hop tokens under this identity with an administrator's
+        # credentials; no role in the stack may use it.
+        agentcore.CfnWorkloadIdentity(self, "ChecksWorkload", name="hr-obo-checks")
         grant_exchange(
             runtime_role, obo.provider_arn(self, BRIDGE_CLIENT), obo.secret_arn(self, BRIDGE_CLIENT), orchestrator_workload
         )

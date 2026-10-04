@@ -1,6 +1,9 @@
 'use strict';
 
 /**
+ * Predates guppi-hr D47: the deployed canvas sends per-hop tokens (hr.js); these
+ * experiments keep the `hrToken` and `X-Hr-User-Token` they were run with.
+ *
  * Diagnostic flows from the first experiments, kept so they can be re-run.
  *
  * Experiment 1 (header probe): a context variable `hrToken`, set by the Connect contact

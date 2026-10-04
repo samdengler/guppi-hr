@@ -19,19 +19,30 @@ from constructs import Construct
 
 PARAMS = "/guppi/obo"
 
-AGENTS_AUDIENCE = "api://hr-agents"
 TOOLS_AUDIENCE = "api://hr-tools"
 TOOLS_RUNTIME_AUDIENCE = "api://hr-tools-runtime"
-AGENTS_SCOPE = "hr.agents"
 POLICY_SCOPE = "hr.tools.policy"
+
+
+def agents_audience(domain: str) -> str:
+    """Each sub-agent has its own agents audience and scope, so a token meant for one
+    sub-agent cannot drive another (critique of the build, finding 3)."""
+    return f"api://hr-agents/{domain}"
+
+
+def agents_scope(domain: str) -> str:
+    return f"hr.agents.{domain}"
+
 
 BRIDGE_CLIENT = "hr-bridge"
 TOOLS_GATEWAY_CLIENT = "hr-tools-gateway"
 DOMAIN_SCOPES = {
     "profile": [POLICY_SCOPE, "hr.tools.profile.read", "hr.tools.profile.write"],
-    "pay": [POLICY_SCOPE, "hr.tools.pay.read", "hr.tools.pay.write"],
+    "pay": [POLICY_SCOPE, "hr.tools.pay.statements.read", "hr.tools.pay.read", "hr.tools.pay.write"],
     "travel": [POLICY_SCOPE],
 }
+# The canvas reads the profile and pay statements, never bank details or writes.
+CANVAS_SCOPES = [POLICY_SCOPE, "hr.tools.profile.read", "hr.tools.pay.statements.read"]
 
 
 def agent_client(domain: str) -> str:
@@ -41,12 +52,16 @@ def agent_client(domain: str) -> str:
 AGENT_CLIENTS = [agent_client(d) for d in DOMAIN_SCOPES]
 
 # Gateway Policy on the tools gateway: each tool for the tokens that hold its scope (A15).
-# A request is allowed only when a rule permits it, so a tool missing here is refused.
+# A request is allowed only when a rule permits it, so a tool missing here is refused:
+# docs___AgenticRetrieveStream, which no caller uses and which runs managed models, is not
+# permitted. The HR tools server checks the same table again (hr_agent.tools.scopes; a
+# test holds the two together).
 TOOL_SCOPES: dict[str, list[str]] = {
-    POLICY_SCOPE: ["docs___Retrieve", "docs___AgenticRetrieveStream", "hr___open_ticket"],
+    POLICY_SCOPE: ["docs___Retrieve", "hr___open_ticket"],
     "hr.tools.profile.read": ["hr___get_profile"],
     "hr.tools.profile.write": ["hr___propose_address_change", "hr___propose_emergency_contact_change"],
-    "hr.tools.pay.read": ["hr___get_direct_deposit", "hr___list_pay_statements"],
+    "hr.tools.pay.statements.read": ["hr___list_pay_statements"],
+    "hr.tools.pay.read": ["hr___get_direct_deposit"],
     "hr.tools.pay.write": ["hr___propose_direct_deposit_change"],
 }
 # commit_change takes a proposal id, so Policy lets any writer call it and the tools server
@@ -103,8 +118,12 @@ class Obo:
     def provider_arn(self, scope: Construct, client: str) -> str:
         return ssm.StringParameter.value_for_string_parameter(scope, f"{PARAMS}/{client}/provider-arn")
 
-    def secret_arn(self, scope: Construct, client: str) -> str:
-        return ssm.StringParameter.value_for_string_parameter(scope, f"{PARAMS}/{client}/secret-arn")
+    @staticmethod
+    def secret_arn(scope: Construct, client: str) -> str:
+        """The client secret by its stable name (guppi-gpt names it guppi/obo/<client>), so a
+        replaced secret keeps its grant."""
+        stack = Stack.of(scope)
+        return f"arn:aws:secretsmanager:{stack.region}:{stack.account}:secret:guppi/obo/{client}-*"
 
 
 def workload_identity(scope: Construct, construct_id: str, runtime_name: str) -> agentcore.CfnWorkloadIdentity:

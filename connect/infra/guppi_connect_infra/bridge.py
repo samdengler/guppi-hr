@@ -152,11 +152,12 @@ class ConnectBridge(Construct):
         # credential provider only. The name falls under the documented runtime role pattern.
         workload = agentcore.CfnWorkloadIdentity(self, "Workload", name=f"{RUNTIME_NAME}-obo")
         provider_arn = ssm.StringParameter.value_for_string_parameter(self, f"{OBO}/hr-bridge/provider-arn")
-        # Identity reads the bridge client's secret as this role (guppi-hr aws-feedback A16).
+        # Identity reads the bridge client's secret as this role (guppi-hr aws-feedback A16),
+        # by its stable name, so a replaced secret keeps the grant.
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=["secretsmanager:GetSecretValue"],
-                resources=[ssm.StringParameter.value_for_string_parameter(self, f"{OBO}/hr-bridge/secret-arn")],
+                resources=[f"arn:aws:secretsmanager:{region}:{account}:secret:guppi/obo/hr-bridge-*"],
             )
         )
         role.add_to_policy(

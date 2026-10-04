@@ -105,11 +105,19 @@ NO_REPLY_LINE = "No answer came back from the HR assistant. Try again in a momen
 # since the canvas's state, a pending change included, did not carry over (finding 8).
 RESTARTED_LINE = "(The assistant started a new conversation, so it may ask for details again.)"
 SIGNIN_LINE = "HR could not confirm the sign-in. Try again in a minute."
-# The two tokens the canvas carries, each traded for the employee's Okta token through the
-# bridge's credential provider before a contact starts (guppi-hr D47).
-AGENTS_TOKENS = TokenExchanger(["hr.agents"])
-CANVAS_TOKENS = TokenExchanger(["hr.tools.policy", "hr.tools.profile.read", "hr.tools.pay.read"])
-HOP_ATTRIBUTES = ("hrAgentsToken", "hrToolsToken")
+# The tokens the canvas carries, each traded for the employee's Okta token through the
+# bridge's credential provider before a contact starts (guppi-hr D47): one agents token per
+# sub-agent, which only that sub-agent accepts, and a read-only tools token.
+DOMAINS = ("profile", "pay", "travel")
+AGENTS_TOKENS = {domain: TokenExchanger([f"hr.agents.{domain}"]) for domain in DOMAINS}
+CANVAS_TOKENS = TokenExchanger(["hr.tools.policy", "hr.tools.profile.read", "hr.tools.pay.statements.read"])
+
+
+def agents_attribute(domain: str) -> str:
+    return f"hr{domain.capitalize()}Token"
+
+
+HOP_ATTRIBUTES = (*(agents_attribute(d) for d in DOMAINS), "hrToolsToken")
 # The sub-agents the canvas delegates to; hr.js names each runtime session
 # "{conversationId}-{domain}", and the conversation id is the contact id. The stack sets
 # WARM_DOMAINS from connect/acxd/domains.json, the list hr.js checks itself against.
@@ -269,8 +277,8 @@ class ConnectTurn:
         self.clock = clock
         self.sleep = sleep
         self.stats: dict[str, Any] = {}
-        # The agents token of the contact this run started, for the warm calls.
-        self.agents_token: str | None = None
+        # The agents tokens of the contact this run started, by sub-agent, for the warm calls.
+        self.agents_tokens: dict[str, str] = {}
         # Set by a warm start: called with the contact id as soon as a new contact exists.
         self.on_contact: Callable[[str], None] | None = None
 
@@ -407,10 +415,11 @@ class ConnectTurn:
                 }
             },
         }
-        if not self.agents_token:
+        token = self.agents_tokens.get(domain)
+        if not token:
             return False
         headers = {
-            "Authorization": f"Bearer {self.agents_token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": f"{contact_id}-{domain}",
         }
@@ -477,26 +486,28 @@ class ConnectTurn:
             return False
         return True
 
-    def hop_tokens(self) -> tuple[str, str]:
-        """The agents token and the canvas's tools token, exchanged at once (D47)."""
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            agents = pool.submit(AGENTS_TOKENS.exchange, self.token)
+    def hop_tokens(self) -> tuple[dict[str, str], str]:
+        """The agents token of each sub-agent and the canvas's tools token, exchanged at
+        once (D47)."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(DOMAINS) + 1) as pool:
+            agents = {d: pool.submit(AGENTS_TOKENS[d].exchange, self.token) for d in DOMAINS}
             canvas = pool.submit(CANVAS_TOKENS.exchange, self.token)
-            return agents.result(), canvas.result()
+            return {d: f.result() for d, f in agents.items()}, canvas.result()
 
     def start_contact(self, key: str, token_exp: float) -> Session:
         settings = self.settings
         # The designer reads attributes only when the flow starts (C2), so the exchange comes
         # first; the warm start runs on the first focus on the composer (D44).
-        agents_token, canvas_token = self.hop_tokens()
-        self.agents_token = agents_token
-        token_exp = min(token_exp, expires_at(agents_token)) if AGENTS_TOKENS.enabled else token_exp
+        agents_tokens, canvas_token = self.hop_tokens()
+        self.agents_tokens = agents_tokens
+        if CANVAS_TOKENS.enabled:
+            token_exp = min([token_exp, expires_at(canvas_token), *(expires_at(t) for t in agents_tokens.values())])
         started = self.clients.connect.start_chat_contact(
             InstanceId=settings.instance_id,
             ContactFlowId=settings.contact_flow_id,
             ParticipantDetails={"DisplayName": "Employee"},
             Attributes={
-                "hrAgentsToken": agents_token,
+                **{agents_attribute(d): token for d, token in agents_tokens.items()},
                 "hrToolsToken": canvas_token,
                 "employeeId": subject(self.token),
             },

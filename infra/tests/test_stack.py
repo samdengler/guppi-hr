@@ -117,10 +117,12 @@ def test_every_hr_hop_accepts_only_its_own_hop_token(template):
     # the clients that may call it, with the scope it needs; the Okta token gets no further.
     obo = _ssm_parameter_ref(template, "/guppi/obo/discovery-url")
     expected = {
-        "hr-super-agent-agents": (["api://hr-agents"], ["hr-bridge"], ["hr.agents"]),
-        "hr_super_agent_profile": (["api://hr-agents"], ["hr-bridge"], ["hr.agents"]),
-        "hr_super_agent_pay": (["api://hr-agents"], ["hr-bridge"], ["hr.agents"]),
-        "hr_super_agent_travel": (["api://hr-agents"], ["hr-bridge"], ["hr.agents"]),
+        "hr-super-agent-agents": (["api://hr-agents/profile", "api://hr-agents/pay", "api://hr-agents/travel"],
+                                  ["hr-bridge"], ["hr.agents.profile", "hr.agents.pay", "hr.agents.travel"]),
+        # Each sub-agent takes only its own agents token (critique of the build, finding 3).
+        "hr_super_agent_profile": (["api://hr-agents/profile"], ["hr-bridge"], ["hr.agents.profile"]),
+        "hr_super_agent_pay": (["api://hr-agents/pay"], ["hr-bridge"], ["hr.agents.pay"]),
+        "hr_super_agent_travel": (["api://hr-agents/travel"], ["hr-bridge"], ["hr.agents.travel"]),
         "hr-super-agent-tools": (["api://hr-tools"],
                                  ["hr-bridge", "hr-agent-profile", "hr-agent-pay", "hr-agent-travel"],
                                  ["hr.tools.policy"]),
@@ -368,7 +370,7 @@ def test_runtime_role_grants_only_the_one_inference_profile(template):
     )
 
 
-def test_tools_gateway_is_mcp_with_cognito_jwt_and_kb_connector(template):
+def test_tools_gateway_is_mcp_with_a_jwt_authorizer_and_kb_connector(template):
     template.has_resource_properties(
         "AWS::BedrockAgentCore::Gateway",
         {"Name": "hr-super-agent-tools", "ProtocolType": "MCP", "AuthorizerType": "CUSTOM_JWT"},
@@ -1155,7 +1157,7 @@ def test_each_exchanging_runtime_names_its_provider_workload_and_scopes(template
                 for r in template.find_resources("AWS::BedrockAgentCore::Runtime").values()}
     expected_scopes = {
         "profile": "hr.tools.policy hr.tools.profile.read hr.tools.profile.write",
-        "pay": "hr.tools.policy hr.tools.pay.read hr.tools.pay.write",
+        "pay": "hr.tools.policy hr.tools.pay.statements.read hr.tools.pay.read hr.tools.pay.write",
         "travel": "hr.tools.policy",
     }
     for domain, scopes in expected_scopes.items():
@@ -1168,7 +1170,7 @@ def test_each_exchanging_runtime_names_its_provider_workload_and_scopes(template
     assert orchestrator["OBO_WORKLOAD"] == "hr_super_agent-obo"
     names = {w["Properties"]["Name"] for w in template.find_resources("AWS::BedrockAgentCore::WorkloadIdentity").values()}
     assert names == {"hr_super_agent-obo", "hr_super_agent_profile-obo", "hr_super_agent_pay-obo",
-                     "hr_super_agent_travel-obo"}
+                     "hr_super_agent_travel-obo", "hr-obo-checks"}
 
 
 def test_each_caller_reads_only_its_own_clients_secret(template):
@@ -1180,10 +1182,85 @@ def test_each_caller_reads_only_its_own_clients_secret(template):
                 for resource in statement["Resource"] if isinstance(statement["Resource"], list) else [statement["Resource"]]:
                     granted.setdefault(name, []).append(json.dumps(resource))
     def has(prefix: str, client: str) -> bool:
-        ref = json.dumps(_ssm_parameter_ref(template, f"/guppi/obo/{client}/secret-arn"))
-        return any(n.startswith(prefix) and ref in r for n, rs in granted.items() for r in rs)
+        # By the secret's stable name, so a replaced secret keeps its grant (finding 9).
+        name = f":secret:guppi/obo/{client}-*"
+        return any(n.startswith(prefix) and name in r for n, rs in granted.items() for r in rs)
     assert has("ToolsGatewayRoleDefaultPolicy", "hr-tools-gateway")
     assert has("RuntimeRoleDefaultPolicy", "hr-bridge")
     for domain in ("Profile", "Pay", "Travel"):
         assert has(f"SubAgents{domain}RoleDefaultPolicy", f"hr-agent-{domain.lower()}")
         assert not has(f"SubAgents{domain}RoleDefaultPolicy", "hr-tools-gateway")
+
+
+
+def test_the_server_and_policy_hold_one_scope_table():
+    from hr_agent.tools import scopes as server
+    from hr_agent.tools.store import WRITE_SCOPE
+    from hr_super_agent_infra import obo
+
+    by_tool = {}
+    for scope, tools in obo.TOOL_SCOPES.items():
+        for tool in tools:
+            by_tool.setdefault(tool, set()).add(scope)
+    hr_tools = {t.removeprefix("hr___"): s for t, s in by_tool.items() if t.startswith("hr___")}
+    hr_tools["commit_change"] = set(obo.WRITE_SCOPES)
+    assert hr_tools == {tool: set(s) for tool, s in server.TOOL_SCOPES.items()}
+    assert set(WRITE_SCOPE.values()) == set(obo.WRITE_SCOPES) == set(server.WRITE_SCOPES)
+    # Every scope a token can carry is one some caller is issued.
+    issued = {s for scopes in obo.DOMAIN_SCOPES.values() for s in scopes} | set(obo.CANVAS_SCOPES)
+    assert set(obo.TOOL_SCOPES) <= issued
+
+
+def test_every_listed_tool_has_a_policy_rule():
+    from hr_super_agent_infra import obo
+    from hr_super_agent_infra.hr_tools import TOOLS_SCHEMA
+
+    ruled = {t for tools in obo.TOOL_SCOPES.values() for t in tools} | {obo.COMMIT_TOOL}
+    listed = {"hr___" + t["name"] for t in json.loads(TOOLS_SCHEMA.read_text())["tools"]}
+    assert listed <= ruled
+
+
+@pytest.mark.parametrize("claim,scope,expected", [
+    ("hr.tools.pay.read", "hr.tools.pay.read", True),
+    ("hr.tools.pay.read hr.tools.policy", "hr.tools.pay.read", True),
+    ("hr.tools.policy hr.tools.pay.read", "hr.tools.pay.read", True),
+    ("hr.tools.policy hr.tools.pay.read hr.tools.pay.write", "hr.tools.pay.read", True),
+    ("hr.tools.pay.readonly", "hr.tools.pay.read", False),
+    ("hr.tools.pay.statements.read", "hr.tools.pay.read", False),
+    ("xhr.tools.pay.read", "hr.tools.pay.read", False),
+    ("hr.tools.policy", "hr.tools.pay.read", False),
+])
+def test_the_cedar_scope_match_is_whole_word(claim, scope, expected):
+    # Cedar's `like` treats * as any run of characters, as fnmatch does with no other
+    # wildcards in the pattern (scope names hold none).
+    import fnmatch
+    import re
+
+    from hr_super_agent_infra.obo import scope_condition
+
+    patterns = re.findall(r'like "([^"]+)"', scope_condition(scope))
+    assert len(patterns) == 4
+    assert any(fnmatch.fnmatchcase(claim, p) for p in patterns) is expected
+
+
+def test_the_hr_side_matches_the_issuers_rules():
+    """guppi-gpt's issuer grants exactly the scopes and audiences the HR side expects (the
+    two repositories are checked out side by side; skipped when guppi-gpt is not)."""
+    import importlib.util
+    from pathlib import Path
+
+    from hr_super_agent_infra import obo
+
+    path = Path(__file__).resolve().parents[3] / "guppi-gpt" / "infra" / "guppi_gpt_infra" / "obo.py"
+    if not path.exists():
+        pytest.skip("guppi-gpt is not checked out beside guppi-hr")
+    spec = importlib.util.spec_from_file_location("platform_obo", path)
+    platform = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(platform)
+    assert platform.DOMAIN_SCOPES == obo.DOMAIN_SCOPES
+    assert platform.CANVAS_SCOPES == obo.CANVAS_SCOPES
+    assert platform.TOOLS == obo.TOOLS_AUDIENCE and platform.TOOLS_RUNTIME == obo.TOOLS_RUNTIME_AUDIENCE
+    for domain in obo.DOMAIN_SCOPES:
+        assert platform.agents_audience(domain) == obo.agents_audience(domain)
+        assert platform.agents_scope(domain) == obo.agents_scope(domain)
+    assert set(platform.CLIENTS) == {obo.BRIDGE_CLIENT, obo.TOOLS_GATEWAY_CLIENT, *obo.AGENT_CLIENTS}

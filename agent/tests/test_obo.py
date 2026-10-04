@@ -74,9 +74,19 @@ def test_a_failed_exchange_refuses_and_names_no_claim(clock):
     assert str(raised.value) == "RuntimeError"
 
 
-def test_without_a_provider_the_token_passes_unchanged(clock, monkeypatch):
+def test_without_a_provider_the_exchange_fails_closed(clock, monkeypatch):
+    # A missing setting must never pass the Okta token on as a hop token (finding 4).
     monkeypatch.delenv("OBO_PROVIDER", raising=False)
-    obo = TokenExchanger(["hr.agents"], client_factory=lambda: pytest.fail("no call expected"))
+    monkeypatch.delenv("OBO", raising=False)
+    obo = TokenExchanger(["hr.agents.pay"], client_factory=lambda: pytest.fail("no call expected"))
+    with pytest.raises(ExchangeError):
+        obo.exchange("okta-token")
+
+
+def test_only_obo_off_passes_the_token_unchanged(clock, monkeypatch):
+    monkeypatch.delenv("OBO_PROVIDER", raising=False)
+    monkeypatch.setenv("OBO", "off")
+    obo = TokenExchanger(["hr.agents.pay"], client_factory=lambda: pytest.fail("no call expected"))
     assert not obo.enabled and obo.exchange("okta-token") == "okta-token"
 
 
@@ -92,3 +102,31 @@ async def test_the_async_path_uses_the_cache(clock):
     obo = exchanger(clock, identity)
     first = await obo.aexchange("agents-token")
     assert await obo.aexchange("agents-token") == first and len(identity.calls) == 1
+
+
+class Failing:
+    enabled = True
+
+    async def aexchange(self, subject: str) -> str:
+        raise ExchangeError("ValidationException")
+
+
+async def test_hr_diy_says_so_when_the_agents_exchange_fails(monkeypatch):
+    from hr_agent import orchestrator
+
+    monkeypatch.setattr(orchestrator, "AGENTS_TOKENS", {d: Failing() for d in orchestrator.DOMAINS})
+    reply = await orchestrator.send_to_sub_agent("pay", "okta-token", "t1", "hi", [], None, orchestrator.Settings())
+    assert reply.signin and reply.error and reply.text == ""
+
+
+async def test_hr_diy_general_answer_says_so_when_the_tools_exchange_fails(monkeypatch):
+    from ag_ui.core import RunAgentInput
+    from hr_agent import agent
+
+    monkeypatch.setattr(agent, "TOOLS_TOKENS", Failing())
+    monkeypatch.setenv("TOOLS_GATEWAY_URL", "https://tools.example")
+    run_input = RunAgentInput(thread_id="t", run_id="r", state={}, messages=[], tools=[], context=[], forwarded_props={})
+    events = [e async for e in agent.StrandsRun("okta-token", agent.Settings()).run(run_input)]
+    text = "".join(getattr(e, "delta", "") for e in events)
+    assert text == "HR could not confirm the sign-in. Try again in a minute."
+    assert events[-1].type == "RUN_FINISHED"
