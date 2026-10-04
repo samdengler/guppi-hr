@@ -628,7 +628,8 @@ def greeting_steps(steps: list[Step], src: Sources, run: Run) -> None:
         )
         steps.append(place(step, None if ours else holder(steps, step.start, end or step.start)))
     if src.contact_started is not None and run.start <= src.contact_started <= run.end:
-        step = Step(src.contact_started, None, "contact started, the bridge saw the greeting")
+        seen_by = "the chat start function" if run.source == "chat-start" else "the bridge"
+        step = Step(src.contact_started, None, f"contact started, {seen_by} saw the greeting")
         steps.append(place(step, None if ours else holder(steps, step.start, step.start)))
 
 

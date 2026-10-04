@@ -442,6 +442,7 @@ def test_a_function_start_shows_its_own_steps():
     assert "+700    +2,880   2,180  greeting wait [connect]" in text
     assert "designer greeting (the flow started; the canvas read the tokens)" in text
     assert "chat start stream closes; ok, 3 sub-agents warmed" in text
+    assert "contact started, the chat start function saw the greeting" in text
 
 
 def test_a_reported_question_is_on_connects_clock():
