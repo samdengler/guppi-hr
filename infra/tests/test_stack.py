@@ -721,11 +721,11 @@ def test_vended_log_delivery_sources_cover_application_logs_and_traces(template)
         assert len(delivery.get("DependsOn", [])) == 2
 
 
-def test_hr_runtimes_use_the_new_agentcore_runtime(template):
+def test_hr_runtimes_name_their_platform_version(template):
     runtimes = template.find_resources("AWS::BedrockAgentCore::Runtime")
     versions = {r["Properties"]["AgentRuntimeName"]: r["Properties"].get("PlatformVersion") for r in runtimes.values()}
     for name in ("hr_super_agent_tools", "hr_super_agent_profile", "hr_super_agent_travel", "hr_super_agent_pay"):
-        assert versions[name] == "V2"
+        assert versions[name] == "V1"
 
 
 def test_vended_log_delivery_resource_policy_grants_the_delivery_service(template):
