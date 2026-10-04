@@ -15,3 +15,6 @@ node_modules/
 .deploy/
 .claude/worktrees/
 .claude/settings.local.json
+
+# The chat start function's Rust build output.
+connect/chat_start/target/
