@@ -33,6 +33,7 @@ def test_every_code_commit_since_d47_is_in_the_rollback_list():
     listed = set(re.search(r"^OBO_COMMITS=\(([^)]*)\)", (ROOT / "scripts" / "obo-rollback.sh").read_text(),
                            re.MULTILINE).group(1).split())
     since = subprocess.run(["git", "log", "--format=%h", "--abbrev=7", "c6d96e0^..HEAD", "--",
-                            "agent", "connect", "infra", "scripts", ":(exclude)scripts/obo-rollback.sh"],
+                            "agent", "connect", "infra", "scripts", ":(exclude)scripts/obo-rollback.sh",
+                            ":(exclude)infra/tests/test_rollback.py"],
                            cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
     assert set(since) - listed == set(), "add these to OBO_COMMITS in scripts/obo-rollback.sh"

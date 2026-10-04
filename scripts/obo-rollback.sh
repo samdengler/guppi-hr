@@ -14,7 +14,8 @@
 #   scripts/obo-rollback.sh --diff     # show the CloudFormation changes, deploy nothing
 #   scripts/obo-rollback.sh            # deploy the rollback (asks first)
 #
-# Each listed commit is reverse-applied with this script and the documents left out: only
+# Each listed commit is reverse-applied with the rollback's own files (this script and its
+# test) and the documents left out: only
 # what deploys is reverted, and the decision log, findings and design keep their history,
 # so a later edit to a document cannot make the revert conflict (critique rounds 3 and 4).
 #
@@ -42,7 +43,7 @@ echo "reverting, newest first:"
 for commit in "${OBO_COMMITS[@]}"; do
   git -C "$WORK" log --oneline -1 "$commit"
   patch="$(git -C "$WORK" show --binary --format= "$commit" -- . ':(exclude)scripts/obo-rollback.sh' \
-    ':(exclude)docs' ':(exclude)*.md')"
+    ':(exclude)infra/tests/test_rollback.py' ':(exclude)docs' ':(exclude)*.md')"
   if [[ -n "$patch" ]]; then
     printf '%s\n' "$patch" | git -C "$WORK" apply -R --3way --index
   fi
