@@ -58,6 +58,7 @@ from ag_ui.core import (
 
 from botocore.exceptions import ClientError
 
+from connect_bridge.obo import ExchangeError, TokenExchanger, expires_at
 from connect_bridge.store import Pending, Session
 
 log = logging.getLogger("connect_bridge")
@@ -103,6 +104,12 @@ NO_REPLY_LINE = "No answer came back from the HR assistant. Try again in a momen
 # Shown when the thread's contact was replaced (its token or its chat duration ran out),
 # since the canvas's state, a pending change included, did not carry over (finding 8).
 RESTARTED_LINE = "(The assistant started a new conversation, so it may ask for details again.)"
+SIGNIN_LINE = "HR could not confirm the sign-in. Try again in a minute."
+# The two tokens the canvas carries, each traded for the employee's Okta token through the
+# bridge's credential provider before a contact starts (guppi-hr D47).
+AGENTS_TOKENS = TokenExchanger(["hr.agents"])
+CANVAS_TOKENS = TokenExchanger(["hr.tools.policy", "hr.tools.profile.read", "hr.tools.pay.read"])
+HOP_ATTRIBUTES = ("hrAgentsToken", "hrToolsToken")
 # The sub-agents the canvas delegates to; hr.js names each runtime session
 # "{conversationId}-{domain}", and the conversation id is the contact id. The stack sets
 # WARM_DOMAINS from connect/acxd/domains.json, the list hr.js checks itself against.
@@ -262,6 +269,8 @@ class ConnectTurn:
         self.clock = clock
         self.sleep = sleep
         self.stats: dict[str, Any] = {}
+        # The agents token of the contact this run started, for the warm calls.
+        self.agents_token: str | None = None
         # Set by a warm start: called with the contact id as soon as a new contact exists.
         self.on_contact: Callable[[str], None] | None = None
 
@@ -282,7 +291,17 @@ class ConnectTurn:
             yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=STEP_NAME)
             yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread, run_id=run)
             return
-        session = await asyncio.to_thread(self.session_for, thread)
+        try:
+            session = await asyncio.to_thread(self.session_for, thread)
+        except ExchangeError:
+            # Fail closed: no contact starts with the Okta token in place of the hop tokens.
+            self.stats["exchange_failed"] = True
+            problem("exchange_failed", "-")
+            for event in text_events(SIGNIN_LINE):
+                yield event
+            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=STEP_NAME)
+            yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread, run_id=run)
+            return
         mark_span(session.contact_id)
         try:
             if self.stats.get("restarted"):
@@ -388,8 +407,10 @@ class ConnectTurn:
                 }
             },
         }
+        if not self.agents_token:
+            return False
         headers = {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {self.agents_token}",
             "Content-Type": "application/json",
             "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": f"{contact_id}-{domain}",
         }
@@ -456,13 +477,29 @@ class ConnectTurn:
             return False
         return True
 
+    def hop_tokens(self) -> tuple[str, str]:
+        """The agents token and the canvas's tools token, exchanged at once (D47)."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            agents = pool.submit(AGENTS_TOKENS.exchange, self.token)
+            canvas = pool.submit(CANVAS_TOKENS.exchange, self.token)
+            return agents.result(), canvas.result()
+
     def start_contact(self, key: str, token_exp: float) -> Session:
         settings = self.settings
+        # The designer reads attributes only when the flow starts (C2), so the exchange comes
+        # first; the warm start runs on the first focus on the composer (D44).
+        agents_token, canvas_token = self.hop_tokens()
+        self.agents_token = agents_token
+        token_exp = min(token_exp, expires_at(agents_token)) if AGENTS_TOKENS.enabled else token_exp
         started = self.clients.connect.start_chat_contact(
             InstanceId=settings.instance_id,
             ContactFlowId=settings.contact_flow_id,
             ParticipantDetails={"DisplayName": "Employee"},
-            Attributes={"hrToken": self.token, "employeeId": subject(self.token)},
+            Attributes={
+                "hrAgentsToken": agents_token,
+                "hrToolsToken": canvas_token,
+                "employeeId": subject(self.token),
+            },
             SupportedMessagingContentTypes=["text/plain"],
             ChatDurationInMinutes=CHAT_DURATION_MINUTES,
         )
@@ -521,7 +558,7 @@ class ConnectTurn:
             self.clients.connect.update_contact_attributes(
                 InitialContactId=session.contact_id,
                 InstanceId=self.settings.instance_id,
-                Attributes={"hrToken": CLEARED},
+                Attributes={name: CLEARED for name in HOP_ATTRIBUTES},
             )
             session.token_cleared = True
         except Exception as error:  # noqa: BLE001 - logged; the run goes on

@@ -99,3 +99,16 @@ def test_the_bridge_accepts_the_platform_audience(template):
     runtime = next(iter(template.find_resources("AWS::BedrockAgentCore::Runtime").values()))["Properties"]
     authorizer = runtime["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
     assert "AllowedAudience" in authorizer and "AllowedClients" not in authorizer
+
+
+def test_the_bridge_exchanges_only_through_its_own_provider_and_workload(template):
+    # guppi-hr D47: the bridge trades the Okta token for the canvas's hop tokens.
+    runtime = next(iter(template.find_resources("AWS::BedrockAgentCore::Runtime").values()))["Properties"]
+    env = runtime["EnvironmentVariables"]
+    assert env["OBO_WORKLOAD"] == "guppi_connect_bridge-obo"
+    assert "/guppi/obo/hr-bridge/provider-name" in json.dumps(template.to_json()["Parameters"])
+    (grant,) = [s for s in statements(template) if "bedrock-agentcore:GetResourceOauth2Token" in actions(s)]
+    assert "/guppi/obo/hr-bridge/provider-arn" in json.dumps(template.to_json()["Parameters"])
+    assert len(grant["Resource"]) == 4  # the provider, the vault, the directory, the workload
+    names = {w["Properties"]["Name"] for w in template.find_resources("AWS::BedrockAgentCore::WorkloadIdentity").values()}
+    assert names == {"guppi_connect_bridge-obo"}

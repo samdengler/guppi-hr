@@ -2,8 +2,11 @@
 agents gateway with runtime targets and JWT passthrough.
 
 The gateway has no protocol type, like the edge gateway, because runtime targets cannot
-join an MCP gateway. Each runtime checks the user's token itself (JWT authorizer) and lets
-Authorization through to the container, which calls the tools gateway with it. Each
+join an MCP gateway. The gateway and each runtime accept only the agents token the bridge's
+client gets from the on-behalf-of issuer (D47: audience `api://hr-agents`, client
+`hr-bridge`, scope `hr.agents`); the gateway passes it through, since runtime targets cannot
+exchange (aws-feedback A13). Each runtime lets Authorization through to the container,
+which trades it through AgentCore Identity for its own domain's tools token. Each
 runtime's agent card advertises its gateway path (AGENTCORE_RUNTIME_URL), so an A2A client
 that follows the card stays on the gateway.
 """
@@ -17,6 +20,14 @@ from aws_cdk import aws_bedrockagentcore as agentcore
 from aws_cdk import aws_iam as iam
 from constructs import Construct
 
+from hr_super_agent_infra.obo import (
+    AGENTS_AUDIENCE,
+    AGENTS_SCOPE,
+    BRIDGE_CLIENT,
+    DOMAIN_SCOPES,
+    grant_exchange,
+    workload_identity,
+)
 from hr_super_agent_infra.runtime_role import runtime_execution_role
 
 SUB_AGENT_NAMES = ("profile", "pay", "travel")  # AGENT_ROLE values and target names (D4)
@@ -35,8 +46,10 @@ class SubAgents(Construct):
         *,
         image_uri: str,
         grant_image: Callable[[iam.Role], None],
-        discovery_url: str,
-        allowed_audience: list[str],
+        obo_discovery_url: str,
+        provider_names: dict[str, str],
+        provider_arns: dict[str, str],
+        secret_arns: dict[str, str],
         tools_gateway_url: str,
         model_id: str,
         hr_tool_prefix: str,
@@ -63,8 +76,10 @@ class SubAgents(Construct):
             authorizer_type="CUSTOM_JWT",
             authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
-                    discovery_url=discovery_url,
-                    allowed_audience=allowed_audience,
+                    discovery_url=obo_discovery_url,
+                    allowed_audience=[AGENTS_AUDIENCE],
+                    allowed_clients=[BRIDGE_CLIENT],
+                    allowed_scopes=[AGENTS_SCOPE],
                 )
             ),
             # protocol_type is left unset: runtime targets cannot join MCP gateways.
@@ -89,6 +104,8 @@ class SubAgents(Construct):
                 )
             )
             grant_image(role)
+            workload = workload_identity(self, f"{title}Workload", runtime_name)
+            grant_exchange(role, provider_arns[name], secret_arns[name], workload)
 
             runtime = agentcore.CfnRuntime(
                 self,
@@ -112,8 +129,10 @@ class SubAgents(Construct):
                 ),
                 authorizer_configuration=agentcore.CfnRuntime.AuthorizerConfigurationProperty(
                     custom_jwt_authorizer=agentcore.CfnRuntime.CustomJWTAuthorizerConfigurationProperty(
-                        discovery_url=discovery_url,
-                        allowed_audience=allowed_audience,
+                        discovery_url=obo_discovery_url,
+                        allowed_audience=[AGENTS_AUDIENCE],
+                        allowed_clients=[BRIDGE_CLIENT],
+                        allowed_scopes=[AGENTS_SCOPE],
                     )
                 ),
                 environment_variables={
@@ -122,6 +141,9 @@ class SubAgents(Construct):
                     "TOOLS_GATEWAY_URL": tools_gateway_url,
                     "MODEL_ID": model_id,
                     "HR_TOOL_PREFIX": hr_tool_prefix,
+                    "OBO_PROVIDER": provider_names[name],
+                    "OBO_WORKLOAD": workload.name,
+                    "OBO_SCOPES": " ".join(DOMAIN_SCOPES[name]),
                     "AGENTCORE_RUNTIME_URL": cdk.Fn.join(
                         "", [self.gateway.attr_gateway_url, f"/{name}/invocations/"]
                     ),

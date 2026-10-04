@@ -32,6 +32,7 @@ TRACEPARENT = f"00-{TRACE_ID}-b7ad6b7169203331-01"
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 OTHER_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 TABLES = Tables(employees="employees", proposals="proposals", tickets="tickets", audit="audit")
+ALL_SCOPES = "hr.tools.policy hr.tools.profile.read hr.tools.profile.write hr.tools.pay.read hr.tools.pay.write"
 
 
 def token(sub="user-1", key=KEY, **overrides) -> str:
@@ -40,6 +41,9 @@ def token(sub="user-1", key=KEY, **overrides) -> str:
         "iss": ISSUER,
         "client_id": CLIENT_ID,
         "token_use": "access",
+        "scope": ALL_SCOPES,
+        "act": {"sub": "hr-tools-gateway", "act": {"sub": "hr-agent-profile", "act": {"sub": "hr-bridge"}}},
+        "iat": int(time.time()),
         "exp": int(time.time()) + 600,
         **overrides,
     }
@@ -108,7 +112,7 @@ def call(client, tool, arguments=None, sub="user-1", thread="thread-1", headers=
         "traceparent": TRACEPARENT,
     }
     if sub is not None:
-        sent["x-hr-user-token"] = token(sub)
+        sent["authorization"] = f"Bearer {token(sub)}"
     if thread is not None:
         sent["x-hr-thread-id"] = thread
     sent.update(headers or {})
@@ -133,10 +137,12 @@ ADDRESS = {"line1": "419 Glendale Ave", "city": "Decatur", "state": "GA", "posta
 # ---- identity -----------------------------------------------------------------------
 
 
-def test_caller_comes_from_the_verified_header_token():
-    headers = {"X-Hr-User-Token": token("abc"), "X-Hr-Thread-Id": "t1", "traceparent": TRACEPARENT}
+def test_caller_comes_from_the_verified_bearer_token():
+    headers = {"Authorization": f"Bearer {token('abc')}", "X-Hr-Thread-Id": "t1", "traceparent": TRACEPARENT}
     caller = caller_from_headers(headers, verifier())
     assert (caller.sub, caller.thread_id, caller.trace_id) == ("abc", "t1", TRACE_ID)
+    assert "hr.tools.pay.write" in caller.scopes
+    assert caller.acted_by == "hr-tools-gateway<hr-agent-profile<hr-bridge"
 
 
 @pytest.mark.parametrize(
@@ -146,18 +152,21 @@ def test_caller_comes_from_the_verified_header_token():
         token(iss="https://example.com/other"),
         token(client_id="someone-else"),
         token(token_use="id"),
-        token(exp=int(time.time()) - 5),
+        token(exp=int(time.time()) - 120),  # past the 60-second leeway
+        token(iat=None),
         "not-a-jwt",
     ],
 )
 def test_tokens_that_fail_verification_are_refused(bad):
     with pytest.raises(IdentityError):
-        caller_from_headers({"x-hr-user-token": bad}, verifier())
+        caller_from_headers({"authorization": f"Bearer {bad}"}, verifier())
 
 
-def test_a_request_without_the_token_header_is_refused():
-    with pytest.raises(IdentityError):
-        caller_from_headers({"authorization": f"Bearer {token()}"}, verifier())
+def test_a_request_without_a_bearer_token_is_refused():
+    # The second copy in X-Hr-User-Token is gone (D47); only the runtime-verified bearer counts.
+    for headers in ({"x-hr-user-token": token()}, {"authorization": token()}, {}):
+        with pytest.raises(IdentityError):
+            caller_from_headers(headers, verifier())
 
 
 def test_a_verifier_needs_clients_or_an_audience():
@@ -260,6 +269,27 @@ def test_commit_applies_the_change_and_writes_the_audit_record_with_the_trace_id
     audit = aws.Table("audit").get_item(Key={"sub": "user-1", "audit_id": result["audit_id"]})
     assert audit["Item"]["trace_id"] == TRACE_ID
     assert audit["Item"]["after"]["postal_code"] == "30030"
+
+
+def test_the_audit_record_names_the_clients_that_acted(client, aws):
+    proposal_id = call(client, "propose_address_change", ADDRESS)[1]["proposal_id"]
+    result = call(client, "commit_change", {"proposal_id": proposal_id})[1]
+    audit = aws.Table("audit").get_item(Key={"sub": "user-1", "audit_id": result["audit_id"]})["Item"]
+    assert audit["acted_by"] == "hr-tools-gateway<hr-agent-profile<hr-bridge"
+
+
+@pytest.mark.parametrize("scope", [
+    "hr.tools.policy hr.tools.pay.read hr.tools.pay.write",  # the Pay agent's token
+    "hr.tools.policy hr.tools.profile.read hr.tools.pay.read",  # the canvas's token
+    "",
+])
+def test_a_commit_needs_the_write_scope_of_the_fields_domain(client, scope):
+    # D47: Gateway Policy knows only the proposal id, so the server checks the field's scope.
+    proposal_id = call(client, "propose_address_change", ADDRESS)[1]["proposal_id"]
+    limited = {"authorization": f"Bearer {token('user-1', scope=scope)}"}
+    error, text = call(client, "commit_change", {"proposal_id": proposal_id}, headers=limited)
+    assert error and "may not change home_address" in text
+    assert call(client, "commit_change", {"proposal_id": proposal_id})[1]["committed"]
 
 
 @pytest.mark.parametrize("proposal_id", ["", "   "])
@@ -366,10 +396,10 @@ def test_an_okta_shaped_token_is_accepted_and_keyed_on_uid():
     )
     claims_token = jwt.encode(
         {"sub": "quinn@example.com", "uid": "00u1abcd", "cid": CLIENT_ID, "aud": "api://guppi",
-         "iss": ISSUER, "exp": int(time.time()) + 600},
+         "iss": ISSUER, "iat": int(time.time()), "exp": int(time.time()) + 600},
         KEY, algorithm="RS256", headers={"kid": "test"},
     )
-    caller = caller_from_headers({"X-Hr-User-Token": claims_token}, okta)
+    caller = caller_from_headers({"Authorization": f"Bearer {claims_token}"}, okta)
     assert caller.sub == "00u1abcd"
 
 

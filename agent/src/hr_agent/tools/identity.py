@@ -1,17 +1,16 @@
 """Who is calling a tool.
 
-The tools gateway signs its calls to this runtime with its own role (D19), so the
-runtime's own authorizer says nothing about the user. The caller sends the user's access
-token a second time in `X-Hr-User-Token`, the gateway target forwards it, and this module
-verifies it independently: signature against the issuer's keys, issuer, expiry, and
-client or audience. Nothing here trusts the gateway for identity. Issuer, keys, clients,
-token use and the audience are environment settings, so an exchanged on-behalf-of token
-(D20) needs configuration, not code.
+The tools gateway exchanges each caller's token through AgentCore Identity for one only
+this runtime accepts (D47): issued by the on-behalf-of issuer for `api://hr-tools-runtime`
+to the client `hr-tools-gateway`, naming the employee in `sub`, carrying the caller's
+scopes, and recording who acted in a nested `act` claim. The runtime's JWT authorizer
+checks it and passes `Authorization` through; this module verifies it again
+(signature against the issuer's keys, issuer, audience, expiry, client), so the server does
+not rely on the runtime's settings alone. Issuer, keys, clients and audience are
+environment settings.
 
-Two token shapes are accepted (D46): Cognito's (`client_id`, `token_use`) and Okta's
-custom authorization server (`cid`, `aud`, `uid`). The caller is `uid` when the token has
-one, Okta's stable user id, since an Okta access token's `sub` is the user's login (an
-email address); otherwise `sub`.
+`X-Hr-User-Token`, the second copy of the user's token the gateway forwarded while it
+signed its calls with SigV4 (D19), is gone.
 """
 
 from __future__ import annotations
@@ -23,10 +22,9 @@ from typing import Any
 
 import jwt
 
-USER_TOKEN_HEADER = "x-hr-user-token"
 THREAD_HEADER = "x-hr-thread-id"
 TRACE_HEADER = "traceparent"
-FORWARDED_HEADERS = (USER_TOKEN_HEADER, THREAD_HEADER, TRACE_HEADER)
+FORWARDED_HEADERS = (THREAD_HEADER, TRACE_HEADER)
 
 
 class IdentityError(Exception):
@@ -38,6 +36,8 @@ class Caller:
     sub: str
     thread_id: str | None
     trace_id: str | None
+    scopes: frozenset[str] = frozenset()
+    acted_by: str = ""  # the clients that acted, nearest first: "hr-tools-gateway<hr-agent-pay<hr-bridge"
 
 
 KeyResolver = Callable[[str], Any]
@@ -68,7 +68,8 @@ class TokenVerifier:
                 algorithms=["RS256"],
                 issuer=self._issuer,
                 audience=self._audience,
-                options={"require": ["exp", "iss", "sub"], "verify_aud": bool(self._audience)},
+                options={"require": ["exp", "iat", "iss", "sub"], "verify_aud": bool(self._audience)},
+                leeway=60,
             )
         except jwt.PyJWTError as exc:
             raise IdentityError(f"user token rejected: {exc}") from exc
@@ -109,14 +110,25 @@ def trace_id_from(traceparent: str | None) -> str | None:
     return None
 
 
+def acted_by(claims: Mapping[str, Any]) -> str:
+    """The `act` chain as one string, nearest actor first."""
+    names, act = [], claims.get("act")
+    while isinstance(act, Mapping) and len(names) < 8:
+        names.append(str(act.get("sub", "?")))
+        act = act.get("act")
+    return "<".join(names)
+
+
 def caller_from_headers(headers: Mapping[str, str], verifier: TokenVerifier) -> Caller:
     lowered = {key.lower(): value for key, value in headers.items()}
-    token = lowered.get(USER_TOKEN_HEADER)
-    if not token:
-        raise IdentityError("no user token on the request")
-    claims = verifier.verify(token)
+    scheme, _, token = lowered.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise IdentityError("no bearer token on the request")
+    claims = verifier.verify(token.strip())
     return Caller(
         sub=subject_of(claims),
         thread_id=lowered.get(THREAD_HEADER) or None,
         trace_id=trace_id_from(lowered.get(TRACE_HEADER)),
+        scopes=frozenset(str(claims.get("scope", "")).split()),
+        acted_by=acted_by(claims),
     )

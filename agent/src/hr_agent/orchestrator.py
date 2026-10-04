@@ -43,9 +43,12 @@ from ag_ui.core import (
 )
 
 from hr_agent.agents.domains import DOMAINS
+from hr_agent.obo import TokenExchanger
 from hr_agent.pending import PENDING_KEY, parse_pending
 
 log = logging.getLogger("hr_agent")
+# The employee's Okta token traded for an agents token through the bridge's client (D47).
+AGENTS_TOKENS = TokenExchanger(scopes=["hr.agents"])
 
 ACTIVE_KEY = "activeDomain"
 GENERAL = "general"
@@ -266,6 +269,9 @@ async def send_to_sub_agent(
 ) -> SubAgentReply:
     """One A2A message/send through the agents gateway. Tests replace this."""
     import httpx
+
+    # The agents gateway accepts only an agents token from the bridge's client (D47).
+    token = await AGENTS_TOKENS.aexchange(token)
 
     body = {
         "jsonrpc": "2.0",

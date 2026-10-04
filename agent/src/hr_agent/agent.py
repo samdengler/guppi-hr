@@ -17,9 +17,13 @@ from typing import Any
 from ag_ui.core import BaseEvent, RunAgentInput
 from guppi_agent import conversation_log
 
+from hr_agent.obo import TokenExchanger
 from hr_agent.pending import PENDING_KEY
 
 log = logging.getLogger("hr_agent")
+# The general agent's policy search and tickets: the Okta token traded for a tools token
+# holding hr.tools.policy alone, through the bridge's client (D47).
+TOOLS_TOKENS = TokenExchanger(scopes=["hr.tools.policy"])
 
 DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 DEFAULT_RETRIEVE_TOOL = "docs___Retrieve"
@@ -106,16 +110,12 @@ class StrandsRun:
 
         settings = self._settings
         run_input = without_pending(run_input)
-        # The tools gateway checks Authorization; it cannot forward that header to the HR
-        # tools server, so the same token rides again in X-Hr-User-Token, which the server
-        # verifies itself (D19). The thread id binds a proposal to its conversation.
+        # A tools token for this hop (D47); the gateway exchanges it again for the tools
+        # runtime. The thread id binds a ticket or proposal to its conversation.
+        tools_token = await TOOLS_TOKENS.aexchange(self._token)
         client = MCPClient(
             url=settings.tools_gateway_url,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "X-Hr-User-Token": self._token,
-                "X-Hr-Thread-Id": run_input.thread_id,
-            },
+            headers={"Authorization": f"Bearer {tools_token}", "X-Hr-Thread-Id": run_input.thread_id},
         )
         # The client runs its own thread and event loop; start and stop block, so they are
         # kept off the loop that streams the response.

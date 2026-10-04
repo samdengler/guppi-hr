@@ -28,6 +28,14 @@ from hr_agent.tools.records import seed_employee
 
 PROPOSAL_TTL_SECONDS = 15 * 60
 CHANGEABLE_FIELDS = ("home_address", "emergency_contact", "direct_deposit")
+# The scope a caller's token must hold to commit a change to each field (D47): the Profile
+# agent's token writes the profile, the Pay agent's the direct deposit, and the canvas's
+# token writes nothing.
+WRITE_SCOPE = {
+    "home_address": "hr.tools.profile.write",
+    "emergency_contact": "hr.tools.profile.write",
+    "direct_deposit": "hr.tools.pay.write",
+}
 
 
 class CommitRefused(Exception):
@@ -133,6 +141,8 @@ class HrStore:
             raise CommitRefused(f"proposal {proposal_id} expired; propose the change again")
         if proposal["thread_id"] != (caller.thread_id or ""):
             raise CommitRefused(f"proposal {proposal_id} was made in a different conversation")
+        if WRITE_SCOPE[proposal["field"]] not in caller.scopes:
+            raise CommitRefused(f"this caller may not change {proposal['field']}")
 
         audit_id = f"{now:012d}#{proposal_id}"
         audit = {
@@ -145,6 +155,7 @@ class HrStore:
             "committed_at": now,
             "thread_id": caller.thread_id or "",
             "trace_id": caller.trace_id or "",
+            "acted_by": caller.acted_by,
         }
         s = self._serialize
         try:
@@ -205,6 +216,7 @@ class HrStore:
             "created_at": int(self._clock()),
             "thread_id": caller.thread_id or "",
             "trace_id": caller.trace_id or "",
+            "acted_by": caller.acted_by,
         }
         self._table(self._tables.tickets).put_item(
             Item=ticket,

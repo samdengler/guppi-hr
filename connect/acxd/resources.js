@@ -13,7 +13,8 @@
 const hr = require('./hr');
 
 const CONTEXT_VARIABLES = [
-  { name: 'hrToken', schema: { type: 'string' }, disallowExternalModification: false },
+  { name: 'hrAgentsToken', schema: { type: 'string' }, disallowExternalModification: false },
+  { name: 'hrToolsToken', schema: { type: 'string' }, disallowExternalModification: false },
   { name: 'employeeId', schema: { type: 'string' }, disallowExternalModification: false },
   ...hr.CONTEXT_VARIABLES,
 ];

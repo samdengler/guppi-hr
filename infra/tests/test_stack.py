@@ -95,39 +95,55 @@ def _ssm_parameter_ref(template, name: str) -> dict:
     return {"Ref": logical_id}
 
 
-def test_every_authorizer_accepts_the_platform_token(template):
-    discovery = _ssm_parameter_ref(template, "/guppi/platform/jwt-discovery-url")
-    audience = _ssm_parameter_ref(template, "/guppi/platform/jwt-audience")
+def _authorizers(template):
     gateways = template.find_resources("AWS::BedrockAgentCore::Gateway")
     runtimes = template.find_resources("AWS::BedrockAgentCore::Runtime")
-    authorizers = [
-        g["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
-        for g in gateways.values()
-    ] + [
-        r["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
-        for r in runtimes.values()
-        if "AuthorizerConfiguration" in r["Properties"]
-    ]
-    # Two gateways, the orchestrator, and three sub-agents; the HR tools runtime has no
-    # authorizer of its own and verifies the forwarded token itself (D19).
-    assert len(authorizers) == 6
-    for authorizer in authorizers:
-        assert authorizer["DiscoveryUrl"] == discovery
-        # Okta's access tokens name the client in cid, not client_id, so the audience (D46).
-        assert authorizer["AllowedAudience"] == [audience]
-        assert "AllowedClients" not in authorizer
+    by_name = {g["Properties"]["Name"]: g["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
+               for g in gateways.values()}
+    by_name.update({r["Properties"]["AgentRuntimeName"]: r["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
+                    for r in runtimes.values() if "AuthorizerConfiguration" in r["Properties"]})
+    return by_name
 
 
-def test_hr_tools_verify_the_platform_issuer_and_audience(template):
-    env = _hr_tools_runtime(template)["Properties"]["EnvironmentVariables"]
-    discovery = _ssm_parameter_ref(template, "/guppi/platform/jwt-discovery-url")
-    audience = _ssm_parameter_ref(template, "/guppi/platform/jwt-audience")
-    assert env["TOKEN_ISSUER"] == {
-        "Fn::Select": [0, {"Fn::Split": ["/.well-known/openid-configuration", discovery]}]
+def test_the_orchestrator_accepts_the_platform_token(template):
+    # The edge gateway passes the page's Okta token through (D46).
+    authorizer = _authorizers(template)["hr_super_agent"]
+    assert authorizer["DiscoveryUrl"] == _ssm_parameter_ref(template, "/guppi/platform/jwt-discovery-url")
+    assert authorizer["AllowedAudience"] == [_ssm_parameter_ref(template, "/guppi/platform/jwt-audience")]
+
+
+def test_every_hr_hop_accepts_only_its_own_hop_token(template):
+    # D47: each checkpoint accepts the on-behalf-of issuer's token for its audience, from
+    # the clients that may call it, with the scope it needs; the Okta token gets no further.
+    obo = _ssm_parameter_ref(template, "/guppi/obo/discovery-url")
+    expected = {
+        "hr-super-agent-agents": (["api://hr-agents"], ["hr-bridge"], ["hr.agents"]),
+        "hr_super_agent_profile": (["api://hr-agents"], ["hr-bridge"], ["hr.agents"]),
+        "hr_super_agent_pay": (["api://hr-agents"], ["hr-bridge"], ["hr.agents"]),
+        "hr_super_agent_travel": (["api://hr-agents"], ["hr-bridge"], ["hr.agents"]),
+        "hr-super-agent-tools": (["api://hr-tools"],
+                                 ["hr-bridge", "hr-agent-profile", "hr-agent-pay", "hr-agent-travel"],
+                                 ["hr.tools.policy"]),
+        "hr_super_agent_tools": (["api://hr-tools-runtime"], ["hr-tools-gateway"], None),
     }
-    assert env["TOKEN_AUDIENCE"] == audience
+    authorizers = _authorizers(template)
+    assert set(authorizers) == set(expected) | {"hr_super_agent"}
+    for name, (audience, clients, scopes) in expected.items():
+        authorizer = authorizers[name]
+        assert authorizer["DiscoveryUrl"] == obo, name
+        assert authorizer["AllowedAudience"] == audience, name
+        assert authorizer["AllowedClients"] == clients, name
+        assert authorizer.get("AllowedScopes") == scopes, name
+
+
+def test_hr_tools_verify_the_runtime_token_again(template):
+    env = _hr_tools_runtime(template)["Properties"]["EnvironmentVariables"]
+    issuer = _ssm_parameter_ref(template, "/guppi/obo/issuer")
+    assert env["TOKEN_ISSUER"] == issuer
+    assert env["TOKEN_JWKS_URL"] == {"Fn::Join": ["", [issuer, "/jwks.json"]]}
+    assert env["TOKEN_AUDIENCE"] == "api://hr-tools-runtime"
+    assert env["TOKEN_ALLOWED_CLIENTS"] == "hr-tools-gateway"
     assert env["TOKEN_USE"] == ""
-    assert "TOKEN_ALLOWED_CLIENTS" not in env
 
 
 def test_platform_gateway_role_may_invoke_the_orchestrator(template):
@@ -878,13 +894,13 @@ def test_forwarded_headers_match_the_tools_server():
     assert [h.lower() for h in FORWARDED_HEADERS] == list(SERVER_HEADERS)
 
 
-def test_hr_tools_runtime_is_an_mcp_server_signed_with_iam(template):
+def test_hr_tools_runtime_is_an_mcp_server_behind_a_jwt_authorizer(template):
     runtime = _hr_tools_runtime(template)
     props = runtime["Properties"]
     assert props["AgentRuntimeName"] == "hr_super_agent_tools"
-    assert "AuthorizerConfiguration" not in props  # SigV4 inbound (D19)
+    # The exchanged runtime token reaches the server in Authorization; no second copy (D47).
     assert props["RequestHeaderConfiguration"]["RequestHeaderAllowlist"] == [
-        "X-Hr-User-Token",
+        "Authorization",
         "X-Hr-Thread-Id",
         "traceparent",
     ]
@@ -901,39 +917,76 @@ def test_hr_tools_runtime_is_an_mcp_server_signed_with_iam(template):
     assert any(dep.startswith("ToolsRuntimeRoleDefaultPolicy") for dep in runtime["DependsOn"])
 
 
-def test_hr_target_signs_with_the_gateway_role_and_forwards_the_headers(template):
+def test_hr_target_exchanges_the_callers_token_and_lists_tools_inline(template):
     targets = template.find_resources(
         "AWS::BedrockAgentCore::GatewayTarget", {"Properties": {"Name": "hr"}}
     )
     (target,) = [t for t in targets.values() if "Mcp" in t["Properties"]["TargetConfiguration"]]
     props = target["Properties"]
     (credential,) = props["CredentialProviderConfigurations"]
-    assert credential["CredentialProviderType"] == "GATEWAY_IAM_ROLE"
-    assert credential["CredentialProvider"]["IamCredentialProvider"]["Service"] == (
-        "bedrock-agentcore"
-    )
-    assert props["MetadataConfiguration"]["AllowedRequestHeaders"] == [
-        "X-Hr-User-Token",
-        "X-Hr-Thread-Id",
-        "traceparent",
-    ]
+    assert credential["CredentialProviderType"] == "OAUTH"
+    oauth = credential["CredentialProvider"]["OauthCredentialProvider"]
+    assert oauth["GrantType"] == "TOKEN_EXCHANGE"
+    assert oauth["ProviderArn"] == _ssm_parameter_ref(template, "/guppi/obo/hr-tools-gateway/provider-arn")
+    assert props["MetadataConfiguration"]["AllowedRequestHeaders"] == ["X-Hr-Thread-Id", "traceparent"]
     assert props["Description"].startswith("HR self-service tools, source ")
-    endpoint = json.dumps(props["TargetConfiguration"]["Mcp"]["McpServer"]["Endpoint"])
+    server = props["TargetConfiguration"]["Mcp"]["McpServer"]
+    endpoint = json.dumps(server["Endpoint"])
     assert "runtime%2F" in endpoint and "invocations?qualifier=DEFAULT" in endpoint
+    # An inline tool list: the gateway never lists tools with a token naming no one (A14).
+    listed = json.loads(server["McpToolSchema"]["InlinePayload"])
+    assert {tool["name"] for tool in listed["tools"]} == {
+        "commit_change", "get_direct_deposit", "get_profile", "list_pay_statements", "open_ticket",
+        "propose_address_change", "propose_direct_deposit_change", "propose_emergency_contact_change"}
     deps = target["DependsOn"]
     assert any(d.startswith("HrToolsRuntime") for d in deps)
     assert any(d.startswith("ToolsGatewayRoleDefaultPolicy") for d in deps)
 
 
-def test_tools_gateway_role_may_invoke_the_hr_tools_runtime(template):
+def test_the_inline_tool_list_matches_the_server():
+    import asyncio
+
+    from hr_agent.tools.server import build_server
+    from hr_super_agent_infra.hr_tools import TOOLS_SCHEMA
+
+    tools = asyncio.run(build_server().list_tools())
+    served = {t.name: {"description": t.description, "inputSchema": t.inputSchema} for t in tools}
+    inline = {t["name"]: {"description": t["description"], "inputSchema": t["inputSchema"]}
+              for t in json.loads(TOOLS_SCHEMA.read_text())["tools"]}
+    assert inline == served, "run: uv run -- python scripts/tools-schema.py"
+
+
+def test_tools_gateway_role_exchanges_through_its_provider_and_uses_policy(template):
     policies = [
         p
         for name, p in template.find_resources("AWS::IAM::Policy").items()
         if name.startswith("ToolsGatewayRoleDefaultPolicy")
     ]
     (policy,) = policies
-    statements = policy["Properties"]["PolicyDocument"]["Statement"]
-    assert any(s["Action"] == "bedrock-agentcore:InvokeAgentRuntime" for s in statements)
+    actions = set()
+    for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+        actions.update([statement["Action"]] if isinstance(statement["Action"], str) else statement["Action"])
+    assert {"bedrock-agentcore:GetResourceOauth2Token", "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+            "bedrock-agentcore:AuthorizeAction", "bedrock-agentcore:PartiallyAuthorizeActions",
+            "bedrock-agentcore:GetPolicyEngine"} <= actions
+    assert "bedrock-agentcore:InvokeAgentRuntime" not in actions  # no SigV4 call any more
+
+
+def test_gateway_policy_decides_each_tool_by_scope(template):
+    gateway = next(g for g in template.find_resources("AWS::BedrockAgentCore::Gateway").values()
+                   if g["Properties"]["Name"] == "hr-super-agent-tools")
+    assert gateway["Properties"]["PolicyEngineConfiguration"]["Mode"] == "ENFORCE"
+    policies = template.find_resources("AWS::BedrockAgentCore::Policy")
+    statements = " ".join(p["Properties"]["Definition"]["Cedar"]["Statement"]
+                          if isinstance(p["Properties"]["Definition"]["Cedar"]["Statement"], str)
+                          else json.dumps(p["Properties"]["Definition"]["Cedar"]["Statement"])
+                          for p in policies.values())
+    for tool in ("hr___get_profile", "hr___list_pay_statements", "hr___get_direct_deposit",
+                 "hr___propose_address_change", "hr___propose_emergency_contact_change",
+                 "hr___propose_direct_deposit_change", "hr___commit_change", "hr___open_ticket",
+                 "docs___Retrieve"):
+        assert f'AgentCore::Action::\\"{tool}\\"' in statements or f'AgentCore::Action::"{tool}"' in statements, tool
+    assert all(p["Properties"]["ValidationMode"] == "FAIL_ON_ANY_FINDINGS" for p in policies.values())
 
 
 def test_hr_tables_are_on_demand_and_proposals_expire(template):
@@ -1095,3 +1148,42 @@ def test_every_strands_runtime_redacts_span_content(template):
         assert env.get("OTEL_SEMCONV_STABILITY_OPT_IN") == "gen_ai_unredacted_attributes="
         assert env.get("OTEL_PYTHON_DISABLED_INSTRUMENTATIONS") == "aws_mcp"
         assert env.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "false"
+
+
+def test_each_exchanging_runtime_names_its_provider_workload_and_scopes(template):
+    runtimes = {r["Properties"]["AgentRuntimeName"]: r["Properties"]
+                for r in template.find_resources("AWS::BedrockAgentCore::Runtime").values()}
+    expected_scopes = {
+        "profile": "hr.tools.policy hr.tools.profile.read hr.tools.profile.write",
+        "pay": "hr.tools.policy hr.tools.pay.read hr.tools.pay.write",
+        "travel": "hr.tools.policy",
+    }
+    for domain, scopes in expected_scopes.items():
+        env = runtimes[f"hr_super_agent_{domain}"]["EnvironmentVariables"]
+        assert env["OBO_PROVIDER"] == _ssm_parameter_ref(template, f"/guppi/obo/hr-agent-{domain}/provider-name")
+        assert env["OBO_SCOPES"] == scopes
+        assert env["OBO_WORKLOAD"] == f"hr_super_agent_{domain}-obo"
+    orchestrator = runtimes["hr_super_agent"]["EnvironmentVariables"]
+    assert orchestrator["OBO_PROVIDER"] == _ssm_parameter_ref(template, "/guppi/obo/hr-bridge/provider-name")
+    assert orchestrator["OBO_WORKLOAD"] == "hr_super_agent-obo"
+    names = {w["Properties"]["Name"] for w in template.find_resources("AWS::BedrockAgentCore::WorkloadIdentity").values()}
+    assert names == {"hr_super_agent-obo", "hr_super_agent_profile-obo", "hr_super_agent_pay-obo",
+                     "hr_super_agent_travel-obo"}
+
+
+def test_each_caller_reads_only_its_own_clients_secret(template):
+    # A16: Identity reads an EXTERNAL client secret as the caller of GetResourceOauth2Token.
+    granted = {}
+    for name, policy in template.find_resources("AWS::IAM::Policy").items():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            if statement["Action"] == "secretsmanager:GetSecretValue":
+                for resource in statement["Resource"] if isinstance(statement["Resource"], list) else [statement["Resource"]]:
+                    granted.setdefault(name, []).append(json.dumps(resource))
+    def has(prefix: str, client: str) -> bool:
+        ref = json.dumps(_ssm_parameter_ref(template, f"/guppi/obo/{client}/secret-arn"))
+        return any(n.startswith(prefix) and ref in r for n, rs in granted.items() for r in rs)
+    assert has("ToolsGatewayRoleDefaultPolicy", "hr-tools-gateway")
+    assert has("RuntimeRoleDefaultPolicy", "hr-bridge")
+    for domain in ("Profile", "Pay", "Travel"):
+        assert has(f"SubAgents{domain}RoleDefaultPolicy", f"hr-agent-{domain.lower()}")
+        assert not has(f"SubAgents{domain}RoleDefaultPolicy", "hr-tools-gateway")

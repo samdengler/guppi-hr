@@ -1,0 +1,172 @@
+{
+  "tools": [
+    {
+      "name": "commit_change",
+      "description": "Apply a change proposed earlier in this conversation. Call only after the\nemployee has confirmed the exact change, with the proposal_id the propose tool\nreturned. Refused without a valid, unexpired, uncommitted proposal id.",
+      "inputSchema": {
+        "properties": {
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id"
+        ],
+        "title": "commit_changeArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_direct_deposit",
+      "description": "Where the signed-in employee's pay is deposited. Account numbers are shown by\ntheir last four digits only.",
+      "inputSchema": {
+        "properties": {},
+        "title": "get_direct_depositArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_profile",
+      "description": "The signed-in employee's profile: name, employee id, job, home address, and\nemergency contact.",
+      "inputSchema": {
+        "properties": {},
+        "title": "get_profileArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_pay_statements",
+      "description": "The signed-in employee's most recent pay statements, newest first (1 to 12).",
+      "inputSchema": {
+        "properties": {
+          "count": {
+            "default": 3,
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "title": "list_pay_statementsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "open_ticket",
+      "description": "Open a ticket for a person on the HR team to follow up with the signed-in\nemployee. Use when the employee asks for a person, or when no tool or policy\nanswers the request. domain is profile, pay, travel, or general.",
+      "inputSchema": {
+        "properties": {
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "domain": {
+            "default": "general",
+            "title": "Domain",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary"
+        ],
+        "title": "open_ticketArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "propose_address_change",
+      "description": "Propose a new home address for the signed-in employee. Changes nothing until\ncommit_change is called with the returned proposal_id. state is a two-letter US\ncode; postal_code is a 5 digit ZIP code.",
+      "inputSchema": {
+        "properties": {
+          "line1": {
+            "title": "Line1",
+            "type": "string"
+          },
+          "city": {
+            "title": "City",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "postal_code": {
+            "title": "Postal Code",
+            "type": "string"
+          },
+          "line2": {
+            "default": "",
+            "title": "Line2",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line1",
+          "city",
+          "state",
+          "postal_code"
+        ],
+        "title": "propose_address_changeArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "propose_direct_deposit_change",
+      "description": "Propose a new direct deposit account for the signed-in employee. Changes nothing\nuntil commit_change is called with the returned proposal_id. account_type is\nchecking or savings. Only the last four digits of the account number are kept.",
+      "inputSchema": {
+        "properties": {
+          "routing_number": {
+            "title": "Routing Number",
+            "type": "string"
+          },
+          "account_number": {
+            "title": "Account Number",
+            "type": "string"
+          },
+          "account_type": {
+            "title": "Account Type",
+            "type": "string"
+          },
+          "bank_name": {
+            "default": "",
+            "title": "Bank Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "routing_number",
+          "account_number",
+          "account_type"
+        ],
+        "title": "propose_direct_deposit_changeArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "propose_emergency_contact_change",
+      "description": "Propose a new emergency contact for the signed-in employee. Changes nothing until\ncommit_change is called with the returned proposal_id. phone is a 10 digit US\nnumber.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "relationship": {
+            "title": "Relationship",
+            "type": "string"
+          },
+          "phone": {
+            "title": "Phone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "relationship",
+          "phone"
+        ],
+        "title": "propose_emergency_contact_changeArguments",
+        "type": "object"
+      }
+    }
+  ]
+}

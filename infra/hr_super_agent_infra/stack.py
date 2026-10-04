@@ -81,6 +81,19 @@ from aws_cdk import (
 from constructs import Construct
 
 from hr_super_agent_infra.hr_tools import HR_TOOL_PREFIX, TOOLS_RUNTIME_NAME, HrTools
+from hr_super_agent_infra.obo import (
+    AGENT_CLIENTS,
+    BRIDGE_CLIENT,
+    DOMAIN_SCOPES,
+    POLICY_SCOPE,
+    TOOLS_AUDIENCE,
+    TOOLS_GATEWAY_CLIENT,
+    Obo,
+    agent_client,
+    grant_exchange,
+    policy_statements,
+    workload_identity,
+)
 from hr_super_agent_infra.runtime_role import runtime_execution_role
 from hr_super_agent_infra.sub_agents import AGENTS_GATEWAY_NAME, SubAgents, sub_agent_runtime_name
 
@@ -417,6 +430,8 @@ class HrSuperAgentStack(cdk.Stack):
             ssm.StringParameter.value_for_string_parameter(self, PARAM_EDGE_GATEWAY_ROLE_ARN),
         )
         site_url = ssm.StringParameter.value_for_string_parameter(self, PARAM_SITE_URL)
+        # The on-behalf-of issuer and its credential providers (D47), from guppi-gpt.
+        obo = Obo.read(self)
 
         # ---- Agent image ---------------------------------------------------------------
         image_uri = self.node.try_get_context("image_uri")
@@ -863,22 +878,56 @@ class HrSuperAgentStack(cdk.Stack):
         tools_gateway_role.add_to_policy(
             iam.PolicyStatement(actions=["bedrock:AgenticRetrieveStream"], resources=["*"])
         )
+        # Gateway Policy on the tools gateway (D47, A15): Cedar rules on the caller token's
+        # scopes; a tool no rule permits is refused, and tools/list shows a caller only its own.
+        tools_policy_engine = agentcore.CfnPolicyEngine(
+            self,
+            "ToolsPolicyEngine",
+            name="hr_super_agent_tools_policy",
+            description="Which HR tools each hop token may call, by scope (D47)",
+        )
+        tools_gateway_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock-agentcore:GetPolicyEngine"],
+                resources=[tools_policy_engine.attr_policy_engine_arn],
+            )
+        )
+        tools_gateway_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock-agentcore:AuthorizeAction", "bedrock-agentcore:PartiallyAuthorizeActions"],
+                resources=[
+                    tools_policy_engine.attr_policy_engine_arn,
+                    f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:gateway/{TOOLS_GATEWAY_NAME}-*",
+                ],
+            )
+        )
         tools_gateway = agentcore.CfnGateway(
             self,
             "ToolsGateway",
             name=TOOLS_GATEWAY_NAME,
-            description="HR Super Agent tools: the knowledge base as MCP tools, user JWT inbound",
+            description="HR Super Agent tools: knowledge base and HR tools, hop tokens inbound, Policy per tool",
             role_arn=tools_gateway_role.role_arn,
             protocol_type="MCP",
             authorizer_type="CUSTOM_JWT",
+            # A caller's tools token only (D47): the canvas's from the bridge's client, or a
+            # sub-agent's for its domain. Every one holds hr.tools.policy; Gateway Policy
+            # decides each tool from the rest of its scopes.
             authorizer_configuration=agentcore.CfnGateway.AuthorizerConfigurationProperty(
                 custom_jwt_authorizer=agentcore.CfnGateway.CustomJWTAuthorizerConfigurationProperty(
-                    discovery_url=discovery_url,
-                    allowed_audience=jwt_audience,
+                    discovery_url=obo.discovery_url,
+                    allowed_audience=[TOOLS_AUDIENCE],
+                    allowed_clients=[BRIDGE_CLIENT, *AGENT_CLIENTS],
+                    allowed_scopes=[POLICY_SCOPE],
                 )
+            ),
+            policy_engine_configuration=agentcore.CfnGateway.GatewayPolicyEngineConfigurationProperty(
+                arn=tools_policy_engine.attr_policy_engine_arn, mode="ENFORCE"
             ),
             exception_level="DEBUG",
         )
+        # Attaching the policy engine checks the role's GetPolicyEngine grant, so the gateway
+        # waits for the role's whole policy, not only the role (observed 3 Oct 2026).
+        tools_gateway.node.add_dependency(tools_gateway_role)
         # Per-user limits on both HR gateways (critique finding 17): the edge gateway's
         # limits never reach a caller that calls these gateways straight with its token.
         # A sub-agent keeps an MCP session per conversation, and a warm start opens three
@@ -1006,10 +1055,26 @@ class HrSuperAgentStack(cdk.Stack):
             role=tools_role,
             gateway=tools_gateway,
             gateway_role=tools_gateway_role,
-            token_issuer=token_issuer,
-            audience=jwt_audience[0],
+            gateway_name=TOOLS_GATEWAY_NAME,
+            obo_discovery_url=obo.discovery_url,
+            obo_issuer=obo.issuer,
+            tools_gateway_provider_arn=obo.provider_arn(self, TOOLS_GATEWAY_CLIENT),
+            tools_gateway_secret_arn=obo.secret_arn(self, TOOLS_GATEWAY_CLIENT),
             base_environment={**RUNTIME_BASE_ENVIRONMENT, **trace_environment},
         )
+        for name, statement in policy_statements(tools_gateway.attr_gateway_arn).items():
+            policy = agentcore.CfnPolicy(
+                self,
+                f"ToolsPolicy{''.join(part.capitalize() for part in name.split('_'))}",
+                name=f"hr_{name}",
+                policy_engine_id=tools_policy_engine.attr_policy_engine_id,
+                definition=agentcore.CfnPolicy.PolicyDefinitionProperty(
+                    cedar=agentcore.CfnPolicy.CedarPolicyProperty(statement=statement)
+                ),
+                validation_mode="FAIL_ON_ANY_FINDINGS",
+            )
+            # Validation checks the actions against the gateway's tools, so both targets first.
+            policy.node.add_dependency(hr_tools.target, kb_target)
 
         # ---- Sub-agents (phase 3) --------------------------------------------------------
         sub_agents = SubAgents(
@@ -1017,8 +1082,10 @@ class HrSuperAgentStack(cdk.Stack):
             "SubAgents",
             image_uri=image_uri,
             grant_image=grant_image,
-            discovery_url=discovery_url,
-            allowed_audience=jwt_audience,
+            obo_discovery_url=obo.discovery_url,
+            provider_names={d: obo.provider_name(self, agent_client(d)) for d in DOMAIN_SCOPES},
+            provider_arns={d: obo.provider_arn(self, agent_client(d)) for d in DOMAIN_SCOPES},
+            secret_arns={d: obo.secret_arn(self, agent_client(d)) for d in DOMAIN_SCOPES},
             tools_gateway_url=tools_gateway.attr_gateway_url,
             model_id=MODEL_ID,
             hr_tool_prefix=HR_TOOL_PREFIX,
@@ -1039,6 +1106,11 @@ class HrSuperAgentStack(cdk.Stack):
             description="The HR agents gateway URL, for the Connect bridge's warm start",
         )
 
+        orchestrator_workload = workload_identity(self, "OrchestratorWorkload", RUNTIME_NAME)
+        grant_exchange(
+            runtime_role, obo.provider_arn(self, BRIDGE_CLIENT), obo.secret_arn(self, BRIDGE_CLIENT), orchestrator_workload
+        )
+
         # The tools gateway now exists, so the runtime's environment can point at it.
         runtime.environment_variables = {
             **RUNTIME_BASE_ENVIRONMENT,
@@ -1048,6 +1120,10 @@ class HrSuperAgentStack(cdk.Stack):
             "RETRIEVE_TOOL": RETRIEVE_TOOL,
             "ORCHESTRATOR_EXTRA_TOOLS": f"{HR_TOOL_PREFIX}open_ticket",
             "AGENTS_GATEWAY_URL": sub_agents.gateway.attr_gateway_url,
+            # The orchestrator trades the employee's Okta token for the agents token and a
+            # policy-only tools token through the bridge's client (D47).
+            "OBO_PROVIDER": obo.provider_name(self, BRIDGE_CLIENT),
+            "OBO_WORKLOAD": orchestrator_workload.name,
             "CONVERSATION_LOG_ENABLED": "true" if CONVERSATION_LOG_ENABLED else "false",
             "CONVERSATION_LOG_BUCKET": conversation_bucket.bucket_name,
             "CONVERSATION_LOG_KEY_SECRET_ARN": conversation_secret.secret_arn,

@@ -1,6 +1,6 @@
 # On-behalf-of token exchange for `/p/hr/` (D20)
 
-Status: design, revision 3, decided 3 October 2026 (D47). Revision 1 was reviewed by an independent
+Status: built and deployed 3 October 2026 (D47). `scripts/obo-checks.py` checks every hop and Policy rule against the deployed stacks; `scripts/obo-rollback.sh` deploys the commit before the switch. Design revision 3, decided 3 October 2026. Revision 1 was reviewed by an independent
 critique ([OBO Exchange Design Critique](https://claude.ai/artifact/FP3jciuzGA4PVVyoPWXwJK),
 16 findings), and a spike on the prototype tested the alternatives the critique raised
 (revision 2). Revision 3 puts the design on the AgentCore stack the POC is committed to,
@@ -193,15 +193,20 @@ is the better long-term answer and a decision for Sam; client secrets work now.
 
 These answer critique findings 10 and 13:
 
-- **Verification uses PyJWT with `cryptography`**, in a layer, the library the tools
-  server already uses. It checks the RS256 signature, `kid`, `iss`, `aud`, `exp`, `nbf`,
-  `iat` and `typ`. Okta's keys are cached for an hour, and an unknown `kid` refetches
-  them at most once a minute.
+- **Verification uses the standard library.** The plan was PyJWT with `cryptography` in
+  a layer, but guppi-gpt's stack synthesizes without Docker and `cryptography` has native
+  code, so the issuer re-encodes the PKCS#1 v1.5 signature and compares it in constant
+  time, with the RFC 8017 length and range checks the critique asked for, a 2048-bit
+  minimum, and RS256 only (no `crit`). It checks `kid`, `iss`, `aud`, `exp`, `nbf`, `iat`
+  with 60 seconds of leeway, and `typ` `at+jwt` on its own tokens. Okta's keys are cached
+  for an hour, and an unknown `kid` refetches them at most once a minute. 24 unit tests
+  cover the rules and the verification, including tampered, truncated, `none`, `HS256`
+  and foreign-key tokens.
 - **Errors are generic:** `invalid_client`, `invalid_grant`, `invalid_scope`, with no
   internal reason. A malformed request gets 400, never 500.
-- **The API is throttled:** a rate of 10 a second with a burst of 20, against about 5
-  exchanges per chat. The Lambda has reserved concurrency of 10, and a billing alarm sits
-  on the API.
+- **The API is throttled:** a rate of 20 a second with a burst of 40, since the tools
+  gateway also exchanges once per tool call (A14). The Lambda has reserved concurrency of
+  10, and alarms fire on its errors and throttles and on the API's 5xx and 4xx counts.
 - **The KMS key policy** lets only the issuer's role call `kms:Sign`.
 - **Cold starts are cut:** 1024 MB of memory, with Okta's keys and the KMS public key
   fetched at init.

@@ -101,27 +101,25 @@ does not propose again drops it.
 
 ## Identity on every hop
 
+Since D47 each hop carries its own token from the on-behalf-of issuer (guppi-gpt's
+platform stack), still naming the employee, with the clients that acted in a nested `act`
+claim. AgentCore Identity does every exchange; docs/proposals/obo-token-exchange.md has the
+design, and `scripts/obo-checks.py` checks it against the deployed stacks.
+
 | Hop | Credential presented | Checked by |
 | --- | --- | --- |
-| Page to the platform's edge gateway | User's access token from the platform's Cognito pool | Platform gateway JWT authorizer |
-| Platform edge gateway to orchestrator | Same token (passthrough) | Runtime JWT authorizer, on the platform pool and client |
-| Orchestrator to agents gateway | Same token | Gateway JWT authorizer |
-| Agents gateway to sub-agent | Same token (passthrough) | Runtime JWT authorizer |
-| Sub-agent or orchestrator to tools gateway | Same token | Gateway JWT authorizer |
-| Tools gateway to HR tools runtime | Gateway role (SigV4); user token in `X-Hr-User-Token` | Runtime IAM; the server verifies the header token against the platform pool's keys |
+| Page to the platform's edge gateway, and on to the orchestrator or the Connect bridge | The employee's Okta access token (audience `api://guppi`) | Edge gateway and runtime JWT authorizers |
+| Bridge or orchestrator to the agents gateway, and on to a sub-agent (passthrough) | Agents token: audience `api://hr-agents`, scope `hr.agents`, client `hr-bridge`, exchanged by the caller | Gateway and runtime JWT authorizers (audience, client, scope) |
+| Canvas or `/p/hr-diy/` general agent to the tools gateway | Tools token from the bridge's client: `hr.tools.policy` plus read scopes for the canvas | Gateway JWT authorizer, then Gateway Policy per tool |
+| Sub-agent to the tools gateway | Its domain's tools token, exchanged from the agents token | Gateway JWT authorizer, then Gateway Policy per tool |
+| Tools gateway to HR tools runtime | Runtime token (audience `api://hr-tools-runtime`, client `hr-tools-gateway`), exchanged by the gateway's target on every call | Runtime JWT authorizer; the server verifies it again and checks a commit's write scope |
 | Tools gateway to knowledge base | Gateway role | Bedrock |
 
-The tools hop differs because an MCP gateway accepts only MCP targets, and an MCP target
-cannot pass the caller's bearer token through: its outbound options are none, OAuth,
-SigV4, or API key, and `Authorization` cannot be allowlisted for propagation (D19). The HR
-tools server therefore trusts neither the gateway nor the header's presence: it verifies
-the token's signature, issuer, expiry, token use, and client itself and takes `sub` from
-it. Issuer, keys, clients, and audience are environment settings; the stack sets the
-issuer from the platform's discovery URL and the client from its app client id. Every
-JWT authorizer in this stack names the same pool and client, so the token the page holds
-on chat.dengler.io is the one accepted on every hop. The Delta version
-replaces token passthrough with on-behalf-of token exchange (RFC 8693) on PingFederate,
-which Cognito cannot do (D20); with those settings the change is configuration.
+The agents gateway passes its token through because runtime targets cannot exchange
+(aws-feedback A13). The tools gateway's target exchanges because an MCP target cannot pass a
+bearer token through (D19); that replaced the gateway's SigV4 call and the second copy of
+the token in `X-Hr-User-Token`. It costs about 430 ms per tool call until the gateway
+reuses exchanged tokens (A14).
 
 ## HR tools and data
 

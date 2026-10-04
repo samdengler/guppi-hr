@@ -30,7 +30,9 @@ Spike after the design critique (`spike.py`, 3 October 2026; aws-feedback A12 to
   Against a target without MCP sessions, the gateway exchanged and re-initialized on every
   call. `JWT_PASSTHROUGH` is refused on MCP server targets.
 
-The spike added test-only behavior to the issuer, enabled by `ALLOW_SHAPE`: a `shape`
-form field, a `client_credentials` grant, and the `/mcp` and `/echo` routes. It also left
-a runtime (`obo_spike_rt`) and two gateways (`obo-spike-mcp-gw2`, `obo-spike-http-gw`),
-plus the stuck `obo-spike-mcp-gw`.
+The spike added test-only behavior to the issuer (`ALLOW_SHAPE`: a `shape` form field, a
+`client_credentials` grant, and the `/mcp` and `/echo` routes).
+
+Removed on 3 October 2026, once the production issuer (guppi-gpt `obo.py`, D47) was live:
+the stack, the workload identity, the credential provider, the test runtimes, gateways and
+policy engine. The code stays as the record of the checks in the design doc.

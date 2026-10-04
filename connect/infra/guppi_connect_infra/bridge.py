@@ -2,8 +2,10 @@
 
 An AgentCore Runtime running `agent/` behind the platform's edge gateway as the target
 `hr`, so the page's `/api/hr/invocations` reaches it. The Runtime takes
-the platform's own JWT authorizer and forwards Authorization, the bearer becoming the
-contact attribute the canvas sends on to the HR gateways. A DynamoDB table holds each
+the platform's own JWT authorizer and forwards Authorization; the bridge trades that Okta
+token through AgentCore Identity (its credential provider and workload identity, from
+guppi-gpt's /guppi/obo/*) for the two tokens the canvas carries to the HR gateways, an
+agents token and a read-only tools token (guppi-hr D47). A DynamoDB table holds each
 thread's chat contact between runs. Everything about the platform comes from its
 `/guppi/platform/*` parameters at deploy time.
 
@@ -32,6 +34,7 @@ TARGET_NAME = "hr"
 TRACE_HEADER = "traceparent"
 SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 PLATFORM = "/guppi/platform"
+OBO = "/guppi/obo"
 CONNECT_INSTANCE_ID = "5665011a-f5fa-40e3-92d0-85ff625d10f6"
 
 
@@ -145,6 +148,38 @@ class ConnectBridge(Construct):
         )
         table.grant_read_write_data(role)
 
+        # On-behalf-of exchange (guppi-hr D47): this workload identity and the bridge's
+        # credential provider only. The name falls under the documented runtime role pattern.
+        workload = agentcore.CfnWorkloadIdentity(self, "Workload", name=f"{RUNTIME_NAME}-obo")
+        provider_arn = ssm.StringParameter.value_for_string_parameter(self, f"{OBO}/hr-bridge/provider-arn")
+        # Identity reads the bridge client's secret as this role (guppi-hr aws-feedback A16).
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[ssm.StringParameter.value_for_string_parameter(self, f"{OBO}/hr-bridge/secret-arn")],
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock-agentcore:GetWorkloadAccessTokenForJWT"],
+                resources=[
+                    f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default",
+                    workload.attr_workload_identity_arn,
+                ],
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock-agentcore:GetResourceOauth2Token"],
+                resources=[
+                    provider_arn,
+                    f"arn:aws:bedrock-agentcore:{region}:{account}:token-vault/default",
+                    f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default",
+                    workload.attr_workload_identity_arn,
+                ],
+            )
+        )
+
         runtime = agentcore.CfnRuntime(
             self,
             "Runtime",
@@ -175,11 +210,13 @@ class ConnectBridge(Construct):
                 "SESSION_TABLE": table.table_name,
                 "CONVERSATION_LOG_ENABLED": "false",
                 # A warm start also warms each sub-agent through the HR agents gateway,
-                # with the employee's token (D41); the HR stack publishes the URL.
+                # with the agents token (D41, D47); the HR stack publishes the URL.
                 "AGENTS_GATEWAY_URL": ssm.StringParameter.value_for_string_parameter(
                     self, "/guppi-hr/agents-gateway-url"
                 ),
                 "WARM_DOMAINS": ",".join(json.loads(DOMAINS_FILE.read_text())),
+                "OBO_PROVIDER": ssm.StringParameter.value_for_string_parameter(self, f"{OBO}/hr-bridge/provider-name"),
+                "OBO_WORKLOAD": workload.name,
                 # Traces go to the platform's Dynatrace tenant, beside the HR runtimes the
                 # canvas calls, with the platform's token read from its secret at start
                 # (connect_bridge.otel_headers; guppi-hr D36).

@@ -39,6 +39,7 @@ from a2a.types import (
 
 from hr_agent.agents.domains import DOMAINS, Domain
 from hr_agent.agents.mcp_sessions import McpSessions
+from hr_agent.obo import TokenExchanger
 from hr_agent.agents.snapshot import (
     RECORD_READS,
     WARM_SEARCHES,
@@ -180,13 +181,11 @@ def _open_session(key: tuple[str, str], settings: Settings | None = None):
     if not settings.tools_gateway_url:
         raise RuntimeError("TOOLS_GATEWAY_URL is not set")
     token, thread_id = key
+    # The tools token alone (D47): the gateway's authorizer and Policy read it, and the
+    # gateway exchanges it again for the tools runtime, so no second copy rides along.
     client = MCPClient(
         url=settings.tools_gateway_url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "X-Hr-User-Token": token,
-            "X-Hr-Thread-Id": thread_id,
-        },
+        headers={"Authorization": f"Bearer {token}", "X-Hr-Thread-Id": thread_id},
     )
     client.start()
     try:
@@ -198,6 +197,9 @@ def _open_session(key: tuple[str, str], settings: Settings | None = None):
 
 SESSIONS = McpSessions(_open_session)
 SNAPSHOTS = Snapshots()
+# This sub-agent's credential provider trades the agents token it receives for its own
+# domain's tools token (D47); the stack sets OBO_PROVIDER, OBO_WORKLOAD and OBO_SCOPES.
+TOOLS_TOKENS = TokenExchanger(scopes=os.environ.get("OBO_SCOPES", "").split())
 
 
 def bearer_token(headers: dict[str, str]) -> str | None:
@@ -220,7 +222,8 @@ async def run_domain(
     from strands.models import BedrockModel
 
     settings = settings or Settings()
-    async with SESSIONS.lease((token, thread_id), token_expires_at=token_expires_at(token)) as (
+    tools_token = await TOOLS_TOKENS.aexchange(token)
+    async with SESSIONS.lease((tools_token, thread_id), token_expires_at=token_expires_at(tools_token)) as (
         client,
         listed,
     ):
@@ -277,7 +280,11 @@ async def warm_domain(token: str, thread_id: str, domain: str = "", settings: Se
     and read what is on file for the domain, so the thread's first real request finds all
     of it ready. No model call."""
     settings = settings or Settings()
-    async with SESSIONS.lease((token, thread_id), token_expires_at=token_expires_at(token)) as (client, _tools):
+    tools_token = await TOOLS_TOKENS.aexchange(token)
+    async with SESSIONS.lease((tools_token, thread_id), token_expires_at=token_expires_at(tools_token)) as (
+        client,
+        _tools,
+    ):
         key = (token, thread_id, domain)
         if SNAPSHOTS.get(key) is not None:
             return
