@@ -177,8 +177,9 @@ shows the hop token exchanges (issuer cold or warm), the designer's greeting, th
 start, and each sub-agent's warm-up with its own exchanges. Work of the same contact from
 another run, usually the warm start still running under a question, is listed after the
 run's own steps and marked `=`; steps at one level that run at the same time are marked
-`*`. `SendMessage` is in none of these logs: its span is in the bridge's trace, whose id
-the block prints for Dynatrace. The designer's log arrives some time after a turn and is
+`*`. `SendMessage done` comes from the run line's `connect_sent_ms` (D54); a run line
+from before it has none, and the block then points to the span in the bridge's trace,
+whose id it prints for Dynatrace. The designer's log arrives some time after a turn and is
 kept for a limited time; a turn outside that prints without the designer's steps.
 
 The PTO question of 4 October (contact 1b067d05), 4.3 s after its warm start began:
@@ -213,3 +214,57 @@ fifth is the policy search (0.8 s), and Connect's own path in and out is 0.7 s. 
 start's sub-agents were still warming throughout, on their own runtimes; the question did
 not call them. A question that waited for its contact shows a "waits for the warm
 start to start the contact" step first, and its split begins with that wait.
+
+## The bridge's steps in debug mode
+
+With the page's debug flag on, each question carries `forwardedProps.debug: true`, and the
+page shows the bridge's own steps for that turn beside the reply (D54; guppi-gpt draws the
+view). The bridge records them on every run in `connect_bridge/timing.py` and sends them
+only on a debug run, as one CUSTOM event named `guppi.timing` just before RUN_FINISHED or
+RUN_ERROR. Times are milliseconds from the bridge taking the request, on its monotonic
+clock; a step with no end is a point. The lanes are `bridge` (waits in the bridge),
+`exchange` (the hop token exchanges) and `connect` (Connect's APIs and sockets).
+
+| Step | Where the time comes from |
+| --- | --- |
+| waiting for another run's contact | `session_for`, from the first read that finds the warm start's claim to the read that finds the stored contact |
+| starting a contact | `session_for` around `start_contact`, when this run starts the contact |
+| hop token exchanges | from the start of `starting a contact` to the start of StartChatContact; a note says whether the issuer was called or the exchangers' cache answered |
+| StartChatContact, CreateParticipantConnection, flow socket, token blanking, StopContact, SendMessage, reply socket | each call through `TimedClients`, which wraps the turn's Connect clients |
+| greeting wait | `await_greeting`, until the canvas's greeting arrives |
+| opening the reply stream | `open_stream`: a new connection and its WebSocket |
+| first reply item, end mark, closing event, quiet after the reply, turn limit | points in `relay` |
+| total | the whole run |
+
+A warm start sends no events beyond RUN_STARTED and RUN_FINISHED, so the contact's start
+shows only when a question starts it or waits for it; the warm start's own times are on its
+run line (`connect_exchanged_ms`, `connect_ready_ms`). Every run line carries the marks
+that happened: `connect_ready_ms`, `connect_sent_ms`, `connect_stream_ms`,
+`connect_first_item_ms` and `connect_end_ms`. The event's ids are the contact id, the run's
+trace id (the one the page minted in `traceparent`) and the run id; it holds no token, no
+name and no message text. The designer's, the issuer's and the sub-agents' steps are in
+logs that arrive after the turn, so a breakdown with them is step 3, on demand and behind an
+Okta group, later.
+
+The first question of a harness round on 4 October, after its warm start (contact
+fb4bdb71):
+
+```
+{"steps": [
+  {"name": "SendMessage", "start_ms": 20, "end_ms": 220, "lane": "connect"},
+  {"name": "CreateParticipantConnection", "start_ms": 220, "end_ms": 363, "lane": "connect"},
+  {"name": "opening the reply stream", "start_ms": 220, "end_ms": 443, "lane": "connect"},
+  {"name": "reply socket", "start_ms": 363, "end_ms": 443, "lane": "connect"},
+  {"name": "first reply item", "start_ms": 2506, "end_ms": null, "lane": "connect"},
+  {"name": "end mark", "start_ms": 2506, "end_ms": null, "lane": "connect"},
+  {"name": "total", "start_ms": 0, "end_ms": 2516, "lane": "bridge"}],
+ "total_ms": 2516,
+ "ids": {"contact": "fb4bdb71-8197-4456-be3e-b0583109679b",
+         "trace": "6ac24fc36064403dfde0b9a68d887501",
+         "run": "5ca7374c-25ed-4c94-b62f-bd7b85b4d5aa"},
+ "notes": []}
+```
+
+SendMessage took 0.2 s and the reply stream 0.22 s after it; the rest of the 2.5 s is
+Connect and the canvas. `uv run connect/scripts/latency_bench.py --rounds 1 --debug` prints
+the event of each question.

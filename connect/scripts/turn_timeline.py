@@ -18,8 +18,9 @@ one clock in milliseconds from the moment the bridge received the run:
 
 Work of the same contact from another run (the warm start still running under a question)
 is listed after the run's own steps. Steps at one level that run at the same time are
-marked. SendMessage is not in any log the script reads: its span is in the bridge's trace,
-whose id is printed so the trace can be opened in Dynatrace.
+marked. The time SendMessage finished comes from the run line's `connect_sent_ms` (D54); a
+run line from before it has none, and its SendMessage span is in the bridge's trace, whose
+id is printed so the trace can be opened in Dynatrace.
 
     uv run connect/scripts/turn_timeline.py --since 30m
     uv run connect/scripts/turn_timeline.py --contact 1b067d05-7df1-479e-bf48-ede5bbdba357
@@ -620,14 +621,7 @@ def turn_steps(run: Run, turn: DesignerTurn | None, src: Sources) -> list[Step]:
         steps.append(
             Step(run.start, src.contact_started, "waits for the warm start to start the contact")
         )
-    steps.append(
-        Step(
-            run.start,
-            None,
-            "SendMessage done: not in these logs; its span is in the bridge's trace",
-            untimed=True,
-        )
-    )
+    steps.append(send_step(run))
     greeting_steps(steps, src, run)
     if turn is not None:
         steps.extend(designer_steps(turn, "designer NluRequestReceived, the Connect hand-off"))
@@ -642,6 +636,24 @@ def turn_steps(run: Run, turn: DesignerTurn | None, src: Sources) -> list[Step]:
     issuer_steps(steps, src, run)
     steps.append(Step(run.end, None, "bridge run ends", run.fields.get("outcome", "")))
     return steps
+
+
+def sent_ms(run: Run) -> int | None:
+    """When SendMessage finished, from the bridge receiving the run (connect_sent_ms, D54)."""
+    value = run.fields.get("connect_sent_ms")
+    return round(value) if isinstance(value, (int, float)) else None
+
+
+def send_step(run: Run) -> Step:
+    sent = sent_ms(run)
+    if sent is None:
+        return Step(
+            run.start,
+            None,
+            "SendMessage done: not in these logs; its span is in the bridge's trace",
+            untimed=True,
+        )
+    return Step(run.start + sent, None, "SendMessage done")
 
 
 def split_line(run: Run, turn: DesignerTurn | None, src: Sources, steps: list[Step]) -> str | None:
@@ -662,6 +674,10 @@ def split_line(run: Run, turn: DesignerTurn | None, src: Sources, steps: list[St
             else "starting the contact"
         )
         parts.append(f"{what} {ready - run.start:,}")
+    sent = sent_ms(run)
+    if sent is not None and ready <= run.start + sent <= received:
+        parts.append(f"SendMessage {run.start + sent - ready:,}")
+        ready = run.start + sent
     parts.append(f"Connect hand-off {received - ready:,}")
     own = [
         s

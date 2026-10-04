@@ -4,6 +4,7 @@ The fixtures are lines from 4 Oct 2026: the warm start and the PTO question on c
 1b067d05 (12:22 UTC), trimmed to the fields the script reads.
 """
 
+import dataclasses
 import importlib.util
 import json
 import sys
@@ -355,3 +356,16 @@ def test_when():
     assert tt.parse_when("30m", now) == ms("12:00:00.000")
     assert tt.parse_when("2026-10-04T12:20", now) == ms("12:20:00.000")
     assert tt.merge_windows([(5, 9), (0, 6), (20, 30)]) == [(0, 9), (20, 30)]
+
+
+def test_the_send_message_mark_from_the_run_line(sources):
+    """A run line with connect_sent_ms (D54) times SendMessage and splits the hand-off; one
+    from before it still says where the span is."""
+    old = tt.turn_steps(sources.runs[1], None, sources)
+    assert any(s.untimed and s.label.startswith("SendMessage done: not in these logs") for s in old)
+    question = tt.parse_run(run_line({**QUESTION_RUN, "connect_sent_ms": 61}))
+    src = dataclasses.replace(sources, runs=[sources.runs[0], question])
+    text = "\n".join(tt.render_run(question, src))
+    assert "      +61                    SendMessage done\n" in text
+    assert "not in these logs" not in text
+    assert "first delta 4,133 ms: SendMessage 61; Connect hand-off 432; designer 3,429" in text

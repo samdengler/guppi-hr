@@ -24,6 +24,10 @@ process and is never printed or written.
     uv run connect/scripts/latency_bench.py --rounds 10 --no-warm --label no-warm
     uv run connect/scripts/latency_bench.py --rounds 8 --click --label click
     uv run connect/scripts/latency_bench.py --rounds 8 --click --press-after 6 --label loaded
+    uv run connect/scripts/latency_bench.py --rounds 1 --debug --label debug
+
+With --debug every question carries `forwardedProps.debug`, and the bridge's guppi.timing
+event of each (D54) is printed and kept with the run.
 
 Results go to connect/.deploy/latency/<label>-<time>.json with a summary on stdout.
 """
@@ -93,6 +97,7 @@ def run(client: httpx.Client, bearer: str, session: str, thread: str, messages: 
     first = None
     started_event = None
     text = []
+    timing = None
     outcome = "unfinished"
     with client.stream("POST", URL, json=body, headers=headers, timeout=60) as response:
         if response.status_code != 200:
@@ -108,6 +113,8 @@ def run(client: httpx.Client, bearer: str, session: str, thread: str, messages: 
                 if first is None:
                     first = time.monotonic()
                 text.append(event.get("delta", ""))
+            elif kind == "CUSTOM" and event.get("name") == "guppi.timing":
+                timing = event.get("value")
             elif kind == "RUN_FINISHED":
                 outcome = "finished"
             elif kind == "RUN_ERROR":
@@ -121,7 +128,14 @@ def run(client: httpx.Client, bearer: str, session: str, thread: str, messages: 
         "started_ms": round((started_event - started) * 1000) if started_event else None,
         "done_ms": round((done - started) * 1000),
         "text": " ".join(text)[:160],
+        **({"timing": timing} if timing is not None else {}),
     }
+
+
+def print_timing(what: str, result: dict | None) -> None:
+    timing = (result or {}).get("timing")
+    if timing:
+        print(f"  {what} guppi.timing: {json.dumps(timing)}")
 
 
 def summary(values: list[int]) -> str:
@@ -140,12 +154,14 @@ def main() -> None:
     parser.add_argument("--click", action="store_true", help="press a suggestion: the warm start and the question together")
     parser.add_argument("--press-after", type=float, default=PRESS_SECONDS, help="seconds from the warm start to the press (--click)")
     parser.add_argument("--label", default="run")
+    parser.add_argument("--debug", action="store_true", help="ask the bridge for its timings (D54)")
     args = parser.parse_args()
 
     bearer = token()
     prompts = suggestions()
     results = []
     previous = None
+    asked = {"debug": True} if args.debug else {}
     with httpx.Client(http2=False) as client:
         for i in range(args.rounds):
             first_q, follow_q = (prompts[i % len(prompts)], None) if args.click else QUESTIONS[i % len(QUESTIONS)]
@@ -169,7 +185,7 @@ def main() -> None:
                     warm = run(client, bearer, session, thread, [], props)
                     time.sleep(max(0.0, args.pause - warm["done_ms"] / 1000))
             m1 = {"id": str(uuid.uuid4()), "role": "user", "content": first_q}
-            first = run(client, bearer, session, thread, [m1], {})
+            first = run(client, bearer, session, thread, [m1], asked)
             if pressed is not None:
                 pressed.join()
                 warm = box.get("warm")
@@ -178,13 +194,15 @@ def main() -> None:
                 time.sleep(2.0)
                 a1 = {"id": str(uuid.uuid4()), "role": "assistant", "content": first["text"] or "(none)"}
                 m2 = {"id": str(uuid.uuid4()), "role": "user", "content": follow_q}
-                follow = run(client, bearer, session, thread, [m1, a1, m2], {})
+                follow = run(client, bearer, session, thread, [m1, a1, m2], asked)
             results.append({"round": i, "question": first_q, "warm": warm, "first": first, "follow": follow})
             print(
                 f"round {i}: warm {warm and warm['done_ms']} ms | first {first['first_ms']} / {first['done_ms']} ms"
                 f" {first['outcome']}"
                 + (f" | follow-up {follow['first_ms']} / {follow['done_ms']} ms {follow['outcome']}" if follow else "")
             )
+            print_timing("first", first)
+            print_timing("follow-up", follow)
             previous = thread
             time.sleep(2.0)
 

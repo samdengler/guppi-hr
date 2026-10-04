@@ -63,6 +63,7 @@ from botocore.exceptions import ClientError
 
 from connect_bridge.obo import ExchangeError, TokenExchanger, expires_at
 from connect_bridge.store import Pending, Session
+from connect_bridge.timing import TimedClients, Timing, debug_requested
 
 log = logging.getLogger("connect_bridge")
 
@@ -285,10 +286,12 @@ class ConnectTurn:
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], Any] = asyncio.sleep,
     ) -> None:
+        # The run's timings from here, which is when the bridge takes the request (D54).
+        self.timing = Timing()
         self.token = token
         self.store = store
         self.settings = settings or Settings()
-        self.clients = clients or ConnectClients(self.settings.region)
+        self.clients = TimedClients(clients or ConnectClients(self.settings.region), self.timing)
         self.clock = clock
         self.sleep = sleep
         self.stats: dict[str, Any] = {}
@@ -300,6 +303,30 @@ class ConnectTurn:
     # ---- the run ---------------------------------------------------------------------
 
     async def run(self, run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+        """The turn's events; on a debug run, a guppi.timing event just before the run
+        ends, however it ends: RUN_FINISHED, RUN_ERROR, or an error the kit reports as
+        RUN_ERROR (D54)."""
+        debug = debug_requested(run_input)
+        try:
+            async for event in self.turn_events(run_input):
+                if debug and event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
+                    debug = False
+                    yield self.timing_event(run_input)
+                yield event
+        except Exception:
+            if debug:
+                yield self.timing_event(run_input)
+            raise
+
+    def timing_event(self, run_input: RunAgentInput) -> BaseEvent:
+        for key, text in STAT_NOTES:
+            if self.stats.get(key):
+                self.timing.note(text)
+        if self.stats.get("pushed") is False:
+            self.timing.note("replies polled from the transcript")
+        return self.timing.event(run_input.run_id)
+
+    async def turn_events(self, run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         thread, run = run_input.thread_id, run_input.run_id
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread, run_id=run)
         text = last_user_text(run_input)
@@ -331,10 +358,14 @@ class ConnectTurn:
                 for event in text_events(RESTARTED_LINE):
                     yield event
             session, own_id = await asyncio.to_thread(self.deliver, session, thread, text)
+            self.stats["sent_ms"] = self.timing.last_end("SendMessage")
             # The stream opens after the send, so a new connection never races it; the
             # canvas takes longer than the open to answer, and the relay's first read of
             # the transcript catches anything sooner.
-            stream = await asyncio.to_thread(self.open_stream, session)
+            stream = await asyncio.to_thread(
+                self.timing.call, "opening the reply stream", "connect", self.open_stream, session
+            )
+            self.stats["stream_ms"] = self.timing.ms()
             self.stats["pushed"] = stream is not None
             replied = False
             async for reply in self.relay(session, own_id, stream):
@@ -475,28 +506,33 @@ class ConnectTurn:
         token_exp = float(claims(self.token).get("exp", self.clock() + 3600))
         deadline = time.monotonic() + START_LIMIT
         replaced: Session | None = None
+        wait: dict | None = None
         while True:
             found = self.store.get(key)
             now = self.clock()
             if isinstance(found, Session):
                 if self.usable(found, token_exp, now):
+                    self.ready(found, wait)
                     return found
                 if not found.closed:
                     replaced = found
             waiting = isinstance(found, Pending) and found.until >= now
             if waiting and time.monotonic() < deadline:
                 self.stats["waited"] = True
+                wait = wait or self.timing.begin("waiting for another run's contact", "bridge")
                 time.sleep(CLAIM_POLL_INTERVAL)
                 continue
             if time.monotonic() >= deadline or self.store.claim(key, now + START_LIMIT, now):
                 break
+        if wait is not None:
+            self.timing.end(wait)
         if replaced is not None:
             # A live contact this thread is leaving (its token is about to expire): end it
             # rather than leave it open for the rest of its hour.
             self.stats["restarted"] = True
             self.end_contact(replaced)
         try:
-            session = self.start_contact(key, token_exp)
+            session = self.timed_start(key, token_exp)
         except Exception:
             self.store.release(key)
             raise
@@ -509,7 +545,38 @@ class ConnectTurn:
         finally:
             self.blank_token(session)
         self.stats["started"] = True
+        self.ready(session, None)
         return session
+
+    def ready(self, session: Session, wait: dict | None) -> None:
+        """Marks the thread's contact usable: its id for the timing event, the time for the
+        run line, and the end of a wait for another run's contact."""
+        if wait is not None:
+            self.timing.end(wait)
+        self.timing.contact = session.contact_id
+        self.stats["ready_ms"] = self.timing.ms()
+
+    def timed_start(self, key: str, token_exp: float) -> Session:
+        """start_contact as timing steps: the whole start, and the hop token exchanges in
+        it, which end where StartChatContact begins; its calls record themselves."""
+        cached = hop_tokens_cached(self.token)
+        step = self.timing.begin("starting a contact", "bridge")
+        failed = True
+        try:
+            session = self.start_contact(key, token_exp)
+            failed = False
+            return session
+        finally:
+            self.timing.end(step, failed=failed)
+            if cached is None:
+                self.timing.note("no token exchange: the contact carries the sign-in token")
+            else:
+                began = self.timing.first_start("StartChatContact", after=step["start_ms"])
+                exchanged = began if began is not None else step["end_ms"]
+                self.timing.add("hop token exchanges", step["start_ms"], exchanged, "exchange")
+                self.stats["exchanged_ms"] = exchanged
+                made = "issuer exchanges cached" if cached else "issuer exchanges made by this run"
+                self.timing.note(made)
 
     def usable(self, session: Session, token_exp: float, now: float) -> bool:
         if session.closed or session.connection_expires_at <= now + 60:
@@ -605,6 +672,7 @@ class ConnectTurn:
         wait to polling. The canvas ignores a message sent before it greets, so a contact
         that never greets is a failed start (finding 3)."""
         deadline = time.monotonic() + GREETING_LIMIT
+        step = self.timing.begin("greeting wait", "connect")
         try:
             while (left := deadline - time.monotonic()) > 0:
                 frame = self.clients.receive(ws, min(left, GREETING_CHECK_SECONDS))
@@ -621,6 +689,7 @@ class ConnectTurn:
             return
         finally:
             close_quietly(ws)
+            self.timing.end(step)
         problem("no_greeting", session.contact_id)
         raise StartFailed(f"contact {session.contact_id} did not greet in {GREETING_LIMIT:.0f} s")
 
@@ -733,6 +802,7 @@ class ConnectTurn:
                     reply = classify(item)
                     if reply is None:
                         continue
+                    self.mark_reply(reply)
                     if reply.kind == "end":
                         self.stats["end_of_turn"] = True
                         return
@@ -751,6 +821,8 @@ class ConnectTurn:
                 if quiet_until is not None:
                     wait = min(wait, quiet_until - now)
                 if wait <= 0:
+                    quiet = quiet_until is not None and quiet_until <= now
+                    self.mark_end("quiet after the reply" if quiet else "turn limit")
                     return
                 if ws is not None:
                     try:
@@ -766,6 +838,19 @@ class ConnectTurn:
         finally:
             if ws is not None:
                 await asyncio.to_thread(close_quietly, ws)
+
+    def mark_reply(self, reply: Reply) -> None:
+        """The first reply item and the end of the turn, on the timing and the run line."""
+        if reply.kind != "end" and "first_item_ms" not in self.stats:
+            self.stats["first_item_ms"] = self.timing.point("first reply item", "connect")
+        if reply.kind == "end" or reply.mark == "end":
+            self.mark_end("end mark")
+        elif reply.kind != "text" or reply.mark == "closed":
+            self.mark_end("closing event")
+
+    def mark_end(self, name: str) -> None:
+        if "end_ms" not in self.stats:
+            self.stats["end_ms"] = self.timing.point(name, "connect")
 
     async def pushed_items(self, session: Session, ws: Any, wait: float) -> list[dict]:
         """The next new item Connect pushes within `wait` seconds, as a list (or empty)."""
@@ -791,6 +876,38 @@ class ConnectTurn:
         fresh = [item for item in items if item.get("Id") not in session.seen]
         session.remember([item["Id"] for item in fresh if item.get("Id")])
         return fresh
+
+
+# Notes for the timing event from the run line's flags (D54).
+STAT_NOTES = (
+    ("started", "contact started by this run"),
+    ("waited", "waited for the warm start's contact"),
+    ("restarted", "the thread's contact was replaced: its token or chat duration ran out"),
+    ("replaced", "the contact refused the message; a new contact took it"),
+    ("reconnected", "a fresh connection for the stored contact"),
+    ("too_long", "message too long: nothing sent"),
+    ("exchange_failed", "token exchange failed: no contact started"),
+    ("socket_failed", "the reply socket failed; the rest of the turn polled"),
+    ("no_reply", "no reply within the turn limit"),
+    ("canvas_error", "the canvas reported an error"),
+    ("stale", "a previous turn's replies arrived late and were not shown"),
+    ("token_not_cleared", "token blanking failed"),
+)
+
+
+def hop_tokens_cached(token: str) -> bool | None:
+    """True when every hop token for `token` is in the exchangers' caches, so a start makes
+    no issuer call; None when the contact carries no exchanged tokens (OBO=off). The
+    exchangers are read through globals() since scripts/obo-rollback.sh removes them."""
+    agents = globals().get("AGENTS_TOKENS") or {}
+    canvas = globals().get("CANVAS_TOKENS")
+    exchangers = [*agents.values(), *([canvas] if canvas is not None else [])]
+    if not exchangers or not all(e.enabled for e in exchangers):
+        return None
+    try:
+        return all(e._cached(e._key(token)) for e in exchangers)
+    except Exception:  # noqa: BLE001 - timing never fails a run
+        return False
 
 
 def mark_span(contact_id: str) -> None:
