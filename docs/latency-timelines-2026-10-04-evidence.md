@@ -616,6 +616,299 @@ The four on-behalf-of exchanges of each start, at the issuer (credential provide
 | 20:33:32.104 | `83e8cfb2` | api://hr-agents/travel | `102431f6-9fb6-45da-b1f6-c3bd98321e50` | `1a418f18-3205-413e-81b4-aad0f5b48a9e` | `1-6ac2b81c-12e6c34808eaac9615b9044d` | 27.39 |  |
 | 20:33:32.112 | `83e8cfb2` | api://hr-agents/pay | `970a4b30-7db1-4214-8af1-01acc69dfa6a` | `53d18928-1641-426f-8da6-915e44eb6262` | `1-6ac2b81c-3965895b2115257022f21f95` | 28.42 |  |
 
+## Connect calls from CloudTrail
+
+CloudTrail records every Connect and participant call of a chat with its request id; the
+participant calls carry the contact in `resources`, and `SendMessage` returns the message id
+and Connect's own time to the millisecond. The browser's `SendMessage` time matched the page's
+record for all 52 questions (within 2 ms). The designer's messages go through the same
+`SendMessage` from an internal AWS client: 29 greetings and 52 replies, which with the 52
+questions are the 133 billed messages.
+
+### Per chat
+
+| Navigation | Contact | StartChatContact | CreateParticipantConnection (function) | CreateParticipantConnection (designer) | Designer participant id | UpdateContactAttributes | CreateParticipantConnection (browser) | GetTranscript (browser) | Greeting message id | Greeting stamped |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 20:19:38.434 | `5f22aca7-7997-4941-b9f0-661ee9e5c1df` | `a4001adc-3aeb-41a4-b596-cf2b0373d9eb` | `6fa7b98f-0de1-47c6-bb7d-f586ac66c5f1` | `fd348cad-9be9-496c-8bfd-01abac29d0fc` | `2747bd66-6963-4ad4-a52e-3c1026a392e2` | `1b19a393-bafe-4c6a-8da8-b95b645240e6` | `68a30b7a-7080-4441-ac65-484ba11f6742` | `1f2fe109-14e7-4d54-ac39-f115f427965a` | `01a10892-8aec-76a1-b274-bc85cd89a30a` | 20:19:43.980 |
+| 20:20:18.303 | `48e7b0a1-5754-40ef-93a1-4998ae7f8fdd` | `303ef2ec-d239-4813-8012-95b029fcd4c5` | `74bfe3db-3778-492d-80c2-39105783a3b7` | `de3926bd-6b51-4ae5-96ff-e860ac163c6b` | `67df16ae-7a49-42a4-a80d-1b63a658741a` | `aad1dfd6-b6d5-4e8c-9288-d2673fc30914` | `f8f5f71f-0ab1-4a7e-80be-25c693b11788` | `f9e46627-58a5-479b-97c8-ebd7eaf47dec` | `01a10893-1e0e-7e01-9b22-ea1a9686d41a` | 20:20:21.646 |
+| 20:20:42.547 | `6dfeece8-8827-40b9-9d0f-23d831147306` | `8692a742-b49d-450d-8768-6f5af8bb4782` | `8e5e6758-c29e-42d5-ad35-f1667d1aa171` | `a886bcbe-07f8-4e5f-b7e5-6382426b9fe2` | `1e1d5349-a935-4cd8-81c6-9631a977a1f3` | `97583e2c-293f-4137-b308-fe35f04b915c` | `6c5f5455-e90f-48bc-a7ba-7c08f40fc376` | `8dd382c0-5be4-4407-b2ae-f4ac83972c7b` | `01a10893-7c9a-7e1a-860c-6928de13aedd` | 20:20:45.850 |
+| 20:21:08.081 | `8a8a1a63-33be-4f59-9294-aa0df1ae7f6e` | `ef6c942c-257d-400a-8544-057fc4635a7b` | `da005f65-9da9-4341-b481-8d408742fa08` | `64939697-d737-45a9-9e5e-c2740aa69470` | `71ef7a41-5d7b-4cad-a5f7-896a9111e680` | `21779b5f-fde3-46ec-9e79-cc5a1705023e` | `9d14ee86-cc79-43a2-a9f0-a89a4f883dd5` | `86ce356c-a4f9-4bd2-a8c5-53f62a86c2dc` | `01a10893-df14-7fdf-9615-a5148231288e` | 20:21:11.060 |
+| 20:21:31.080 | `e2ceda77-100c-4ea2-bc32-d346935a6fef` | `32abff64-c2b3-4652-92cf-e8c28f4d7455` | `a047d7de-918b-46b5-96a1-681c7357edc8` | `6eaa8edd-baca-44ca-8083-7cac785a2c48` | `b61dc2e3-52bb-49b4-91bd-d8c6cd125ea2` | `48421721-37c6-442d-91d5-62231aceea56` | `c4905443-0424-4c31-94ee-23bed39360b2` | `ca6e4df7-8145-47b4-986e-bd6ead450ffe` | `01a10894-38e1-79d1-b9dc-5e7c1569cc84` | 20:21:34.049 |
+| 20:21:57.261 | `f538cb39-a04d-433b-aed5-468d1aa2e6f5` | `c57ee533-0963-4fe7-a5dd-af97a23e5e7a` | `c8896d63-6564-4448-88c3-9749cfb695dc` | `334edd87-83ba-4fda-b6b9-93dacbd26f1d` | `34591c4d-dd30-4c0c-9605-b839f0c547c5` | `209abcfa-7cc0-4367-85d7-6187df16746a` | `9f677a61-edba-4197-864f-8b669e4f3dc6` | `3824256f-c0db-4918-bbb6-a3b18086315f` | `01a10894-9ec6-70b5-8450-934cf4872342` | 20:22:00.134 |
+| 20:22:20.605 | `cfacb8b9-0358-4598-8aa5-df0f85b0f2c9` | `f23d8402-1d28-4f64-9bd5-ec674bce519d` | `2869bfbc-06bd-4073-b3f2-09c979441866` | `f23b2b5c-cd71-462e-b346-a22dfd7f5c50` | `5f5dd7cf-aca5-4c41-92cc-4022cc3606f1` | `800b93ec-6d7b-48ba-9885-b23b5cc53cbc` | `f98a0fd7-fbee-4ff6-aa28-8a84f839112d` | `c7416e1a-1b5c-45ff-a3ec-863ee1fcc3ed` | `01a10894-f974-7520-a31f-ca26658a104b` | 20:22:23.348 |
+| 20:22:44.920 | `6da0565d-857c-46fd-9d4d-42852de004f9` | `e7bd3c55-e8ff-4a5d-b46f-1ea31ad78359` | `ca4ec8ad-2f2c-422d-a298-0d4fadbd1998` | `252dce00-c4e5-40d9-98f5-8a09fadc561a` | `6712f5d7-b7e7-4260-8d39-a74128abfbc5` | `d69993c8-5fba-4d59-93ff-8e1f566afb71` | `ee99a579-f770-4b42-9dfb-5a865801f0c5` | `3b277df9-b7aa-43d4-b912-96fd746156be` | `01a10895-58aa-73f4-909d-483760805b76` | 20:22:47.722 |
+| 20:23:07.415 | `ed74cbd8-aca6-4173-bcbb-2f4710304965` | `ac7762a5-2d19-480b-b4e9-d5a9e7fd68f8` | `941f9a0d-515c-4b41-81d1-9b5ba84298a9` | `864bc9ed-857a-43af-b9d2-648594f6aff5` | `54668df0-2bfb-4a9a-a992-c8dce1aa8fa9` | `41c0d975-d703-493e-a099-2928eedb3b30` | `9c9e0325-a3c5-4f65-a387-4022aa87eec8` | `0852a5f2-2edd-4f2a-b467-56e60fb64b42` | `01a10895-b0d8-78d5-b89a-03273f9b326a` | 20:23:10.296 |
+| 20:23:34.618 | `af2494cc-ecd3-4b55-800e-62c40dfb6120` | `6d1aa468-daa0-4554-a1b4-d2002fcff691` | `9fe2e3f2-1324-45b5-a0e3-f53814bdaeb3` | `7e933264-2c92-47b2-9fb7-dbdc6b828e5d` | `ebccc350-23ed-4011-a1a3-cea11ba7d2ed` | `5997fa37-112d-4c2b-bfea-003f377320cc` | `39235065-f545-46cf-b117-a77f0ff5de76` | `6c9dcd47-42a0-4858-87d5-30a7a1424838` | `01a10896-1b19-74ce-9fb7-7aea9c68f149` | 20:23:37.497 |
+| 20:24:00.834 | `cda42b04-85ed-478d-b7ca-3a44ae86583f` | `21852899-79bd-4b4b-93aa-40fda9ceb3f7` | `488736e2-094d-42a3-9677-8014be8eb0af` | `15d570c9-cc71-454c-8410-fa231bd6d77d` | `bee6d463-5b2a-42f0-b503-603319916abd` | `6e0e8dc0-bfd2-46ad-8e10-1736be07dadb` | `4156c636-d5ad-4760-97f2-735bbbd0be3b` | `167a4c18-97f2-49e9-8f2e-d9ab9aa36b53` | `01a10896-818d-799f-9745-ec921b1c8c8f` | 20:24:03.725 |
+| 20:24:24.103 | `32f6a73b-e9e3-4a51-b994-616e9ffc5b31` | `0a957c29-514c-4b13-bc79-80ba19f6743b` | `0980466e-5a6a-482c-9a77-65fd4899af04` | `92455727-7326-401b-8ab6-c8ae77ba2162` | `3b52d74d-a6cf-49de-83b7-abd0275a31c3` | `70550ed9-9e90-455f-9364-2817bb654506` | `b418830b-5c73-45cb-a87e-be3dc43ee224` | `bf1ea5ec-7808-4a3b-a548-eacb59b196d9` | `01a10896-dc61-77a3-8a7b-0b6b2b16f5a6` | 20:24:26.977 |
+| 20:24:48.152 | `02a4898f-3278-4b23-8217-344fd3f568ef` | `5118c1ec-5541-41b1-88dd-abaaf5624d49` | `cc1e83f7-307b-4bbf-89dd-8969221f71ea` | `e2230301-2eec-4ecf-a2cd-9e840e48ec2c` | `0423ae1d-72fd-4d62-ad79-43d9e2348982` | `5204b38a-f25d-4c49-a5e7-a4f5e873cbbb` | `4192a63b-b21e-4846-ba00-a8c31e8afa4c` | `327976c4-7d2e-4702-ae23-29e5f0748410` | `01a10897-3ab0-7187-95b0-718c9967b145` | 20:24:51.120 |
+| 20:25:10.799 | `ae9113a3-b377-4aad-8d7a-c1b2e9a20ed9` | `c121298c-332c-4d55-8658-b268bf493ce1` | `f91a8d6f-f5ca-4461-804b-883dcdea6b31` | `38ea369f-5bea-45c4-9aaf-69ee20307c35` | `adcd9545-5ed3-44b4-b836-9760fdd31006` | `811d3a5d-c74a-4465-b381-cbd81e14a001` | `b0fd98e9-7cd5-4cbe-9f46-88727bc499f4` | `ee68b60d-f7cb-46e7-ac16-12bfd59f6c36` | `01a10897-923f-7642-8915-5a84b7d27443` | 20:25:13.535 |
+| 20:25:36.925 | `ec9ce1dc-084b-4e70-9f80-e2e34c76ab32` | `63048de8-1058-4a44-9221-42af3a6f8bc4` | `8d200d81-6cbf-440a-b366-2388497c0846` | `83abfe44-489f-44cb-99f0-c2d7dc0af422` | `4c627b5b-7294-472c-9ab8-e71063354497` | `2a199db3-9be6-4e49-8809-c4026a44ad5a` | `0b0abe99-472a-4032-9dcd-38699aa10446` | `e07cc794-d449-4be4-b212-ca0fc4978d8e` | `01a10897-f8ae-7036-9618-76f293e83559` | 20:25:39.758 |
+| 20:25:59.182 | `73cc55da-9edd-49ed-afd1-24b84d5b57f1` | `1452aec8-3397-4f93-8919-8cdde8b15932` | `9a2124c5-b6b8-493e-989d-e73b6cf6ea97` | `e52271a1-e434-4bab-a286-0024876032e9` | `284866ce-56d1-4b1e-ad09-6383d1013f22` | `2d1079ef-b193-4691-a86e-a6f86e6c3bfb` | `77db1a3c-fa38-4e1a-b378-37101da5f025` | `95903c4a-9816-4ed8-9522-7454fef59560` | `01a10898-4f20-7581-a824-520d311c5901` | 20:26:01.888 |
+| 20:26:22.815 | `a95c6ecf-19af-4c76-b467-3801c61a2e4b` | `11a52e6f-d03e-4f02-a559-1d0a8d52dafd` | `be82596b-d603-46cc-9d61-d9935f7126dd` | `e35ac689-67bb-4cc9-a98d-62422e82bef3` | `d2542ba6-409f-4513-9392-53ba9e0cf7ab` | `e35230e6-137a-4c37-b267-6f3fa9541f81` | `c7be3f78-70c0-4869-8ba4-aeb61fdffc13` | `b9f8ae48-dadc-4d4f-9199-d6327378adb4` | `01a10898-ab16-7206-9cb8-8c2b2fd023f3` | 20:26:25.430 |
+| 20:26:45.259 | `5d7149af-22f4-4024-abd2-a78a6b9fe5be` | `4fff050f-741a-4114-9a8f-f2f26cefbbd3` | `b8d19b3d-c203-4b57-bb3b-eb27fba22dbf` | `ea3119b2-90c8-41a1-a67b-1337ae124e1b` | `4742e48c-0ccc-4654-9b11-fb109af39dbe` | `429630ea-f829-4de5-8dc8-20d4ba605219` | `f859b741-4c45-4dc5-bdef-6509ed3992c9` | `1d306e7b-17ef-49fe-b865-f8a23f75cd91` | `01a10899-04ad-7cc3-bf8c-d08ac2238a29` | 20:26:48.365 |
+| 20:27:10.761 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c` | `70b842ad-36e6-48a6-bde2-aa4d4974a7d3` | `83bb0f6d-49b5-4553-8d6d-7b2d3874e2f7` | `6969d0f4-af6c-4898-9318-80130eaadc43` | `96976f72-23d9-4b9e-aec7-d1e503dcc278` | `2b137c75-3753-4a53-9b46-fd6f0b6957d2` | `9cc9a215-8f06-4a2e-8e31-ecfde556a099` | `f33ea56d-fd65-4037-a354-2af33b6a455d` | `01a10899-6731-75d2-9467-57cd7007b46c` | 20:27:13.585 |
+| 20:27:38.035 | `f776633d-b974-49f8-a83d-552cd0d4add2` | `5ccdb0b1-58c7-4593-8fe6-a9b2457ee4ca` | `d6f40c4d-868e-454d-b662-9003eb76f284` | `2f7ca872-51be-4467-a640-a4c2664717d1` | `29ffce7c-6181-4ad8-b019-b9495315f53a` | `925a9bb0-5b06-4712-92bf-f43bc80887b6` | `978d58a7-5739-4a38-be1c-ae60f71742de` | `4a4f30f8-666f-4554-a6e7-b056de8fd76f` | `01a10899-d08d-7de3-9b4e-ac84b0dce1a0` | 20:27:40.557 |
+| 20:28:01.216 | `ccdc8c33-8408-4b35-be10-4755bc79138d` | `fcb2d67e-912d-4c2b-8018-e5b01f657726` | `53f01b23-f8ce-467b-928c-978aabd2f7a3` | `d73dac3f-f09f-4daa-8fc1-7712865096ab` | `e63539c6-73f8-4180-9882-5fa5ef146946` | `627b5489-b4ff-476a-bd6c-48cbcbfc3976` | `b67bdb22-2399-4540-a22d-2132b86ba3e3` | `d4687961-61cc-4236-882a-e7a2d4027aad` | `01a1089a-2c26-784e-be40-505b6389505e` | 20:28:04.006 |
+| 20:28:26.155 | `12b6aebc-fcaa-444c-9367-f537d454c460` | `6830ef32-90fd-478d-9f97-27252dd034ab` | `43f93b59-7aeb-4b26-9c4e-10afd22e9e45` | `6f6d881b-9ad7-4c0b-a80c-affedd80fa21` | `4999699b-ae55-4ba7-bb4d-6f34680d92b9` | `e7aeeca1-ef1a-4bfb-b4ad-6eee395514c2` | `5df07f28-d1fd-4c69-9e4f-ea800e9f5fbc` | `cdee2a1e-b53a-4bde-8941-09696e727fa4` | `01a1089a-8c89-77c3-9375-d87cb7966933` | 20:28:28.681 |
+| 20:28:48.230 | `770f8eb9-0b88-4376-aae0-a322cac770e8` | `fdb4b654-aab4-44ca-bee6-b8619cca9d81` | `e71551d3-6caa-41e4-97bd-90e06a794f7e` | `c46a6ebb-b9df-42d3-bdb2-ae2460de1fea` | `3986db85-a8fa-49c6-a645-ad061b672265` | `8ea657cf-05bc-4222-a776-ce32c1b731dc` | `d5606d74-dc6d-4fa5-bddf-eeb1aedabc68` | `e82e72a9-4699-4d01-918f-7a0e96a18609` | `01a1089a-e3bd-778a-9bdc-cc3654a2e1a4` | 20:28:51.005 |
+| 20:29:32.964 | `23afae83-0f81-4c9a-95e3-e30e47ae534b` | `04615d59-56b9-44e7-99a4-fd9a55b68d99` | `9c540b2c-7801-4c23-a3da-696e47e7c5d3` | `98e92e66-047c-4f1f-9558-178a1ddd74ba` | `912ad43d-06f6-47e8-be35-817be58352ba` | `82800165-e742-4d8b-8100-08bd50cc19a7` | `d4e4fc10-79f1-48a6-823f-fd461a3ec5f1` | `28e91ac3-ee91-497e-8151-011984a00c7a` | `01a1089b-94ad-7df8-9bc4-40fa88efd1dd` | 20:29:36.301 |
+| 20:30:40.358 | `e1e049bf-fb20-43d9-91e9-bd7064b73d07` | `cd9a3089-32be-419d-9bf8-85c54a34e244` | `053cc598-1122-42f3-92a4-773f7d63be45` | `b2ec64f1-d815-4d14-83fc-323f18ab1998` | `d477ce8c-1e25-4c06-8ba4-b9824b421e4b` | `b9190aa7-883d-4bae-a250-aa55b447a9e1` | `1a9ffc77-fd71-45f3-a226-61c6035eafd5` | `47044fe9-2cec-4288-be7c-4bbb5ed2f619` | `01a1089c-9ab0-7d85-846d-9c43c45c6741` | 20:30:43.376 |
+| 20:30:59.404 | `d8aca622-381c-49ac-aca9-0396caaed7a1` | `fa8f502e-ee3e-4123-9c0a-7aa936449738` | `64002f2b-78de-4ce9-b876-e36be78c0a68` | `3d90a373-aeaf-4b3a-b83a-8dd9c993d8a3` | `fab91f2a-251d-4462-8315-88f0f28718d6` | `128bb71c-6de2-4471-be11-7df451ddc3a9` | `c4a79aab-ef94-4cf9-a633-f627cae61876` | `9d38b3d6-417a-4c9e-8e05-f9ced25509d6` | `01a1089c-e44d-77d7-8cdd-a7c3aecd31c9` | 20:31:02.221 |
+| 20:32:06.019 | `12fcb31b-c340-40ad-a82a-da7b9057a88f` | `f27c9156-9a79-42a9-ba89-d41a2a395142` | `32d5f34e-8adb-435f-a428-baf20559a018` | `8ffbff21-fc0f-49b6-90c5-b3d2204f4bfb` | `0a1a9452-78ad-44ec-9850-6abc7d733ca7` | `aad3c508-22c4-4fa1-9a36-e959b0ec9a48` | `3630dd64-c141-4923-aef6-525595eccaed` | `98eeef7a-3d7e-4f41-83da-e1cd0b1449a0` | `01a1089d-e84a-7236-b157-5a2635ce6b4c` | 20:32:08.778 |
+| 20:32:25.216 | `c660689d-98a0-47fa-ab86-e66a91d9233e` | `648f034d-7171-4a8d-b408-f47fb62bf8bb` | `2c474712-d5b5-4d21-8fdf-ff2f6e3a12c1` | `8a8eb780-0a22-469f-a3d3-fb62df743d57` | `7407fe98-591d-4083-8a7d-eda870f550a9` | `b092b4eb-c242-4b5e-81c3-ca6264a134bb` | `8e351242-b1a5-481c-873d-c59b3af831ae` | `4c3c413d-b3de-469a-bd1a-a0835ee2a185` | `01a1089e-3312-7ea6-86f7-fb49d5b49474` | 20:32:27.922 |
+| 20:33:31.010 | `83e8cfb2-e30a-492a-8343-1d6df0b4b70f` | `47a1b23e-c0a0-449e-944b-437d38ee05e6` | `5415a8cc-f719-43ac-9423-383c9c164c08` | `e35b893e-71d7-4f3d-aacf-f1efe9100be6` | `00b87ac5-6e81-48fa-854f-0b003133a429` | `407c745d-88c4-457d-b409-d8df61ef52d8` | `8f7b3802-1eb7-4c66-a3bd-05b256bfa691` | `ae1b6ffd-bd05-47c0-9ab0-07a7da84318f` | `01a1089f-3578-7556-846f-2922e09f2c10` | 20:33:34.072 |
+
+Connect stamps the greeting 335 ms (median, 284 to 761 ms) after the designer's `NluResponded`,
+against 117 ms (87 to 217 ms) for a reply, so the greeting's extra time (report question 6) is
+spent before Connect posts the first message of a contact, not on the way to the function's socket.
+
+### Per turn
+
+| Click | Contact | Question | SendMessage request id | Question message id | Connect stamp | Reply message ids | Reply SendMessage request ids | Reply stamps |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 20:19:49.996 | `5f22aca7` | Change my address | `53309af9-bf19-4bc1-94ed-433827667771` | `01a10892-a339-743b-947f-cafd2f74bb2d` | 20:19:50.201 | `01a10892-bdfb-7e16-9d16-061e95595270` | `aa1dfdd3-784a-4236-9287-2efbe1041e36` | 20:19:57.051 |
+| 20:20:00.222 | `5f22aca7` | And what is my emergency contact? | `bce15025-1e05-472f-88e8-3eed514d8e9d` | `01a10892-cac3-7e34-89b9-917f8b787dc2` | 20:20:00.323 | `01a10892-d4a8-7818-8004-dce8dcb616fc` | `4463fc0c-b05a-4859-a14a-48341f034e0b` | 20:20:02.856 |
+| 20:20:29.480 | `48e7b0a1` | Update my information | `7b49b063-8895-4477-b9de-08914c603063` | `01a10893-3d4e-723d-916a-eed2017930d0` | 20:20:29.646 | `01a10893-4150-7dbf-a7da-4dcd9be72965` | `d5b94413-152d-406b-af21-f50a7b45f423` | 20:20:30.672 |
+| 20:20:33.801 | `48e7b0a1` | my home address | `117b502a-e8af-4b6f-93b2-7f76d61dd3e1` | `01a10893-4e1d-7d89-950d-9a1440b19935` | 20:20:33.949 | `01a10893-6900-799c-aa52-fe35139b3631` | `f9e7cb76-d26c-49f9-8d9e-118c3c5a6231` | 20:20:40.832 |
+| 20:20:53.614 | `6dfeece8` | Change my address | `c3eeadc3-9e57-4b7b-a69b-e5b9ed14523c` | `01a10893-9b9b-7453-b613-34a908f33e21` | 20:20:53.787 | `01a10893-b2c1-7c75-941e-6e0ceaf024a1` | `56099daf-dc54-4f76-a843-43a09daa761f` | 20:20:59.713 |
+| 20:21:02.826 | `6dfeece8` | And what is my emergency contact? | `12087382-cc46-479d-8702-208bfb0ce3dd` | `01a10893-bf7a-79ba-be52-a43c385db0b4` | 20:21:02.970 | `01a10893-ccd4-7963-b96d-30b62a7098a0` | `d01d8e01-8826-489a-81dc-9bfaef6ced07` | 20:21:06.388 |
+| 20:21:19.132 | `8a8a1a63` | PTO policy | `563664e8-d572-4d25-8faf-6f2b9a81e44b` | `01a10893-ff3e-75a8-b91f-bba2749a2ec7` | 20:21:19.294 | `01a10894-0ced-7665-ad6d-ff21dfae5292` | `bb09e664-c3f7-4a96-8871-af4da7cf50fc` | 20:21:22.797 |
+| 20:21:26.758 | `8a8a1a63` | Does unused PTO carry over? | `3e826d21-9961-43ad-b4cf-2b62e6a3a6d4` | `01a10894-1cc6-7e09-9d93-9028fda6c340` | 20:21:26.854 | `01a10894-232f-7864-a6c7-fa04448a2d77` | `2195c91d-83e2-447a-8ad9-8dcf1e82a310` | 20:21:28.495 |
+| 20:21:42.123 | `e2ceda77` | Buddy passes | `b5997be1-a29d-4ab6-a6d9-db6cc4228d89` | `01a10894-5922-72d0-b61c-28d79ac13c8a` | 20:21:42.306 | `01a10894-710e-7b5f-93fa-def456be71e9` | `f8f8721c-c8f3-4524-ad64-65ca9ce16518` | 20:21:48.430 |
+| 20:21:51.554 | `e2ceda77` | Can my parents use them? | `c37b0187-16e5-4998-be3c-a6c0b1314dc4` | `01a10894-7dc8-73ff-a13b-0c5f7c0fca04` | 20:21:51.688 | `01a10894-8cf9-7ad5-a6c1-a611a5f63ea3` | `a3a01093-ac38-4799-af5c-f529891d9538` | 20:21:55.577 |
+| 20:22:08.312 | `f538cb39` | Update my information | `e8c43640-b7c9-451a-94b5-34b8657def1b` | `01a10894-bf40-7682-b604-533ce5a17e82` | 20:22:08.448 | `01a10894-c22a-7641-89d2-32a58aac5e26` | `c049e19a-0d00-4009-81ff-5a959f5fb91b` | 20:22:09.194 |
+| 20:22:12.307 | `f538cb39` | my home address | `1076c899-b104-480c-a823-57a8cfcc86f1` | `01a10894-ceb7-70f2-afbd-a57d0d740776` | 20:22:12.407 | `01a10894-e81b-7d22-97c7-f9bf052d6fb3` | `c811bbed-74ba-4ee2-b579-b4611653586c` | 20:22:18.907 |
+| 20:22:31.668 | `cfacb8b9` | Change my address | `e42de1d5-36ba-4f75-88b1-662d6c5a02cb` | `01a10895-1ab0-724d-b0d7-86cf319da5bd` | 20:22:31.856 | `01a10895-30a2-7a66-a429-f94bdf7478d6` | `feb76e07-f95f-41ff-b1c0-e711cc095448` | 20:22:37.474 |
+| 20:22:40.599 | `cfacb8b9` | And what is my emergency contact? | `fb6f88f1-2053-4d84-8847-b7617a9ac7b1` | `01a10895-3d8d-77da-87a8-dac3bcd91b2c` | 20:22:40.781 | `01a10895-4727-730b-8e37-6f7c931f9b1e` | `8902d2bc-e969-4b90-b170-f7ef175d314c` | 20:22:43.239 |
+| 20:22:56.016 | `6da0565d` | PTO policy | `61eb7a6f-6f84-44f2-94a6-c344d69e187a` | `01a10895-79ca-726a-9fd4-9fc478bb5de6` | 20:22:56.202 | `01a10895-86dc-78bb-95fc-3cba996629be` | `04b0246b-6d51-415f-957d-4b0fd9585acd` | 20:22:59.548 |
+| 20:23:03.464 | `6da0565d` | Does unused PTO carry over? | `70054517-5730-4463-ae4f-9df6adc9a143` | `01a10895-9688-7b48-ab51-85c90a150462` | 20:23:03.560 | `01a10895-9bf4-779a-8bb4-2b49d0c3b7ab` | `79333c5c-6a97-4f3c-876c-9d43f0f696b5` | 20:23:04.948 |
+| 20:23:18.463 | `ed74cbd8` | Buddy passes | `0a05286e-df0a-4bc1-a7db-61140535a5a2` | `01a10895-d15b-7578-820d-a6b891ec93c5` | 20:23:18.619 | `01a10895-ebd1-7417-9aa4-df6db5ddee8a` | `4ab260dd-3eab-4be5-94da-fad9edd9ad35` | 20:23:25.393 |
+| 20:23:28.516 | `ed74cbd8` | Can my parents use them? | `4f22a4ec-32d8-494f-9e28-57094900cb8d` | `01a10895-f86b-7b7f-9e89-5dbe3767b697` | 20:23:28.619 | `01a10896-0941-76c8-904c-884908fbaffc` | `0538af02-491a-4b4e-b0d3-c5ccc0eccb30` | 20:23:32.929 |
+| 20:23:45.662 | `af2494cc` | When was my last paycheck and how much was it? | `eb54e2e9-6621-4612-b8ff-4c87333e6fdd` | `01a10896-3b8e-7595-b57f-1d3c06927060` | 20:23:45.806 | `01a10896-59a5-7089-999f-a081627abd9e` | `539b1482-6470-43b3-9cc6-10ee390f0b8b` | 20:23:53.509 |
+| 20:23:56.625 | `af2494cc` | And the one before that? | `5b6f8dfe-d690-450a-a190-57d19b4b040c` | `01a10896-6659-7581-842d-dea82c7648c7` | 20:23:56.761 | `01a10896-6f82-7e60-aa9c-d03f217402b2` | `a3448019-2444-405b-b0ee-f55d6a53ffd8` | 20:23:59.106 |
+| 20:24:11.869 | `cda42b04` | Update my information | `3891f028-bb27-4f37-9a78-637698f0f399` | `01a10896-a205-7a9f-a16e-edca551b549b` | 20:24:12.037 | `01a10896-a4e9-78ab-96ad-8f6a452a2632` | `33e1d9f5-d754-4681-81af-463ff51f5f40` | 20:24:12.777 |
+| 20:24:15.894 | `cda42b04` | my home address | `d9aa09ff-b659-40d1-a04e-9ee0eaa12c46` | `01a10896-b17e-7b50-beb3-31ebafd95b86` | 20:24:15.998 | `01a10896-ca90-7c42-9ee0-12b36a5e6ebd` | `96957485-01e0-4f17-af6d-2c7c148706c7` | 20:24:22.416 |
+| 20:24:35.154 | `32f6a73b` | Change my address | `f58fdbb6-e5e5-44aa-8317-c6712a7da544` | `01a10896-fcef-7e47-a772-13b19213bcde` | 20:24:35.311 | `01a10897-128e-725b-a095-5fbc3a3bdc65` | `61b85ccb-6c25-4348-b4df-3fd4ddbeb278` | 20:24:40.846 |
+| 20:24:43.978 | `32f6a73b` | And what is my emergency contact? | `4c4894b0-231b-422f-850b-81c98aa458b9` | `01a10897-1f2d-7f25-900a-62537283fda1` | 20:24:44.077 | `01a10897-2889-739e-b990-3d558cb1668d` | `4acf8da8-43bc-46a1-93d3-2e3c7ac8b243` | 20:24:46.473 |
+| 20:24:59.259 | `02a4898f` | PTO policy | `12b4c493-90cd-4265-b57a-9aa245ee17a9` | `01a10897-5b18-7068-a3ac-91fd5a769e64` | 20:24:59.416 | `01a10897-6666-79c0-84d6-7bd6b947e760` | `47f8ce71-8a77-4da7-8f40-9f0cf175981d` | 20:25:02.310 |
+| 20:25:06.233 | `02a4898f` | Does unused PTO carry over? | `a1425ac3-1139-40db-a16b-8f6160fb2278` | `01a10897-7621-7bca-99ac-9d32f279ede0` | 20:25:06.337 | `01a10897-7df2-7bd4-8b25-dec027dc1586` | `6b0a3894-a642-4c8f-98c9-a8dbeb829b5f` | 20:25:08.338 |
+| 20:25:21.919 | `ae9113a3` | Buddy passes | `18fa5dc6-9833-4de7-b42f-1ed995c4784c` | `01a10897-b39d-76a9-8e30-f6d2905efe7a` | 20:25:22.077 | `01a10897-cdb7-7a49-9716-ea83f91111ce` | `60959feb-f85a-4e3e-b85d-8ad02e46f9f3` | 20:25:28.759 |
+| 20:25:31.871 | `ae9113a3` | Can my parents use them? | `d46c9618-456e-43f0-8fdf-187a8446f67b` | `01a10897-da4e-75a1-92fa-fcc8ce2d05ab` | 20:25:31.982 | `01a10897-e71f-7267-b66e-9f9aab21ef7e` | `54e3a111-eb04-4ba4-a652-32b8ab6d682b` | 20:25:35.263 |
+| 20:25:47.987 | `ec9ce1dc` | Update my information | `6dae380d-19a0-4a21-8105-85f85e407628` | `01a10898-196f-7eff-88aa-14ae5bcde8dc` | 20:25:48.143 | `01a10898-1cbd-7438-8380-6ad3516db612` | `53c7cdab-f65c-4c2d-b0a2-500621b6117c` | 20:25:48.989 |
+| 20:25:52.140 | `ec9ce1dc` | my home address | `17d7e82c-0b21-46e0-943d-51d1cf57c984` | `01a10898-297a-72e4-91d6-a9f1e90be399` | 20:25:52.250 | `01a10898-3e1f-7225-9e59-2d0490281709` | `97f8d22e-4217-4990-8961-c716a49ff6f3` | 20:25:57.535 |
+| 20:26:10.250 | `73cc55da` | Change my address | `08261ba4-eb60-450b-8f60-aef3b5b50c30` | `01a10898-705c-7e3b-91a1-76d3e46011ef` | 20:26:10.396 | `01a10898-8513-758b-9233-eab6f259cf68` | `50e93226-8466-48bd-a40a-893d007a58d7` | 20:26:15.699 |
+| 20:26:18.799 | `73cc55da` | And what is my emergency contact? | `08682367-b954-402e-8caf-e6e6cd5c7910` | `01a10898-919e-724a-b0cc-d0c23460f75a` | 20:26:18.910 | `01a10898-9a66-77e1-8a28-3c575aa38c77` | `9d1ace9c-f419-4ba0-ad5a-b6744b5269f3` | 20:26:21.158 |
+| 20:26:33.882 | `a95c6ecf` | PTO policy | `fdddae7e-bce7-44ac-ab74-8f4ac14412ce` | `01a10898-ccc4-76b3-b4dc-434bd966700b` | 20:26:34.052 | `01a10898-d933-792f-9ef1-e05a2d8ff6d8` | `cc9468a0-ffa5-4cb5-a39a-b5a80d9b2abc` | 20:26:37.235 |
+| 20:26:41.155 | `a95c6ecf` | Does unused PTO carry over? | `d46cff2e-175a-4d07-8151-466a5d19c5a6` | `01a10898-e905-790c-b019-ed738273d9cc` | 20:26:41.285 | `01a10898-eed5-719b-a3ce-4ef996159f22` | `61bb89d3-f187-437e-ae89-3b4e0d1858e5` | 20:26:42.773 |
+| 20:26:56.325 | `5d7149af` | Buddy passes | `f3d191c0-cbb2-456b-b109-8bd5e6432d51` | `01a10899-245f-786d-9db0-a0f18a178ceb` | 20:26:56.479 | `01a10899-3933-74ef-a017-cf019c2c998f` | `556567c6-b50d-48a3-b0c2-0f5ac5fd6bb2` | 20:27:01.811 |
+| 20:27:04.961 | `5d7149af` | Can my parents use them? | `a0eebe6d-571c-4ad9-b03e-785e82cd3d96` | `01a10899-45fd-79a1-b45d-30a41a58b0fc` | 20:27:05.085 | `01a10899-55ba-7773-948b-85d0f2e17cf8` | `b49dce4e-e428-44f6-8137-1920dbb18a4a` | 20:27:09.114 |
+| 20:27:21.802 | `dfec37f3` | When was my last paycheck and how much was it? | `685fe63f-bef9-4fcb-86e5-f23afe84380c` | `01a10899-87ec-7079-a4c5-a06696816902` | 20:27:21.964 | `01a10899-ab4c-729a-b4ce-1660486ce7a1` | `54cae2f0-6c79-4de9-91eb-b861befd9d07` | 20:27:31.020 |
+| 20:27:34.130 | `dfec37f3` | And the one before that? | `3ebe2fc0-6420-4246-894b-58623cb18e7b` | `01a10899-b7cb-7a5f-8c59-b2820f82e6f9` | 20:27:34.219 | `01a10899-c028-7898-969d-0e35d83e5231` | `5bdace4b-0363-4b8c-ad00-371afc6476ed` | 20:27:36.360 |
+| 20:27:49.100 | `f776633d` | Update my information | `50c891e6-ad47-4a8d-bb4a-3d2f5a91d1cd` | `01a10899-f284-762d-a578-1e7a75c3532f` | 20:27:49.252 | `01a10899-f6c7-758d-9e7c-3dfabe48fcb6` | `cedfd414-ace8-4cfd-ae19-61e907055c76` | 20:27:50.343 |
+| 20:27:53.448 | `f776633d` | my home address | `b9f0d394-3f39-4abf-9422-c3cfb472b382` | `01a1089a-0358-772c-bfab-5ada72fd5db5` | 20:27:53.560 | `01a1089a-1aa4-7752-8a72-7f6757d0a7b3` | `0e579231-64f8-4b79-9dc1-ae57e7144d2a` | 20:27:59.524 |
+| 20:28:12.266 | `ccdc8c33` | Change my address | `ce2e0e4d-91ff-4629-8a74-37f8c24ee93f` | `01a1089a-4d03-7a3d-9285-ac12ebc7ff88` | 20:28:12.419 | `01a1089a-6418-7d3a-a2a9-f813674b84b3` | `6bd29b9c-4689-4413-89f2-f8d99dbb64c8` | 20:28:18.328 |
+| 20:28:21.458 | `ccdc8c33` | And what is my emergency contact? | `19a990a0-6b8b-4cf7-b4ec-20a20589daef` | `01a1089a-70b1-76c4-b1eb-12f1e425555b` | 20:28:21.553 | `01a1089a-7c12-7559-a4e5-0909070d9320` | `c0d82f3c-af81-4ee5-bbfe-30b8e5b49ac3` | 20:28:24.466 |
+| 20:28:37.204 | `12b6aebc` | PTO policy | `40f9ee0f-49aa-4a5e-99f2-b09d305f3026` | `01a1089a-ae6c-7d4c-8488-d290e11f2244` | 20:28:37.356 | `01a1089a-b9e3-75fc-9b4b-a0c2e58eab42` | `ebff5cb1-51a0-4188-82d0-f5dddd262c7a` | 20:28:40.291 |
+| 20:28:44.265 | `12b6aebc` | Does unused PTO carry over? | `cb64dfad-492b-4330-b80b-ecbbdee15e91` | `01a1089a-c9de-7241-89d8-b60f80c005d0` | 20:28:44.382 | `01a1089a-cf1a-7f38-a42e-c9cd48d0fbe1` | `25bb0b6e-4f9c-418f-9a0c-ee848f8fba64` | 20:28:45.722 |
+| 20:28:59.292 | `770f8eb9` | Buddy passes | `5fbe3b3f-ccb9-457a-8a83-a0c5165cea61` | `01a1089b-04bd-77fd-b005-0ad233933002` | 20:28:59.453 | `01a1089b-1e8e-704b-ab67-05f97d089b9d` | `80b6964f-6523-4422-a7c2-0333e5cdae84` | 20:29:06.062 |
+| 20:29:09.195 | `770f8eb9` | Can my parents use them? | `01ddceec-cb5d-4d2c-bc0a-a3e0f43b1212` | `01a1089b-2b35-72d6-a75a-7129f2296d3a` | 20:29:09.301 | `01a1089b-3a71-7f82-be99-cd41fe24bdd4` | `b7e29fa4-c996-4ebc-b35f-6e1dfd2afa9b` | 20:29:13.201 |
+| 20:29:44.167 | `23afae83` | Change my address | `93318892-15a0-4eba-9f83-20c6cfe6922f` | `01a1089b-b400-763c-ba78-20ba80b2bfb1` | 20:29:44.320 | `01a1089b-ceaf-7ad8-8525-b18ba1842970` | `3a6aedfc-9506-4244-9815-392bfe1c082d` | 20:29:51.151 |
+| 20:30:51.477 | `e1e049bf` | Change my address | `b4a62203-0b11-4aee-b7fe-a8f44744893a` | `01a1089c-baf3-7eaf-ab89-beb6f2f10b7b` | 20:30:51.635 | `01a1089c-d2c2-73cc-a426-31bdc4d59320` | `f1b1835d-2241-49aa-9327-86975d83db05` | 20:30:57.730 |
+| 20:31:10.495 | `d8aca622` | Change my address | `c4dcadd6-d943-4aad-b5df-c26ce576cfa4` | `01a1089d-053d-7a12-b0d5-35895df5a3f9` | 20:31:10.653 | `01a1089d-1d8d-71fc-90dc-7a8baa29f1a7` | `d96b9afa-347d-4883-a8cd-ab4db9a144f5` | 20:31:16.877 |
+| 20:32:17.081 | `12fcb31b` | Change my address | `d0cdabb4-2119-4b8c-bc4b-0f8542a8ed50` | `01a1089e-096f-7c89-b0da-cb04426c593f` | 20:32:17.263 | `01a1089e-2210-7573-805a-dbe7f6475528` | `3b02152d-3d4b-4d4f-8f4e-cc9cda0c839b` | 20:32:23.568 |
+| 20:32:36.285 | `c660689d` | Change my address | `d596e5a5-34f2-4967-be89-0df046949ea9` | `01a1089e-5457-72e7-8b56-20e91c87c3f2` | 20:32:36.439 | `01a1089e-699a-73cd-9968-c39aa4591c5b` | `0b1c02ae-8876-42dc-8357-85f6efeac5f1` | 20:32:41.882 |
+| 20:33:42.084 | `83e8cfb2` | Change my address | `8646e5b3-34d3-4539-9ef0-5b9c1610e643` | `01a1089f-5562-78bf-aa25-259b38eec4db` | 20:33:42.242 | `01a1089f-6adb-7f7a-bf16-5ec0c5772dda` | `12ec9cc7-3553-49ca-b6a9-dd8c145ec937` | 20:33:47.739 |
+
+## AgentCore Identity calls from CloudTrail
+
+Three callers that no span shows. The runtime itself calls `GetWorkloadAccessTokenForJWT`
+(as `AWSServiceRoleForBedrockAgentCoreRuntimeIdentity`, session `CustomerSlrValidation`) once
+for every request it delivers: 100 calls for 100 requests (37 to the sub-agents, 63 to the
+tools runtime, three per tool call). The tools gateway takes a new role session
+(`gateway-session-<id>`) for every tool call and calls Identity twice in it. CloudTrail times
+are to the second, so these rows are matched by caller and second.
+
+### Runtime ingress
+
+| Time | Calling session | Request delivered | GetWorkloadAccessTokenForJWT request id | CloudTrail second |
+| --- | --- | --- | --- | --- |
+| 20:19:52.493 | `5f22aca7-7997-4941-b9f0-661ee9e5c1df-profile` | sub-agent request | `8ca9f82f-6675-4e16-ba7c-a04699806f1d` | 20:19:51 |
+| 20:19:53.766 | `5f22aca7-7997-4941-b9f0-661ee9e5c1df-profile` | tools runtime request 1 of 3 (hr___get_profile) | `d89c2109-d1db-407f-a908-a41b0477eda2` | 20:19:55 |
+| 20:19:53.766 | `5f22aca7-7997-4941-b9f0-661ee9e5c1df-profile` | tools runtime request 2 of 3 (hr___get_profile) | `d1df87e9-e57b-4ce1-9c9c-0501cfe54967` | 20:19:55 |
+| 20:19:53.766 | `5f22aca7-7997-4941-b9f0-661ee9e5c1df-profile` | tools runtime request 3 of 3 (hr___get_profile) | `a4425f8b-a696-4215-ae4f-0ca582e86069` | 20:19:54 |
+| 20:20:01.559 | `5f22aca7-7997-4941-b9f0-661ee9e5c1df-profile` | sub-agent request | `32eba465-c3c8-4742-be40-331e4b1f2abe` | 20:20:01 |
+| 20:20:35.988 | `48e7b0a1-5754-40ef-93a1-4998ae7f8fdd-profile` | sub-agent request | `d419865f-ce8e-41ac-9b9f-8bb7dc082379` | 20:20:35 |
+| 20:20:37.092 | `48e7b0a1-5754-40ef-93a1-4998ae7f8fdd-profile` | tools runtime request 1 of 3 (hr___get_profile) | `3f66c2d5-f977-4811-a1dd-b67c8592f056` | 20:20:39 |
+| 20:20:37.092 | `48e7b0a1-5754-40ef-93a1-4998ae7f8fdd-profile` | tools runtime request 2 of 3 (hr___get_profile) | `98026c1d-fcec-408d-93f3-ed82a7b35520` | 20:20:39 |
+| 20:20:37.092 | `48e7b0a1-5754-40ef-93a1-4998ae7f8fdd-profile` | tools runtime request 3 of 3 (hr___get_profile) | `2afd6a0a-4f37-484f-8858-d41959e7ec70` | 20:20:37 |
+| 20:20:55.517 | `6dfeece8-8827-40b9-9d0f-23d831147306-profile` | sub-agent request | `a275466c-c6b8-4038-a8f7-b80dd0bd17d9` | 20:20:54 |
+| 20:20:56.764 | `6dfeece8-8827-40b9-9d0f-23d831147306-profile` | tools runtime request 1 of 3 (hr___get_profile) | `350f4553-4e4c-4def-9a82-6abc4bacf89e` | 20:20:58 |
+| 20:20:56.764 | `6dfeece8-8827-40b9-9d0f-23d831147306-profile` | tools runtime request 2 of 3 (hr___get_profile) | `c0a9f022-0340-4227-8b8c-f54a6ef7b2ec` | 20:20:58 |
+| 20:20:56.764 | `6dfeece8-8827-40b9-9d0f-23d831147306-profile` | tools runtime request 3 of 3 (hr___get_profile) | `1d4e1505-4f43-486b-b801-e4811a40a72b` | 20:20:57 |
+| 20:21:04.326 | `6dfeece8-8827-40b9-9d0f-23d831147306-profile` | sub-agent request | `a2246b52-fbcd-487b-b74f-210842f967ea` | 20:21:04 |
+| 20:21:44.373 | `e2ceda77-100c-4ea2-bc32-d346935a6fef-travel` | sub-agent request | `a07afa64-61ac-4a6b-8cb4-96c4159fa27d` | 20:21:43 |
+| 20:21:52.708 | `e2ceda77-100c-4ea2-bc32-d346935a6fef-travel` | sub-agent request | `f0cb38b2-fe73-4c1f-a855-4774865cb863` | 20:21:52 |
+| 20:22:14.550 | `f538cb39-a04d-433b-aed5-468d1aa2e6f5-profile` | sub-agent request | `d472876d-a036-4ca4-b4fd-8474678d4a46` | 20:22:13 |
+| 20:22:15.663 | `f538cb39-a04d-433b-aed5-468d1aa2e6f5-profile` | tools runtime request 1 of 3 (hr___get_profile) | `2f763821-e37e-4f2f-a3fe-136dc8fb5de5` | 20:22:17 |
+| 20:22:15.663 | `f538cb39-a04d-433b-aed5-468d1aa2e6f5-profile` | tools runtime request 2 of 3 (hr___get_profile) | `6e5adbc1-043e-4dbf-93a4-95132a56c57c` | 20:22:17 |
+| 20:22:15.663 | `f538cb39-a04d-433b-aed5-468d1aa2e6f5-profile` | tools runtime request 3 of 3 (hr___get_profile) | `0fc89b57-98b0-40ae-a160-2d7992d082d5` | 20:22:16 |
+| 20:22:33.506 | `cfacb8b9-0358-4598-8aa5-df0f85b0f2c9-profile` | sub-agent request | `52e43134-1128-41e8-94ae-b63800dc7d80` | 20:22:32 |
+| 20:22:34.561 | `cfacb8b9-0358-4598-8aa5-df0f85b0f2c9-profile` | tools runtime request 1 of 3 (hr___get_profile) | `21e1a7bd-cae2-4ef1-b91a-f194253bb099` | 20:22:36 |
+| 20:22:34.561 | `cfacb8b9-0358-4598-8aa5-df0f85b0f2c9-profile` | tools runtime request 2 of 3 (hr___get_profile) | `ceb91b19-9972-428d-a298-0c70ee4ddd5b` | 20:22:35 |
+| 20:22:34.561 | `cfacb8b9-0358-4598-8aa5-df0f85b0f2c9-profile` | tools runtime request 3 of 3 (hr___get_profile) | `a9c86517-0ffa-432e-9ce4-e230ebc70b79` | 20:22:35 |
+| 20:22:41.990 | `cfacb8b9-0358-4598-8aa5-df0f85b0f2c9-profile` | sub-agent request | `2403391a-328a-4e59-b392-37107b2317a0` | 20:22:41 |
+| 20:23:20.717 | `ed74cbd8-aca6-4173-bcbb-2f4710304965-travel` | sub-agent request | `bc04a271-4054-46f0-a805-15528e012de4` | 20:23:19 |
+| 20:23:29.983 | `ed74cbd8-aca6-4173-bcbb-2f4710304965-travel` | sub-agent request | `d1a3a239-7f32-4100-8a16-a7b9fa2fd5ff` | 20:23:29 |
+| 20:23:47.518 | `af2494cc-ecd3-4b55-800e-62c40dfb6120-pay` | sub-agent request | `6206191b-3c92-4006-b0fc-a220d4b7ba33` | 20:23:46 |
+| 20:23:48.617 | `af2494cc-ecd3-4b55-800e-62c40dfb6120-pay` | tools runtime request 1 of 3 (hr___get_direct_deposit) | `edfad02f-2592-43c0-8c37-5bad7f45d8d3` | 20:23:51 |
+| 20:23:48.617 | `af2494cc-ecd3-4b55-800e-62c40dfb6120-pay` | tools runtime request 2 of 3 (hr___get_direct_deposit) | `e1366945-136b-4129-99e1-b3b3c02c2f4c` | 20:23:51 |
+| 20:23:48.617 | `af2494cc-ecd3-4b55-800e-62c40dfb6120-pay` | tools runtime request 3 of 3 (hr___get_direct_deposit) | `11ceb1da-d6e8-45eb-ba24-cbe3074b8974` | 20:23:51 |
+| 20:23:50.542 | `af2494cc-ecd3-4b55-800e-62c40dfb6120-pay` | tools runtime request 1 of 3 (hr___list_pay_statements) | `091e46b7-9616-4aeb-9e09-49279cf5dc8e` | 20:23:50 |
+| 20:23:50.542 | `af2494cc-ecd3-4b55-800e-62c40dfb6120-pay` | tools runtime request 2 of 3 (hr___list_pay_statements) | `7b412eb5-65bb-47b7-b7d2-97e246536958` | 20:23:49 |
+| 20:23:50.542 | `af2494cc-ecd3-4b55-800e-62c40dfb6120-pay` | tools runtime request 3 of 3 (hr___list_pay_statements) | `10264f75-21aa-4361-8d8e-952cf5a69c2f` | 20:23:49 |
+| 20:23:57.965 | `af2494cc-ecd3-4b55-800e-62c40dfb6120-pay` | sub-agent request | `2e2cfde2-c4e6-439b-9ede-18da1a062297` | 20:23:57 |
+| 20:24:18.346 | `cda42b04-85ed-478d-b7ca-3a44ae86583f-profile` | sub-agent request | `12547b31-a96e-433d-80b6-99ea18c7a859` | 20:24:17 |
+| 20:24:19.556 | `cda42b04-85ed-478d-b7ca-3a44ae86583f-profile` | tools runtime request 1 of 3 (hr___get_profile) | `c91bacd9-c6c2-4786-bc3e-d80b87db1b74` | 20:24:21 |
+| 20:24:19.556 | `cda42b04-85ed-478d-b7ca-3a44ae86583f-profile` | tools runtime request 2 of 3 (hr___get_profile) | `2143c396-c20d-4f23-9455-e830a9a0032a` | 20:24:20 |
+| 20:24:19.556 | `cda42b04-85ed-478d-b7ca-3a44ae86583f-profile` | tools runtime request 3 of 3 (hr___get_profile) | `7f03a5a0-b02e-491d-87d0-e1abb639d3c2` | 20:24:20 |
+| 20:24:36.835 | `32f6a73b-e9e3-4a51-b994-616e9ffc5b31-profile` | sub-agent request | `653748d7-6c12-4e0e-b37c-d810e6789663` | 20:24:36 |
+| 20:24:37.866 | `32f6a73b-e9e3-4a51-b994-616e9ffc5b31-profile` | tools runtime request 1 of 3 (hr___get_profile) | `d3fca400-ec6f-48fb-9629-4f74d3afadbf` | 20:24:39 |
+| 20:24:37.866 | `32f6a73b-e9e3-4a51-b994-616e9ffc5b31-profile` | tools runtime request 2 of 3 (hr___get_profile) | `6b9d1707-da3f-474f-8727-496eeec9474a` | 20:24:39 |
+| 20:24:37.866 | `32f6a73b-e9e3-4a51-b994-616e9ffc5b31-profile` | tools runtime request 3 of 3 (hr___get_profile) | `2161a192-16bd-4c84-903c-75183babef2d` | 20:24:38 |
+| 20:24:45.281 | `32f6a73b-e9e3-4a51-b994-616e9ffc5b31-profile` | sub-agent request | `4ebfd350-301b-483e-bf06-9e78a32426dc` | 20:24:45 |
+| 20:25:23.713 | `ae9113a3-b377-4aad-8d7a-c1b2e9a20ed9-travel` | sub-agent request | `21499fb8-7be9-4b4b-806e-5c4d82285bdb` | 20:25:23 |
+| 20:25:33.059 | `ae9113a3-b377-4aad-8d7a-c1b2e9a20ed9-travel` | sub-agent request | `61967fda-df69-4fb1-adde-e1663c1008d0` | 20:25:33 |
+| 20:25:53.722 | `ec9ce1dc-084b-4e70-9f80-e2e34c76ab32-profile` | sub-agent request | `cc99f65c-5013-40ca-98b9-8b9873e09d5b` | 20:25:53 |
+| 20:25:54.835 | `ec9ce1dc-084b-4e70-9f80-e2e34c76ab32-profile` | tools runtime request 1 of 3 (hr___get_profile) | `6f278c77-cb36-4df1-b4f4-3e0900cb1dfb` | 20:25:56 |
+| 20:25:54.835 | `ec9ce1dc-084b-4e70-9f80-e2e34c76ab32-profile` | tools runtime request 2 of 3 (hr___get_profile) | `4d442d86-4c6f-4a63-a4da-89f4da213ae7` | 20:25:56 |
+| 20:25:54.835 | `ec9ce1dc-084b-4e70-9f80-e2e34c76ab32-profile` | tools runtime request 3 of 3 (hr___get_profile) | `467b9c1c-0cad-4175-bd18-8351e76441ca` | 20:25:55 |
+| 20:26:11.865 | `73cc55da-9edd-49ed-afd1-24b84d5b57f1-profile` | sub-agent request | `3066b99f-36be-4bf3-8917-e954c18062ef` | 20:26:11 |
+| 20:26:12.962 | `73cc55da-9edd-49ed-afd1-24b84d5b57f1-profile` | tools runtime request 1 of 3 (hr___get_profile) | `df433c42-d6fe-4bef-843b-4440aaabd23e` | 20:26:14 |
+| 20:26:12.962 | `73cc55da-9edd-49ed-afd1-24b84d5b57f1-profile` | tools runtime request 2 of 3 (hr___get_profile) | `0b4c8357-8eae-4aa5-bb83-ed0b0da111cf` | 20:26:14 |
+| 20:26:12.962 | `73cc55da-9edd-49ed-afd1-24b84d5b57f1-profile` | tools runtime request 3 of 3 (hr___get_profile) | `8144af50-e215-4b7c-b189-a4b3a46e9c04` | 20:26:13 |
+| 20:26:19.897 | `73cc55da-9edd-49ed-afd1-24b84d5b57f1-profile` | sub-agent request | `9e079f5e-35df-4632-be17-51bee014d0d3` | 20:26:19 |
+| 20:26:58.141 | `5d7149af-22f4-4024-abd2-a78a6b9fe5be-travel` | sub-agent request | `ab68d45e-645f-4d01-a85e-5e891c77835b` | 20:26:57 |
+| 20:27:06.045 | `5d7149af-22f4-4024-abd2-a78a6b9fe5be-travel` | sub-agent request | `45f91862-f987-46f0-8f3f-908e642e2364` | 20:27:06 |
+| 20:27:23.758 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c-pay` | sub-agent request | `20178f7f-e9e5-481f-a9a1-721d27add978` | 20:27:23 |
+| 20:27:25.038 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c-pay` | tools runtime request 1 of 3 (hr___get_direct_deposit) | `095fa2e1-0022-4a6e-982f-eebcd1f8631a` | 20:27:27 |
+| 20:27:25.038 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c-pay` | tools runtime request 2 of 3 (hr___get_direct_deposit) | `4338216d-6a80-4f22-ac32-7bfdbd176d30` | 20:27:26 |
+| 20:27:25.038 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c-pay` | tools runtime request 3 of 3 (hr___get_direct_deposit) | `08252908-5422-4cea-8ae6-1252ab63df52` | 20:27:26 |
+| 20:27:26.927 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c-pay` | tools runtime request 1 of 3 (hr___list_pay_statements) | `4992f15c-1282-4fc1-ba5d-932f5e53ac22` | 20:27:29 |
+| 20:27:26.927 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c-pay` | tools runtime request 2 of 3 (hr___list_pay_statements) | `c3d35c8a-2f1e-421c-b783-3f49bacb6254` | 20:27:28 |
+| 20:27:26.927 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c-pay` | tools runtime request 3 of 3 (hr___list_pay_statements) | `40f7b721-e675-4933-a682-9aee6b5d0448` | 20:27:25 |
+| 20:27:35.295 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c-pay` | sub-agent request | `e79f4217-3fab-4b8a-aeec-1a7c25020452` | 20:27:35 |
+| 20:27:55.012 | `f776633d-b974-49f8-a83d-552cd0d4add2-profile` | sub-agent request | `02994e0c-d394-4bf7-b0ed-3fd8cd5e9a63` | 20:27:54 |
+| 20:27:56.064 | `f776633d-b974-49f8-a83d-552cd0d4add2-profile` | tools runtime request 1 of 3 (hr___get_profile) | `5c0215bc-06fd-4bf1-a220-b9b4fb19b59a` | 20:27:57 |
+| 20:27:56.064 | `f776633d-b974-49f8-a83d-552cd0d4add2-profile` | tools runtime request 2 of 3 (hr___get_profile) | `46d287ac-8520-4fb1-9dff-fe633597b556` | 20:27:57 |
+| 20:27:56.064 | `f776633d-b974-49f8-a83d-552cd0d4add2-profile` | tools runtime request 3 of 3 (hr___get_profile) | `1879abb6-06ba-45d5-91e8-dd92ba3db27b` | 20:27:56 |
+| 20:28:14.257 | `ccdc8c33-8408-4b35-be10-4755bc79138d-profile` | sub-agent request | `419e9255-35b2-4717-a7de-15d37bc82f4c` | 20:28:13 |
+| 20:28:15.386 | `ccdc8c33-8408-4b35-be10-4755bc79138d-profile` | tools runtime request 1 of 3 (hr___get_profile) | `25363173-c1ff-41c5-9156-d891f045904f` | 20:28:16 |
+| 20:28:15.386 | `ccdc8c33-8408-4b35-be10-4755bc79138d-profile` | tools runtime request 2 of 3 (hr___get_profile) | `453a2dfb-6522-452d-87cd-9a6eaec84eb6` | 20:28:16 |
+| 20:28:15.386 | `ccdc8c33-8408-4b35-be10-4755bc79138d-profile` | tools runtime request 3 of 3 (hr___get_profile) | `7f21386b-c0ac-487f-b6f5-1937c85fcc24` | 20:28:15 |
+| 20:28:22.595 | `ccdc8c33-8408-4b35-be10-4755bc79138d-profile` | sub-agent request | `d4efff9f-b106-4a53-b0a4-1e13c13bac2a` | 20:28:22 |
+| 20:29:01.455 | `770f8eb9-0b88-4376-aae0-a322cac770e8-travel` | sub-agent request | `905526e9-155a-4b61-a571-cf6b3a479a38` | 20:29:00 |
+| 20:29:10.336 | `770f8eb9-0b88-4376-aae0-a322cac770e8-travel` | sub-agent request | `abbfa26d-629d-43b2-a77f-b31bdcce4661` | 20:29:10 |
+| 20:29:46.498 | `23afae83-0f81-4c9a-95e3-e30e47ae534b-profile` | sub-agent request | `59674630-e9c0-4c46-b25d-f3ef31107a4d` | 20:29:45 |
+| 20:29:47.694 | `23afae83-0f81-4c9a-95e3-e30e47ae534b-profile` | tools runtime request 1 of 3 (hr___get_profile) | `c66735f3-358e-4633-8644-7a43f07ee41d` | 20:29:49 |
+| 20:29:47.694 | `23afae83-0f81-4c9a-95e3-e30e47ae534b-profile` | tools runtime request 2 of 3 (hr___get_profile) | `fc2684c6-311f-4b44-a837-60045db8d71e` | 20:29:49 |
+| 20:29:47.694 | `23afae83-0f81-4c9a-95e3-e30e47ae534b-profile` | tools runtime request 3 of 3 (hr___get_profile) | `cb8f5785-1366-45a7-bc4a-2aec228ab305` | 20:29:48 |
+| 20:30:53.547 | `e1e049bf-fb20-43d9-91e9-bd7064b73d07-profile` | sub-agent request | `ed323731-4dee-49e3-a5d6-5a669d1ebdf0` | 20:30:52 |
+| 20:30:54.739 | `e1e049bf-fb20-43d9-91e9-bd7064b73d07-profile` | tools runtime request 1 of 3 (hr___get_profile) | `6415166d-299a-4aa5-8c7a-0724fa1dce8c` | 20:30:56 |
+| 20:30:54.739 | `e1e049bf-fb20-43d9-91e9-bd7064b73d07-profile` | tools runtime request 2 of 3 (hr___get_profile) | `d0d41dcc-2dec-481a-83db-f8b419bcac36` | 20:30:56 |
+| 20:30:54.739 | `e1e049bf-fb20-43d9-91e9-bd7064b73d07-profile` | tools runtime request 3 of 3 (hr___get_profile) | `e4d8547f-b81e-4848-a267-ba29cd71cb19` | 20:30:55 |
+| 20:31:12.958 | `d8aca622-381c-49ac-aca9-0396caaed7a1-profile` | sub-agent request | `c0c0e4c1-ec09-4704-b853-e86fce73d949` | 20:31:11 |
+| 20:31:14.117 | `d8aca622-381c-49ac-aca9-0396caaed7a1-profile` | tools runtime request 1 of 3 (hr___get_profile) | `9ef61d62-0715-43cb-9ffd-ec8f0837143d` | 20:31:15 |
+| 20:31:14.117 | `d8aca622-381c-49ac-aca9-0396caaed7a1-profile` | tools runtime request 2 of 3 (hr___get_profile) | `8fd4030e-ad79-4eae-8e68-c1d85f94c8de` | 20:31:15 |
+| 20:31:14.117 | `d8aca622-381c-49ac-aca9-0396caaed7a1-profile` | tools runtime request 3 of 3 (hr___get_profile) | `eaa1ea56-3c57-419a-842a-6387011c299c` | 20:31:14 |
+| 20:32:19.316 | `12fcb31b-c340-40ad-a82a-da7b9057a88f-profile` | sub-agent request | `3935b63c-c310-4f75-9e33-d11e61fc9ce2` | 20:32:18 |
+| 20:32:20.542 | `12fcb31b-c340-40ad-a82a-da7b9057a88f-profile` | tools runtime request 1 of 3 (hr___get_profile) | `51f8c359-c18d-4daf-a714-d8919b02b429` | 20:32:22 |
+| 20:32:20.542 | `12fcb31b-c340-40ad-a82a-da7b9057a88f-profile` | tools runtime request 2 of 3 (hr___get_profile) | `f509072a-3f91-46e4-bab3-6a3f42cc7862` | 20:32:21 |
+| 20:32:20.542 | `12fcb31b-c340-40ad-a82a-da7b9057a88f-profile` | tools runtime request 3 of 3 (hr___get_profile) | `42057b64-3a80-442a-9e35-2c4cf2a3ba2e` | 20:32:21 |
+| 20:32:37.826 | `c660689d-98a0-47fa-ab86-e66a91d9233e-profile` | sub-agent request | `cdff79f2-35ec-40ad-80e8-34e16a68db9f` | 20:32:37 |
+| 20:32:38.920 | `c660689d-98a0-47fa-ab86-e66a91d9233e-profile` | tools runtime request 1 of 3 (hr___get_profile) | `a44495b1-ebc0-45e6-8d90-fb4e3e5377c7` | 20:32:40 |
+| 20:32:38.920 | `c660689d-98a0-47fa-ab86-e66a91d9233e-profile` | tools runtime request 2 of 3 (hr___get_profile) | `7ea15c3d-aee8-4895-8e49-3beccb03bcf1` | 20:32:40 |
+| 20:32:38.920 | `c660689d-98a0-47fa-ab86-e66a91d9233e-profile` | tools runtime request 3 of 3 (hr___get_profile) | `fce9dedd-b1e9-45f5-bcb7-7528bcf31036` | 20:32:39 |
+| 20:33:43.762 | `83e8cfb2-e30a-492a-8343-1d6df0b4b70f-profile` | sub-agent request | `aa3721ea-8402-4896-94b8-124c60827964` | 20:33:43 |
+| 20:33:44.820 | `83e8cfb2-e30a-492a-8343-1d6df0b4b70f-profile` | tools runtime request 1 of 3 (hr___get_profile) | `d2f8f348-c295-46b5-b2ad-44e528c76272` | 20:33:46 |
+| 20:33:44.820 | `83e8cfb2-e30a-492a-8343-1d6df0b4b70f-profile` | tools runtime request 2 of 3 (hr___get_profile) | `c7cb3f5d-d8fd-4837-93a2-ee4e143362c3` | 20:33:46 |
+| 20:33:44.820 | `83e8cfb2-e30a-492a-8343-1d6df0b4b70f-profile` | tools runtime request 3 of 3 (hr___get_profile) | `ee1b4591-d6fb-4fd8-b441-87417b551389` | 20:33:45 |
+
+### Tools gateway, per tool call
+
+| Time | Tools gateway request id | Gateway role session | GetWorkloadAccessTokenForJWT request id | GetResourceOauth2Token request id |
+| --- | --- | --- | --- | --- |
+| 20:19:53.766 | `228c875a-1d39-435a-9e9a-05c70575073f` | `gateway-session-7421ef85-4cfd-4554-83ec-80e85dd17453` | `2e8ffda0-759b-4b7b-a0ca-1153bb232f3d` | `8ffb158c-e724-4ad2-8837-7965521a0bea` |
+| 20:20:37.092 | `d57b806a-7021-4bb1-af4b-5541e2d368f1` | `gateway-session-f11fdf9f-9947-41e7-af3e-5a4bd77abe20` | `224db1b1-8a50-42ed-8e9e-ecaebf019aa4` | `b2cf61c0-3dab-4d56-9773-062ae8c4d191` |
+| 20:20:56.764 | `878dae5a-af5b-4157-b093-2cb75efeda60` | `gateway-session-676a9f04-af2e-4d11-99d2-1a160c5aecdb` | `30605a20-ea86-4907-9402-b304475df25c` | `799bde83-5097-4231-93d3-7bb921e57ca9` |
+| 20:22:15.663 | `0ebbd251-9b38-44ee-af10-2cbea0daf5ac` | `gateway-session-43ca4324-b039-4ded-ac6f-38ef1e41bb72` | `095097c9-9770-4cf9-89aa-90021de410ce` | `ea364b86-aba1-4ef5-99b1-b0047a23fc5e` |
+| 20:22:34.561 | `d2826374-d66e-4980-9838-c46b3b50b131` | `gateway-session-4db99183-7863-4509-9117-0099067dad70` | `e1aaf1f9-db2f-4e4b-bc82-ea060d8efe27` | `c9bcce99-2be5-4825-bc5b-0f8c6c73a607` |
+| 20:23:48.617 | `9af2178c-1e07-4beb-b937-9b10f84f2fb4` | `gateway-session-948d3832-c69a-4677-a67a-82ed7c878a44` | `98c0cdf5-6e5c-40a4-b6dd-fae111775647` | `11ecf7c2-f98f-43cb-a030-308a2121728c` |
+| 20:23:50.542 | `fc8be3a5-b365-44b7-899b-142cc941413b` | `gateway-session-9afeaf3a-7d3e-4841-884e-27a387b72319` | `6ef8b94a-9a07-4eea-b6fb-3642463cfd83` | `5efaa9cd-dd91-45ac-8a92-e250eef62a24` |
+| 20:24:19.556 | `2433533f-2460-4824-b80d-d26324be9e58` | `gateway-session-ecc889f3-0fe0-48d4-aef3-9311d8d1bd75` | `ffa3fe91-f125-446f-a0d9-2a0f1cbcf5c0` | `f1b58cb3-0212-4b96-bfe9-7273cd5e25b8` |
+| 20:24:37.866 | `9c48ca02-350c-44ff-91de-b60e64b75f41` | `gateway-session-f1db4dc8-c06e-4faf-9edd-545c5eede8cd` | `e0d2cb99-db9b-48a8-94e6-60f28d0c59c5` | `2309a754-4122-4851-9b28-323d174b0241` |
+| 20:25:54.835 | `351203d2-b6ce-41eb-a3a4-541b976c5226` | `gateway-session-f33abd90-851f-4c61-aac5-03c44fe7e4c5` | `8a8c62ba-f47b-4c1b-a293-7a1d9afe7c62` | `0ac2b429-bd3d-4b36-bcec-800368244ffb` |
+| 20:26:12.962 | `dca73d83-1879-4d3e-a785-f9bf15f24a11` | `gateway-session-07a012a4-c544-4ca9-b0d9-61debcabaecc` | `eba2d6d9-58bb-4d6a-b278-a793b02751a5` | `89463032-5d83-47a4-a504-821b101eda44` |
+| 20:27:25.038 | `bb932304-bda0-402b-bc22-27689933dcfd` | `gateway-session-5123bdbd-993a-4795-9649-35ba28254a34` | `9187ec0c-7811-4320-91e5-7c9e70d76167` | `c5b1f44f-c714-494e-9540-3af7bff21d39` |
+| 20:27:26.927 | `8675e1b3-48d4-4694-b299-065bfa8c3de4` | `gateway-session-48754087-19f9-44c2-b1c9-204378addf2a` | `40b868c7-7cc0-4c6f-be3d-a3e81e891fcd` | `635de91f-d31c-46bd-9255-d6abf00d5c23` |
+| 20:27:56.064 | `c0271197-525e-4a4a-a0ae-eb2554a6b13d` | `gateway-session-f5ca3def-eb06-48f2-b53d-186c14f4918c` | `67d5a5dc-f429-4c2d-babe-25482f192781` | `a1c23613-6c0c-4cf7-8f75-970e7ad4d4e1` |
+| 20:28:15.386 | `b31cf143-78b0-4a0e-b53b-445edf518b82` | `gateway-session-63bc7a18-d83f-42f8-a688-3d528b4fdf32` | `9c2fdfa6-ea86-40e5-be34-aadb5ec123f0` | `ae46fba5-d471-4b6b-851a-4a4ebad9a2f9` |
+| 20:29:47.694 | `1a6010b2-c48d-43c9-8867-6f95614d55ac` | `gateway-session-24072b0b-acee-49f0-876b-845a3fcb3bb6` | `74e8484f-75be-42e6-ad74-ba3438c37a4a` | `b9c86432-c247-4e58-ac21-6f4ae3828709` |
+| 20:30:54.739 | `f3a3e231-7251-42ee-b20b-50d11c462f6d` | `gateway-session-b071f202-1faf-49b1-9e34-48320d510ff7` | `9c0d5d94-0362-414d-8e46-9e4bcb859157` | `722a8386-71fc-46b1-be73-f6fc7856208a` |
+| 20:31:14.117 | `464e4831-8370-40a0-9db3-8100f9d3585c` | `gateway-session-fe1a58b3-3cd8-43d2-ab94-cc51b61bfdcd` | `f2562cb6-3e98-480b-b0bc-e04fc1241c37` | `65050550-4132-49d1-b791-ff4e2829dfbd` |
+| 20:32:20.542 | `c0ad612b-8af4-4660-9a57-5d2d6584e655` | `gateway-session-ddc3870d-8587-46d7-bde8-f4548b6d6460` | `9b36c6bd-61b4-4430-83e4-94930b78b0d2` | `89b2e34b-17fe-49a0-bd3e-47554dab75f1` |
+| 20:32:38.920 | `1b915062-e205-4eec-a266-83f8fac04059` | `gateway-session-b779e9de-606f-4e25-b865-d1e3509a85a5` | `0ecadd92-5405-439d-9a28-7d3eb71b9593` | `02e0ee65-3d8f-4557-b290-25d00aeda56e` |
+| 20:33:44.820 | `cc2da0e9-fe7a-4bcb-8342-45652f54609c` | `gateway-session-983f47fb-b5f3-4ab7-bee7-9867f4637325` | `bcfd0fa0-6896-4626-932d-6204c5bea54d` | `96b7ac3e-8746-4b9c-ac97-ff2bbda6d758` |
+
+### Chat start
+
+| Navigation | Contact | GetWorkloadAccessTokenForJWT request id | GetResourceOauth2Token request ids (four hop tokens) |
+| --- | --- | --- | --- |
+| 20:19:38.434 | `5f22aca7-7997-4941-b9f0-661ee9e5c1df` | `7210313e-3359-4a6c-b79d-2f8fb5805ebf` | `62888fc6-d578-4eb3-94fd-0ab82df6a1dd` `48e7e0c2-9aa4-4145-86cf-d9e37dfe96c0` `61c12fb6-1936-45cd-adb8-b05de67d2fcf` `a2bb6c33-102b-40fd-8b3f-0cf40c014eea` |
+| 20:20:18.303 | `48e7b0a1-5754-40ef-93a1-4998ae7f8fdd` | `1228a193-1bce-4c51-9898-2be361e5dad6` | `ad32539a-99aa-405f-b729-1b2bfd9596d3` `82b097aa-0fa6-4a4d-a42d-6b3455671bd8` `8f671067-a719-4207-b7f4-e447dbaef075` `75ed240b-fad1-4fde-9ad7-328a4baf5774` |
+| 20:20:42.547 | `6dfeece8-8827-40b9-9d0f-23d831147306` | `5440041f-ba85-482a-af76-f3983fb4f345` | `79ed1887-2ebe-4c68-aa90-d04ee10c80a8` `a8cac5de-8004-40f2-89af-71a65aff3578` `9a56d784-ad4c-430d-abab-4061c81212ab` `f00610bb-96c3-43b2-90b7-f5157156d199` |
+| 20:21:08.081 | `8a8a1a63-33be-4f59-9294-aa0df1ae7f6e` | `3c2ca1f7-98d7-4645-916b-6307408c4ae7` | `0f449ffb-5075-48a8-ab7d-70de93fc65dc` `45acc80f-f126-463f-90b5-05c30f550656` `6f62a521-ac81-49d3-b978-faaafe1a1ea8` `399f56f5-8bcf-4aaa-8fce-5c4e04607852` |
+| 20:21:31.080 | `e2ceda77-100c-4ea2-bc32-d346935a6fef` | `c5a67525-ac83-49c3-af72-db39a4a9d005` | `293517b6-7523-422d-9c56-2013b990be6b` `966f1e18-9e2e-44ab-beef-32b364a0ea08` `a35f7064-b42e-47c8-bbfc-eb02292c98ce` `cbe706dd-4bdf-4664-93d7-f55939bd78c4` |
+| 20:21:57.261 | `f538cb39-a04d-433b-aed5-468d1aa2e6f5` | `a6b76044-fa73-4499-b129-f8dfce54bc8f` | `a1b6b740-0607-4bb5-b6d3-f57683e671ff` `af2ef592-6369-4605-981f-fd5b66563a3d` `0a728f60-480f-4b23-828d-edc88a2c0283` `dd7e658d-81a8-47d0-9379-92cebbbca4b1` |
+| 20:22:20.605 | `cfacb8b9-0358-4598-8aa5-df0f85b0f2c9` | `cfe95184-9a4c-4e28-928b-5eb957ca0cfb` | `f101ede8-a74f-463b-941d-ae0131609910` `046d5b4d-bc59-440f-8c1e-e9775c41b18e` `441ff3de-504f-43f0-a6c3-585c8fed5c0c` `5c9c1e0a-2efb-482e-a885-68c2703d145a` |
+| 20:22:44.920 | `6da0565d-857c-46fd-9d4d-42852de004f9` | `39c38101-83c6-4146-bb07-884add1365d5` | `5a57ec2f-f1a5-44ce-9407-9a988764f579` `40e2ce48-d928-48d3-8357-17d9ec0c693b` `c72fcd01-e89c-44b7-83c8-1ff1a2d6467a` `df4dc73f-c14d-4294-9edd-10ccfa21e0cb` |
+| 20:23:07.415 | `ed74cbd8-aca6-4173-bcbb-2f4710304965` | `43b52a62-4f35-442c-acbc-c07cb7f58e70` | `40520a50-04b3-4823-bec2-7f8fd6a6e161` `d2329317-7d74-4c93-984f-92b864a659dd` `ec0facc3-e051-46ad-a868-e43bcb24292f` `8ea350bd-9af6-4a0d-b69d-160b735295f4` |
+| 20:23:34.618 | `af2494cc-ecd3-4b55-800e-62c40dfb6120` | `4d21b31f-5bb5-46db-8d66-0407f9846cb8` | `84bfa8e3-2791-47df-be6e-b0361a6c164e` `fd83583b-8e5f-411e-9b33-dbdfbcc2b2bf` `5c314c84-d665-4f2a-b3ae-a53a26af2b9f` `ec5f990a-1409-427d-8fd8-fe460c3d0ead` |
+| 20:24:00.834 | `cda42b04-85ed-478d-b7ca-3a44ae86583f` | `fc3f427c-9299-42c8-8c82-2ca9ad183e4c` | `9c0363e0-1c7a-4273-8a16-363c990d5c7d` `0a042dee-33d7-4f16-a6e4-e79d4fafe04c` `56cc3358-7205-4b21-9d8d-c2ef52c043db` `8d84a761-c734-4e00-a366-ed8b228c2fa7` |
+| 20:24:24.103 | `32f6a73b-e9e3-4a51-b994-616e9ffc5b31` | `ae62f0cf-0eec-4781-8a73-566dfcc3562b` | `d743eaed-d99d-47d1-9d05-af2a1f5e2f89` `388d44fd-ffad-4a7e-a0eb-88d7475ecf2d` `dc171f09-80d3-4966-8c1e-366b10e2e369` `93caaf90-14dd-413f-8789-5e13318d1921` |
+| 20:24:48.152 | `02a4898f-3278-4b23-8217-344fd3f568ef` | `a1208890-0240-4b89-ba14-90f907d523ba` | `d2d89eff-cda5-4c91-a566-7ec786083384` `2d29fe0b-7243-4c32-9eb6-991c88d7d773` `bddf082d-20e9-4aa9-ad8f-7f8621a5455d` `de8226cb-8165-4e08-b381-8d7450a60201` |
+| 20:25:10.799 | `ae9113a3-b377-4aad-8d7a-c1b2e9a20ed9` | `2ee3d688-49e0-474f-84ef-6372bac1dbb3` | `72a1967c-f174-47b7-8eff-a1191132b8a4` `500df7fe-4a48-4a82-9781-63c134c542c9` `7897190a-e825-4372-9f70-18384633595a` `9dae9a45-1311-48fe-a0af-cbce8be8f887` |
+| 20:25:36.925 | `ec9ce1dc-084b-4e70-9f80-e2e34c76ab32` | `8071147e-6210-4550-a2e7-4daad6592331` | `1e1791ff-9673-49a3-ab20-e9c931fe7fa8` `3aa2a163-c142-421c-82a3-9458ae55e7cc` `f9249660-2172-4204-a840-79078c2ab33d` `f5dcaaea-426b-40c2-81a0-493b677523b7` |
+| 20:25:59.182 | `73cc55da-9edd-49ed-afd1-24b84d5b57f1` | `1ae17bce-f8e9-439d-835d-7b5fbea92a33` | `05bcdf60-f00b-46b9-b968-ef102eb803cb` `602934af-8edf-42e0-88d5-a521210271cb` `ac7157c6-592b-499c-ac1d-36451eceaf7a` `4f0a050a-d5b2-493d-a492-dcf0af368d8b` |
+| 20:26:22.815 | `a95c6ecf-19af-4c76-b467-3801c61a2e4b` | `0b3f4fa0-7838-45e8-b5c9-0767708f1831` | `68675588-7838-4519-becc-4febd9b31baf` `149c9fe6-325b-42ee-8650-fc3cc3402534` `65f0793e-836a-4fc7-8011-c223dca3587f` `b846f3d6-d70d-4a95-9c50-1fa158bb3d8a` |
+| 20:26:45.259 | `5d7149af-22f4-4024-abd2-a78a6b9fe5be` | `cfd64b7e-553e-4283-bbff-7c42a5c787a9` | `3cd96424-8171-4b1c-b00c-670bc38ff136` `656ebeb4-b8e2-4168-8c5c-b76288133229` `70053415-4452-4506-823b-c38de2808d02` `467b3f0a-3972-40c6-94a2-feefa21001a1` |
+| 20:27:10.761 | `dfec37f3-344c-4a68-b2b6-f5a26c4e921c` | `d79de49b-75ca-47bc-82ad-a654624d7898` | `63de8dfe-967d-4619-9f59-ce1334e62073` `7748503c-7ca9-499e-9c1c-5ceafc9d0178` `0f9fdcae-8541-481c-86f6-e0c6d2e9eea5` `a1f7fd04-ee05-48d7-8ed2-6e13de7545e9` |
+| 20:27:38.035 | `f776633d-b974-49f8-a83d-552cd0d4add2` | `679327f5-e270-40e7-8ad6-848d34fca9fa` | `f6c15e76-acc4-43fb-9512-34931dbe7348` `df63e30c-e9a9-48c7-bde2-79c0909ca371` `0cf25367-6fee-43a3-a8ed-1f27e1030efd` `d4c3abd7-8b4e-452d-88ac-93d794f4d273` |
+| 20:28:01.216 | `ccdc8c33-8408-4b35-be10-4755bc79138d` | `064c6084-218b-4009-aed4-54aad4cc6155` | `fabd4e6f-d9ac-4da8-a5cf-050fa076c074` `aa2a7486-1bdb-4d63-b616-44d4ef5deff9` `692b8a75-7cd1-4d16-9581-6e09f4c5377d` `33a1d2c3-47bb-4127-aa38-652fe37a3693` |
+| 20:28:26.155 | `12b6aebc-fcaa-444c-9367-f537d454c460` | `e537b4d5-d1c4-4456-923c-fe5d4d9a92f9` | `0773f428-aba3-4ae8-a19d-7f4a01cd70af` `f21bc473-cfb4-41e6-8228-4856215793d7` `876013b4-6115-4875-8bb0-80b06e486ceb` `e41e8a8f-41d8-443b-8d38-ef4a0ea62242` |
+| 20:28:48.230 | `770f8eb9-0b88-4376-aae0-a322cac770e8` | `bae36feb-6346-4508-a340-11dccd5419c2` | `7761ad2e-0f4b-4461-8945-886977cfe8aa` `a0a00ca1-a6fc-4545-91c1-ec2ee030d120` `c7887d16-d0db-4cc8-925a-08114fe9480c` `b045522c-85fa-4829-960d-9f0f6b955d79` |
+| 20:29:32.964 | `23afae83-0f81-4c9a-95e3-e30e47ae534b` | `56ed659e-8c65-45cc-b4b7-956590eecf00` | `d5cca83f-50fd-495e-9812-95123c5cef70` `658211e4-7a8e-475a-ab13-143be36587c4` `854d260f-19b1-4793-81da-e0c6cfc95fcd` `aba3ca61-22d6-4b04-9a57-2f24aa85c894` |
+| 20:30:40.358 | `e1e049bf-fb20-43d9-91e9-bd7064b73d07` | `d8336b15-9bed-42f9-8307-ea8f3311f658` | `3f8f68c0-576d-4599-b613-0c19b1135be1` `052f8907-ebb7-4e51-a8e8-83ae01f60883` `867cd5a2-9dbe-4a7c-a681-42a80ef970b0` `351fd5ae-686c-417a-b975-ed919e9bb3ce` |
+| 20:30:59.404 | `d8aca622-381c-49ac-aca9-0396caaed7a1` | `546765fc-4463-4270-912c-8cac71b3ba76` | `5df57a22-36d1-400b-92ba-891f127c2700` `76a944ba-9ecd-4023-8646-3c9598252727` `7546d0ce-dfc7-4ddc-a87e-9f042e5ca3a5` `75f8363b-9390-4b09-a7ba-9d5fab01de48` |
+| 20:32:06.019 | `12fcb31b-c340-40ad-a82a-da7b9057a88f` | `c805f9cb-ae6e-4097-88e9-426f04173073` | `0e7d21b7-c457-40e7-91e2-ab322f78c9a7` `cf3a2219-75d8-4e0d-9a70-4799e6281db4` `1b5e96bc-5de1-403c-953e-df1b49893c07` `cfe78d1e-5a4b-489b-899e-f3fdad68d91c` |
+| 20:32:25.216 | `c660689d-98a0-47fa-ab86-e66a91d9233e` | `661421f0-a47e-49c3-ada2-bf47abc26091` | `e535c046-3ead-40f7-92cb-163a6ac581d1` `51bd843c-9c18-45d6-ab79-a86b175af53a` `2f13b26e-7482-459b-90ab-07a546d6b07a` `ceb273dd-1951-42ea-b613-740e909724af` |
+| 20:33:31.010 | `83e8cfb2-e30a-492a-8343-1d6df0b4b70f` | `7d40a258-50c7-4ade-b8c6-9c0ff028f716` | `6561ff93-a9ba-46ca-9c33-cb8aea9760d1` `e2a6f109-f32d-4b63-98ca-24348c8c17a0` `332f8b7e-8171-4c63-b115-384a85d959b5` `b3571d00-ca99-4368-b051-4454d554da9c` |
+
+## Ids still missing
+
+| Gap | Why | Fix | Whose |
+| --- | --- | --- | --- |
+| Which runtime session id the tools gateway used for each call, and the runtime's request id | Neither the gateway's log nor the runtime's logs name them; the runtime's own `InvokeAgentRuntime` spans and application logs (request id, session id, `latency_ms`) are not turned on for our runtimes | Turn on the runtimes' observability; log the session and request headers in the tools server and the sub-agents | ours (config, code) |
+| The parent of the sub-agent's root span, and the agents gateway's trace inside the runtime | The agents gateway's trace does not continue into the runtime (TC10); the parent span is in no backend we can read (TC9) | Ask AWS | AWS |
+| Identity's own timing for the runtime's per-request token call | Only CloudTrail records it, to the second; no span or vended log | Ask AWS for spans or vended logs | AWS |
+| The trace of each token exchange back to its caller | Identity starts a new trace at the token endpoint (TC10) | Ask AWS; meanwhile the issuer can log Identity's request headers | AWS (ours for a workaround) |
+| 4 of 116 hop exchanges have no issuer API Gateway request id | X-Ray sampled them out | The issuer logs its API Gateway request id | ours (code) |
+| The chat start's Lambda request id in the API's access log | The access log format leaves out `$context.integration.requestId` and `$context.xrayTraceId`; the stage has no X-Ray | Add both fields and turn on X-Ray for the stage | ours (config) |
+| Request ids of the Connect calls in the chat start's own log | The function does not log them (CloudTrail has them, above) | Log the SDK's request id per call | ours (code) |
+| Bedrock request id of each sub-agent model call | No botocore span for Bedrock Runtime; the Strands `chat` span has none | Log `ResponseMetadata.RequestId` from a botocore event hook | ours (code) |
+| The designer's routing model call and its data requests | The designer emits no trace and no request ids for its model calls (A19); its log gives a correlation id per turn | Ask AWS | AWS |
+| Connect's time from a stamped question to the designer, and from the designer's response to the stamp | No Connect span or log between `SendMessage` and the designer | Ask AWS (C15) | AWS |
+
 ## Queries to reproduce
 
 CloudWatch Logs Insights, the tools gateway's requests for one trace:
