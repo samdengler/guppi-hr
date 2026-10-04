@@ -219,6 +219,13 @@ words at 2.86 s. The designer's own time was about the same on both (1.77 and 1.
    later reply in any case. The turn's report was sent while offline and was lost
    (`ERR_INTERNET_DISCONNECTED`), so no `chat_problem` line or alarm came from it. An outage
    longer than the 28 s turn limit loses the answer, and the report has no retry.
+   Fixed the same evening (guppi-gpt 870864b): a turn that ends on the turn limit keeps its
+   question waiting for a late answer until the next question; the window's `online` event
+   runs the transcript catch-up; a report that fails on the network is queued and resent.
+   Re-run at 17:31:42 UTC (contact 7b61eade): the PTO answer replaced the no-reply line
+   once the network returned (one reply, one text), the `no_reply` report was resent and
+   answered 200, and a second report (`<runId>:late`, error `late_reply`) recorded the late
+   answer. Pass.
 4. A hidden tab: pass. The page was set hidden (the `visibilitychange` event with
    `document.visibilityState` overridden) at 16:55:11 UTC for 5 minutes with the network up;
    it made no request while hidden, read the transcript once on becoming visible, and a
