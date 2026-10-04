@@ -5,8 +5,32 @@
   "assistant": "HR Assistant",
   "agent": "/api/hr/invocations",
   "capabilities": [
-    "warm-start"
+    "warm-start",
+    "connect-chat"
   ],
+  "connectChat": {
+    "start": "/api/hr/chat/start",
+    "report": "/api/hr/chat/report",
+    "endMark": "\u2063",
+    "closedMark": "\u2064",
+    "hiddenPrefix": "[flow]",
+    "endLine": "[flow] end",
+    "closedLine": "[flow] closed",
+    "escalationPrefix": "[flow] Escalation",
+    "errorPrefix": "[flow] The Agentic CX block returned an error",
+    "quietAfterMs": 800,
+    "turnLimitMs": 28000,
+    "maxChars": 1024,
+    "lines": {
+      "tooLong": "That message is too long for the HR assistant: keep it under 1,024 characters, or split it into two messages.",
+      "noReply": "No answer came back from the HR assistant. Try again in a moment.",
+      "restarted": "(The assistant started a new conversation, so it may ask for details again.)",
+      "signin": "HR could not confirm the sign-in. Try again in a minute.",
+      "ended": "The conversation ended. A new message here starts a new one.",
+      "escalated": "The HR service desk queue has this conversation now. A new message here starts over with the assistant.",
+      "error": "The HR assistant ran into an error and ended this conversation. A new message here starts a new one."
+    }
+  },
   "features": {
     "logging": false
   },
