@@ -242,5 +242,6 @@ def build_server(deps: Dependencies | None = None) -> FastMCP:
     return mcp
 
 
-server = build_server()
+DEPENDENCIES = Dependencies()
+server = build_server(DEPENDENCIES)
 app = server.streamable_http_app()

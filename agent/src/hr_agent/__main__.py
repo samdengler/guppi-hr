@@ -20,6 +20,10 @@ SUB_AGENT_ROLES = ("profile", "pay", "travel")
 
 def main() -> None:
     role = os.environ.get("AGENT_ROLE", "orchestrator")
+    # Before the server listens, so AgentCore Runtime V2's snapshot holds the result.
+    from hr_agent.prime import prime
+
+    prime(role)
     if role in SUB_AGENT_ROLES:
         from hr_agent.agents.server import serve
 

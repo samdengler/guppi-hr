@@ -55,6 +55,7 @@ from hr_agent.pending import (
     pending_after_messages,
     pending_paragraph,
 )
+from hr_agent.prime import boto_session
 
 log = logging.getLogger("hr_agent.agents")
 
@@ -245,8 +246,8 @@ async def run_domain(
             log.warning("%s: tools not offered by the gateway: %s", domain.name, sorted(missing))
         agent = Agent(
             model=BedrockModel(
+                boto_session=boto_session(settings.region),
                 model_id=settings.model_id,
-                region_name=settings.region,
                 # Short answers come back sooner (L21); a proposal still fits.
                 max_tokens=400,
                 temperature=0.3,
