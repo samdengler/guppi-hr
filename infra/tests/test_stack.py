@@ -701,10 +701,16 @@ def test_vended_log_delivery_sources_cover_application_logs_and_traces(template)
         resource_key = json.dumps(props["ResourceArn"])
         log_types_by_resource.setdefault(resource_key, set()).add(props["LogType"])
 
-    # Every resource gets APPLICATION_LOGS only: a CloudWatch Logs destination for the
-    # gateways' TRACES log type was rejected by CloudFormation on 4 Sep 2026.
+    # Every resource gets APPLICATION_LOGS; the gateways and runtimes behind Connect also
+    # send TRACES, to X-Ray (a CloudWatch Logs destination for TRACES was rejected by
+    # CloudFormation on 4 Sep 2026). The orchestrator runtime of /p/hr-diy/ does not.
     assert len(log_types_by_resource) == 7
-    assert all(v == {"APPLICATION_LOGS"} for v in log_types_by_resource.values())
+    with_traces = [v for v in log_types_by_resource.values() if "TRACES" in v]
+    assert len(with_traces) == 6
+    assert all(v <= {"APPLICATION_LOGS", "TRACES"} and "APPLICATION_LOGS" in v for v in log_types_by_resource.values())
+    destinations = template.find_resources("AWS::Logs::DeliveryDestination")
+    xray = [d for d in destinations.values() if d["Properties"].get("DeliveryDestinationType") == "XRAY"]
+    assert len(xray) == 1
 
     # Each delivery depends explicitly on its source and its destination, since the
     # delivery source name that links them is a plain string, not a CloudFormation
@@ -713,6 +719,13 @@ def test_vended_log_delivery_sources_cover_application_logs_and_traces(template)
     assert len(deliveries) == len(sources)
     for delivery in deliveries.values():
         assert len(delivery.get("DependsOn", [])) == 2
+
+
+def test_hr_runtimes_use_the_new_agentcore_runtime(template):
+    runtimes = template.find_resources("AWS::BedrockAgentCore::Runtime")
+    versions = {r["Properties"]["AgentRuntimeName"]: r["Properties"].get("PlatformVersion") for r in runtimes.values()}
+    for name in ("hr_super_agent_tools", "hr_super_agent_profile", "hr_super_agent_travel", "hr_super_agent_pay"):
+        assert versions[name] == "V2"
 
 
 def test_vended_log_delivery_resource_policy_grants_the_delivery_service(template):

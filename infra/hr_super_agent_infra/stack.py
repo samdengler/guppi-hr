@@ -1211,21 +1211,30 @@ class HrSuperAgentStack(cdk.Stack):
         # ---- Vended log delivery ----------------------------------------------------------
         # AWS::Logs::DeliverySource, AWS::Logs::DeliveryDestination, and AWS::Logs::Delivery
         # (the CDK L1s below) wire each resource's APPLICATION_LOGS into a CloudWatch Logs
-        # group under VENDED_LOG_PREFIX. The gateways' TRACES log type is not delivered here:
-        # CloudFormation rejected a CloudWatch Logs destination for it on 4 Sep 2026 with
-        # "Invalid destination type provided for this resource and log type", so gateway
-        # traces would need an X-Ray destination, and the runtime's spans already reach
-        # Transaction Search. The resource policy below
+        # group under VENDED_LOG_PREFIX, and the TRACES of the gateways and runtimes behind
+        # Connect into X-Ray (Transaction Search puts them in aws/spans). TRACES takes only
+        # an X-Ray destination: CloudFormation rejected a CloudWatch Logs one on 4 Sep 2026
+        # with "Invalid destination type provided for this resource and log type". The
+        # services' own spans fill the gaps at each gateway and runtime hop (TC9, A21, A24).
+        # The resource policy below
         # grants delivery.logs.amazonaws.com permission to write to the log groups; without
         # it, only a principal with logs:PutResourcePolicy on the log group gets one created
         # automatically the first time delivery starts (AWS-logs-infrastructure-V2-
         # CloudWatchLogs.html), which the deploying principal is not guaranteed to have.
+        traces_destination = logs.CfnDeliveryDestination(
+            self,
+            "TracesDeliveryDestination",
+            name="hr-super-agent-traces",
+            delivery_destination_type="XRAY",
+        )
+
         def _vended_log_delivery(
             resource_label: str,
             resource_name: str,
             resource_arn: str,
             log_types: list[str],
             delivery_name: str | None = None,
+            traces: bool = False,
         ) -> logs.LogGroup:
             # Delivery sources and destinations are named per account with underscores
             # made hyphens, so a runtime and a gateway whose names differ only by that
@@ -1261,6 +1270,22 @@ class HrSuperAgentStack(cdk.Stack):
                 )
                 delivery.node.add_dependency(source)
                 delivery.node.add_dependency(destination)
+            if traces:
+                source = logs.CfnDeliverySource(
+                    self,
+                    f"{resource_label}TracesSource",
+                    name=f"{delivery_name}-traces".lower(),
+                    log_type="TRACES",
+                    resource_arn=resource_arn,
+                )
+                delivery = logs.CfnDelivery(
+                    self,
+                    f"{resource_label}TracesDelivery",
+                    delivery_source_name=source.name,
+                    delivery_destination_arn=traces_destination.attr_arn,
+                )
+                delivery.node.add_dependency(source)
+                delivery.node.add_dependency(traces_destination)
 
             return log_group
 
@@ -1270,6 +1295,7 @@ class HrSuperAgentStack(cdk.Stack):
                 TOOLS_GATEWAY_NAME,
                 tools_gateway.attr_gateway_arn,
                 ["APPLICATION_LOGS"],
+                traces=True,
             ),
             "Runtime": _vended_log_delivery(
                 "Runtime", RUNTIME_NAME, runtime.attr_agent_runtime_arn, ["APPLICATION_LOGS"]
@@ -1280,12 +1306,14 @@ class HrSuperAgentStack(cdk.Stack):
                 hr_tools.runtime.attr_agent_runtime_arn,
                 ["APPLICATION_LOGS"],
                 delivery_name=f"{TOOLS_RUNTIME_NAME}-runtime",
+                traces=True,
             ),
             "AgentsGateway": _vended_log_delivery(
                 "AgentsGateway",
                 AGENTS_GATEWAY_NAME,
                 sub_agents.gateway.attr_gateway_arn,
                 ["APPLICATION_LOGS"],
+                traces=True,
             ),
             **{
                 f"{name.capitalize()}Runtime": _vended_log_delivery(
@@ -1293,6 +1321,7 @@ class HrSuperAgentStack(cdk.Stack):
                     sub_agent_runtime_name(name),
                     sub_agent_runtime.attr_agent_runtime_arn,
                     ["APPLICATION_LOGS"],
+                    traces=True,
                 )
                 for name, sub_agent_runtime in sub_agents.runtimes.items()
             },

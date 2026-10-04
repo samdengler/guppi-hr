@@ -29,6 +29,7 @@ from hr_super_agent_infra.obo import (
     TOOLS_GATEWAY_CLIENT,
     TOOLS_RUNTIME_AUDIENCE,
 )
+from hr_super_agent_infra.runtime_role import use_platform_version
 
 TOOLS_RUNTIME_NAME = "hr_super_agent_tools"
 HR_TARGET_NAME = "hr"  # tools reach the model as hr___get_profile and so on
@@ -147,6 +148,7 @@ class HrTools(Construct):
         # AgentCore checks the image pull grants when it creates the runtime, so the
         # runtime waits for the whole role, DefaultPolicy included.
         self.runtime.node.add_dependency(role)
+        use_platform_version(self.runtime)
 
         # The gateway asks Identity for the runtime token under its own workload identity,
         # through the tools gateway's credential provider only, and Identity reads that

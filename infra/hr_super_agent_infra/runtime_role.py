@@ -7,6 +7,7 @@ runtime needs (the orchestrator's model access, the tools server's tables).
 from __future__ import annotations
 
 from aws_cdk import Stack
+from aws_cdk import aws_bedrockagentcore as agentcore
 from aws_cdk import aws_iam as iam
 from constructs import Construct
 
@@ -93,3 +94,13 @@ def runtime_execution_role(
         )
     )
     return role
+
+
+# The new AgentCore Runtime (September 2026): new instances restore from a snapshot of the
+# started container, and memory is reclaimed when a session releases it. CloudFormation takes
+# PlatformVersion and updates it in place; CDK 2.268's CfnRuntime has no property for it yet.
+PLATFORM_VERSION = "V2"
+
+
+def use_platform_version(runtime: agentcore.CfnRuntime) -> None:
+    runtime.add_property_override("PlatformVersion", PLATFORM_VERSION)
