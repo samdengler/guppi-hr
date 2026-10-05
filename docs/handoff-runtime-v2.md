@@ -37,6 +37,9 @@ ever rerun, tell each sub-agent to load WebSearch and WebFetch with ToolSearch f
 
 ## Isolation for the experiments
 
+- The Mac mini has AWS SSO but not the browser harness (`~/.config/guppi/test-session.json`,
+  guppi-gpt with Playwright). The experiments do not need it. Do not try to rerun the
+  `/p/hr/` Connect benchmark there unless Sam has copied the session file over.
 - Use dedicated test runtimes, not the four live HR runtimes behind Connect, and invoke them
   directly with `InvokeAgentRuntime` (boto3 `bedrock-agentcore`). That keeps `/p/hr/` stable
   and costs no Connect messages. Name them so they are easy to find and delete, and delete
