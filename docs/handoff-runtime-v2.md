@@ -56,7 +56,7 @@ Two things for Sam before the tree is fully green: `uv run -- pytest` has one re
 code commits are not in the rollback script's kept list and the session's edit of that list
 was blocked by the permission classifier. The fix is one line:
 
-    sed -i '' 's/7006127 805fabd)/7006127 805fabd 8798ca2 579ebb8)/' scripts/obo-rollback.sh
+    sed -i '' 's/7006127 805fabd)/7006127 805fabd 6d18872 d403d0a)/' scripts/obo-rollback.sh
 
 `cdk synth` and `scripts/obo-rollback.sh --check` are green. D58 and D59 are Proposed.
 
