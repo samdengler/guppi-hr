@@ -44,11 +44,8 @@ AWS finding in `docs/aws-feedback.md` A26 to A37 and CW1, the choices in
 `docs/decision-log.md` D58 and D59 (both Proposed for Sam). Raw lines, per-experiment
 tables and findings are under `docs/runtime-v2-evidence/<E>/`; the fixtures are in
 `scripts/v2study/` (README there). All test resources were deleted at the end (runtimes,
-gateways, roles, ECR repository, Cognito pool) except the security group
-`sg-0b6c011914cb60048` (`hr-v2-study`, default VPC): two `agentic_ai` network interfaces of
-the failed VPC runtimes still used it an hour after their runtimes were gone (A35), so
-`aws ec2 delete-security-group --group-id sg-0b6c011914cb60048` needs to run once they are
-released. The vended log group `/aws/vendedlogs/bedrock-agentcore/hr-v2-study` is kept as
+gateways, roles, ECR repository, Cognito pool) and the security group `sg-0b6c011914cb60048` (`hr-v2-study`), deleted from
+the laptop on 5 Oct once its network interfaces were released (A35). The vended log group `/aws/vendedlogs/bedrock-agentcore/hr-v2-study` is kept as
 evidence for 30 days.
 
 The study's two code commits (6d18872, d403d0a) are in the rollback script's kept list (done
