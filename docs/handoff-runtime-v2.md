@@ -31,8 +31,8 @@ Done on 4 Oct: two Fable sub-agents researched snapshot restore (Lambda SnapStar
 Firecracker, language effects) and AgentCore Runtime V2 (mechanics, knobs, practitioner
 reports, gateway MCP sessions, token caching). Their reports are in
 `docs/runtime-v2-research.md`, with a list of measurements that separate the restore's
-components and open questions for AWS. Skip the research step and start at the experiment
-plan. (The first single Fable attempt stalled while loading its web tools; if research is
+components and open questions for AWS. Skip the research step. The experiment plan is `docs/runtime-v2-experiments.md`
+(4 Oct, evening); its fixtures are in `scripts/v2study/`. (The first single Fable attempt stalled while loading its web tools; if research is
 ever rerun, tell each sub-agent to load WebSearch and WebFetch with ToolSearch first.)
 
 ## Isolation for the experiments
