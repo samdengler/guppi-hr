@@ -25,6 +25,17 @@ file covers only the Runtime V2 work and what Sam asked for next.
 5. Commit results, and record every measurement in `docs/latency-log.md`, every AWS finding
    in `docs/aws-feedback.md` and every choice in `docs/decision-log.md` the day it happens.
 
+## Status of the research step
+
+On 4 Oct the first Fable research sub-agent stalled while loading its web tools. Two
+narrower Fable sub-agents were started from the laptop: one on Lambda SnapStart, Firecracker
+snapshot restore and language effects, one on AgentCore Runtime V2, gateway MCP sessions and
+per-request Identity calls. When their reports land they are saved as
+`docs/runtime-v2-research.md` and pushed. If that file is missing on the Mac mini, run the
+research again there: a Fable sub-agent per topic, each told to load WebSearch and WebFetch
+with ToolSearch (`select:WebSearch,WebFetch`) first, and each returning its report as its
+final message for the main session to save (sub-agents could not write files).
+
 ## Isolation for the experiments
 
 - Use dedicated test runtimes, not the four live HR runtimes behind Connect, and invoke them
