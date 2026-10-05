@@ -35,6 +35,57 @@ components and open questions for AWS. Skip the research step. The experiment pl
 (4 Oct, evening); its fixtures are in `scripts/v2study/`. (The first single Fable attempt stalled while loading its web tools; if research is
 ever rerun, tell each sub-agent to load WebSearch and WebFetch with ToolSearch first.)
 
+## Status of the experiment step (5 Oct, 00:45 to 03:15 UTC)
+
+Done. The plan is `docs/runtime-v2-experiments.md`; fourteen experiments ran (E1 to E14,
+plus E15 added for the credentials question), six sub-agents in parallel and the main
+session for E7, E13 and E15. Every measurement is in `docs/latency-log.md` L34 to L47, every
+AWS finding in `docs/aws-feedback.md` A26 to A37 and CW1, the choices in
+`docs/decision-log.md` D58 and D59 (both Proposed for Sam). Raw lines, per-experiment
+tables and findings are under `docs/runtime-v2-evidence/<E>/`; the fixtures are in
+`scripts/v2study/` (README there). All test resources were deleted at the end (runtimes,
+gateways, roles, ECR repository, Cognito pool) except the security group
+`sg-0b6c011914cb60048` (`hr-v2-study`, default VPC): two `agentic_ai` network interfaces of
+the failed VPC runtimes still used it an hour after their runtimes were gone (A35), so
+`aws ec2 delete-security-group --group-id sg-0b6c011914cb60048` needs to run once they are
+released. The vended log group `/aws/vendedlogs/bedrock-agentcore/hr-v2-study` is kept as
+evidence for 30 days.
+
+Two things for Sam before the tree is fully green: `uv run -- pytest` has one red test,
+`test_every_code_commit_since_d47_is_listed_to_revert_or_to_keep`, because the study's two
+code commits are not in the rollback script's kept list and the session's edit of that list
+was blocked by the permission classifier. The fix is one line:
+
+    sed -i '' 's/7006127 805fabd)/7006127 805fabd 8798ca2 579ebb8)/' scripts/obo-rollback.sh
+
+`cdk synth` and `scripts/obo-rollback.sh --check` are green. D58 and D59 are Proposed.
+
+What the study says, in order of weight for /p/hr/:
+
+1. The 1.8 s per new session is the platform's restore and nothing in the image moves it:
+   not protocol, image size, memory, language, imports or priming (E1 to E6, L34 to L39).
+   What we control is only the work the first request does after the restore (lazy imports
+   cost 0.6 to 0.95 s, L38), which priming already removed (L33).
+2. Fewer restores is the lever. Gateway MCP sessions (E12, L42, D59) cut later tool calls
+   from 2.2 s to 0.58 s but cost two restores on the first call (4.3 s), because the gateway
+   runs `server/discover` on a throwaway session (A27); break-even at the third tool call of
+   a gateway session. A runtime session that outlives one chat (idle timeout up to 8 h, E11)
+   costs nothing while idle, and a session id reused shortly after its timeout is penalized
+   (502s and 7 to 15 s restores in the first minute, A36), so a client should start a new id
+   once the old one is known to have expired.
+3. Bursts are fine on V2 (flat to 20 at once) and V1 drains its pool at about 11 (E8, L41).
+4. A JWT authorizer costs 0.12 s per request, every request (E9, L43, A34).
+5. VPC mode could not be created on V2 in the default VPC (A35); it needs NAT or endpoints.
+6. Restored instances repeat user-space random state, including Node's `crypto` (A29);
+   the `prime.py` reseed watcher is needed and correct. Clients built before the snapshot
+   carry the build's credentials for an hour, then refresh per microVM without failure
+   (E14, E15, A30), so priming is safe.
+7. For 20 to 35 s after a version is READY, and for the first sessions after an idle hour,
+   first-request work inside a restored instance is ten times slower (A31, E7).
+
+The W experiments (a real call before the snapshot, keep-alive pings, a session opened at
+page load, capacity providers) were not run and wait for Sam.
+
 ## Isolation for the experiments
 
 - The Mac mini has AWS SSO but not the browser harness (`~/.config/guppi/test-session.json`,

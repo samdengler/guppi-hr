@@ -55,3 +55,8 @@
 {"op": "create", "name": "hr_v2_net_vpc_v1", "id": "hr_v2_net_vpc_v1-bdQbduE2Bg", "arn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:runtime/hr_v2_net_vpc_v1-bdQbduE2Bg", "version": "1", "platform": "V1", "protocol": "HTTP", "image": "py", "env": {"MODE": "http", "VARIANT": "hr_v2_net_vpc_v1"}, "idle": 900, "network": "VPC", "auth": "sigv4", "experiment": "E10", "created_at": 1791164936.3500988, "ready_at": 1791165194.941026, "build_s": 258.6}
 {"op": "delete", "name": "hr_v2_net_vpc_v2b", "id": "hr_v2_net_vpc_v2b-2CTvvl3e8W", "at": 1791165727.4575841}
 {"op": "delete", "name": "hr_v2_net_vpc_v1", "id": "hr_v2_net_vpc_v1-bdQbduE2Bg", "at": 1791165787.909493}
+{"op": "delete", "name": "hr_v2_proto_http_v1", "id": "hr_v2_proto_http_v1-0Y1WTR7hS5", "at": 1791167676.9705899}
+{"op": "delete", "name": "hr_v2_proto_http_v2", "id": "hr_v2_proto_http_v2-tVcBJN3RW3", "at": 1791167679.280312}
+{"op": "delete", "name": "hr_v2_cred_v2", "id": "hr_v2_cred_v2-4lRWGjHFV9", "at": 1791167681.320579}
+{"op": "update", "name": "hr_v2_cache_v2", "id": "hr_v2_cache_v2-M5sHrk6eJD", "arn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:runtime/hr_v2_cache_v2-M5sHrk6eJD", "version": "2", "platform": "V2", "env": {"MODE": "http", "VARIANT": "hr_v2_cache_v2", "BUMP": "1"}, "updated_at": 1791169234.516321, "ready_at": 1791169423.736782, "build_s": 189.2}
+{"op": "delete", "name": "hr_v2_cache_v2", "id": "hr_v2_cache_v2-M5sHrk6eJD", "at": 1791169688.3079948}
