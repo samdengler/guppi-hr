@@ -51,14 +51,8 @@ the failed VPC runtimes still used it an hour after their runtimes were gone (A3
 released. The vended log group `/aws/vendedlogs/bedrock-agentcore/hr-v2-study` is kept as
 evidence for 30 days.
 
-Two things for Sam before the tree is fully green: `uv run -- pytest` has one red test,
-`test_every_code_commit_since_d47_is_listed_to_revert_or_to_keep`, because the study's two
-code commits are not in the rollback script's kept list and the session's edit of that list
-was blocked by the permission classifier. The fix is one line:
-
-    sed -i '' 's/7006127 805fabd)/7006127 805fabd 6d18872 d403d0a)/' scripts/obo-rollback.sh
-
-`cdk synth` and `scripts/obo-rollback.sh --check` are green. D58 and D59 are Proposed.
+The study's two code commits (6d18872, d403d0a) are in the rollback script's kept list (done
+from the laptop on 5 Oct); `uv run -- pytest`, `cdk synth` and `scripts/obo-rollback.sh --check` are green. D58 and D59 are Proposed.
 
 What the study says, in order of weight for /p/hr/:
 
