@@ -74,27 +74,55 @@ def wait_ready(runtime_id: str, timeout: float = 1200) -> tuple[dict, float]:
         time.sleep(5)
 
 
+def all_deliveries() -> list[dict]:
+    """describe_deliveries pages by 10; the account has more (group F, 5 Oct)."""
+    out, token = [], None
+    while True:
+        kw = {"nextToken": token} if token else {}
+        resp = logs.describe_deliveries(**kw)
+        out += resp.get("deliveries", [])
+        token = resp.get("nextToken")
+        if not token:
+            return out
+
+
 def attach_logs(name: str, arn: str) -> None:
     source = f"hr-v2-study-{name}"
     try:
         logs.put_delivery_source(name=source, resourceArn=arn, logType="APPLICATION_LOGS", tags=STUDY_TAG)
     except logs.exceptions.ConflictException:
         pass
-    try:
-        logs.create_delivery(deliverySourceName=source, deliveryDestinationArn=DEST_ARN, tags=STUDY_TAG)
-    except logs.exceptions.ConflictException:
-        pass
+    # CloudWatch Logs answers ConflictException both for "this delivery exists" and for
+    # "the destination is being changed by another call"; with several creates finishing at
+    # once the second case left runtimes without a delivery (group A, 5 Oct 01:03 UTC), so
+    # retry until the delivery is visible.
+    for attempt in range(12):
+        existing = [d for d in all_deliveries() if d["deliverySourceName"] == source]
+        if existing:
+            return
+        try:
+            logs.create_delivery(deliverySourceName=source, deliveryDestinationArn=DEST_ARN, tags=STUDY_TAG)
+            return
+        except logs.exceptions.ConflictException:
+            time.sleep(5 + attempt * 5)
+    raise SystemExit(f"{name}: no log delivery after retries")
 
 
 def detach_logs(name: str) -> None:
     source = f"hr-v2-study-{name}"
-    for d in logs.describe_deliveries().get("deliveries", []):
-        if d["deliverySourceName"] == source:
-            logs.delete_delivery(id=d["id"])
-    try:
-        logs.delete_delivery_source(name=source)
-    except logs.exceptions.ResourceNotFoundException:
-        pass
+    for attempt in range(12):
+        try:
+            for d in all_deliveries():
+                if d["deliverySourceName"] == source:
+                    logs.delete_delivery(id=d["id"])
+            logs.delete_delivery_source(name=source)
+            return
+        except logs.exceptions.ResourceNotFoundException:
+            return
+        except logs.exceptions.ConflictException:
+            # parallel deletes change the destination at the same time (group C, 5 Oct)
+            time.sleep(5 + attempt * 5)
+    print(f"{name}: log delivery source still in use after retries", file=sys.stderr)
 
 
 def parse_env(items: list[str] | None) -> dict:

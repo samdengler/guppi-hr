@@ -1,0 +1,125 @@
+{
+ "gateways": [
+  {
+   "gatewayArn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:gateway/hr-v2-gw-off-oxdpgfnszd",
+   "gatewayId": "hr-v2-gw-off-oxdpgfnszd",
+   "gatewayUrl": "https://hr-v2-gw-off-oxdpgfnszd.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp",
+   "createdAt": "2026-10-05T00:57:18.593487+00:00",
+   "updatedAt": "2026-10-05T00:57:19.473191+00:00",
+   "status": "READY",
+   "name": "hr-v2-gw-off",
+   "description": "hr-v2-study E12 sessions off",
+   "roleArn": "arn:aws:iam::009080466601:role/hr-v2-study-gateway",
+   "protocolType": "MCP",
+   "authorizerType": "AWS_IAM",
+   "workloadIdentityDetails": {
+    "workloadIdentityArn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:workload-identity-directory/default/workload-identity/hr-v2-gw-off-oxdpgfnszd"
+   }
+  },
+  {
+   "gatewayArn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:gateway/hr-v2-gw-on-xiqjdqnf24",
+   "gatewayId": "hr-v2-gw-on-xiqjdqnf24",
+   "gatewayUrl": "https://hr-v2-gw-on-xiqjdqnf24.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp",
+   "createdAt": "2026-10-05T00:57:19.133698+00:00",
+   "updatedAt": "2026-10-05T00:57:19.733273+00:00",
+   "status": "READY",
+   "name": "hr-v2-gw-on",
+   "description": "hr-v2-study E12 sessions on",
+   "roleArn": "arn:aws:iam::009080466601:role/hr-v2-study-gateway",
+   "protocolType": "MCP",
+   "protocolConfiguration": {
+    "mcp": {
+     "sessionConfiguration": {
+      "sessionTimeoutInSeconds": 3600
+     }
+    }
+   },
+   "authorizerType": "AWS_IAM",
+   "workloadIdentityDetails": {
+    "workloadIdentityArn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:workload-identity-directory/default/workload-identity/hr-v2-gw-on-xiqjdqnf24"
+   }
+  }
+ ],
+ "targets": [
+  {
+   "gatewayArn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:gateway/hr-v2-gw-off-oxdpgfnszd",
+   "targetId": "0QLXQYQ1QR",
+   "createdAt": "2026-10-05T00:59:29.850981+00:00",
+   "updatedAt": "2026-10-05T00:59:36.313444+00:00",
+   "status": "READY",
+   "name": "probe",
+   "description": "hr-v2-study E12 MCP server target",
+   "targetConfiguration": {
+    "mcp": {
+     "mcpServer": {
+      "endpoint": "https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A009080466601%3Aruntime%2Fhr_v2_gw_mcp_v2-fYK6Rd5nYz/invocations?qualifier=DEFAULT"
+     }
+    }
+   },
+   "credentialProviderConfigurations": [
+    {
+     "credentialProviderType": "GATEWAY_IAM_ROLE",
+     "credentialProvider": {
+      "iamCredentialProvider": {
+       "service": "bedrock-agentcore",
+       "region": "us-east-1"
+      }
+     }
+    }
+   ],
+   "lastSynchronizedAt": "2026-10-05T00:59:36.117955+00:00"
+  },
+  {
+   "gatewayArn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:gateway/hr-v2-gw-on-xiqjdqnf24",
+   "targetId": "EZ07TU790Z",
+   "createdAt": "2026-10-05T00:59:30.381092+00:00",
+   "updatedAt": "2026-10-05T00:59:36.294105+00:00",
+   "status": "READY",
+   "name": "probe",
+   "description": "hr-v2-study E12 MCP server target",
+   "targetConfiguration": {
+    "mcp": {
+     "mcpServer": {
+      "endpoint": "https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A009080466601%3Aruntime%2Fhr_v2_gw_mcp_v2-fYK6Rd5nYz/invocations?qualifier=DEFAULT"
+     }
+    }
+   },
+   "credentialProviderConfigurations": [
+    {
+     "credentialProviderType": "GATEWAY_IAM_ROLE",
+     "credentialProvider": {
+      "iamCredentialProvider": {
+       "service": "bedrock-agentcore",
+       "region": "us-east-1"
+      }
+     }
+    }
+   ],
+   "lastSynchronizedAt": "2026-10-05T00:59:36.130721+00:00"
+  }
+ ],
+ "gateway_role_policy": {
+  "RoleName": "hr-v2-study-gateway",
+  "PolicyName": "hr-v2-study-gateway",
+  "PolicyDocument": {
+   "Version": "2012-10-17",
+   "Statement": [
+    {
+     "Sid": "InvokeStudyRuntime",
+     "Effect": "Allow",
+     "Action": "bedrock-agentcore:InvokeAgentRuntime",
+     "Resource": "arn:aws:bedrock-agentcore:us-east-1:009080466601:runtime/hr_v2_gw_mcp_v2*"
+    },
+    {
+     "Sid": "WorkloadToken",
+     "Effect": "Allow",
+     "Action": "bedrock-agentcore:GetWorkloadAccessToken*",
+     "Resource": [
+      "arn:aws:bedrock-agentcore:us-east-1:009080466601:workload-identity-directory/default",
+      "arn:aws:bedrock-agentcore:us-east-1:009080466601:workload-identity-directory/default/workload-identity/*"
+     ]
+    }
+   ]
+  }
+ }
+}
