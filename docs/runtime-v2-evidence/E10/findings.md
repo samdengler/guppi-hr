@@ -74,3 +74,25 @@ aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventSource,Attrib
   --start-time 2026-10-05T00:55:00Z --end-time 2026-10-05T01:30:00Z
 aws ec2 describe-network-interfaces --filters Name=group-id,Values=sg-0b6c011914cb60048
 ```
+
+## Addendum by the main session, 01:45 to 02:05 UTC
+
+- A fourth V2 attempt (`hr_v2_net_vpc_v2b-2CTvvl3e8W`, created 01:53:29) failed the same way
+  at 02:01:39: `CREATE_FAILED`, "An internal error occurred while processing your request.
+  Please try again." Four of four V2 creates in VPC mode failed over 66 minutes.
+- A V1 runtime with the same VPC settings (`hr_v2_net_vpc_v1-bdQbduE2Bg`) was created at
+  01:48:56 and READY after 258.6 s (a PUBLIC V1 runtime takes 6 s). It then answered no
+  request: every new session failed with `RuntimeClientError ... Received error (502) from
+  runtime` after about 65 s (7 of 7), and every follow-up on those sessions after about 4.2 s
+  (the runtime's own records show 4.1 s receipt to completion with a null response). Its
+  container log group holds no `runtime-logs-*` stream, so no container ever started.
+- Inference: in VPC mode the microVM reaches ECR and the AgentCore control services only
+  through the customer's VPC, and the default VPC used here has an internet gateway but no NAT
+  gateway and no VPC endpoints, so the `agentic_ai` interfaces (no public address) cannot pull
+  the image. On V1 that shows as a 65 s boot timeout and a 502 per session; on V2 the
+  snapshot build fails and the platform reports it as an internal error. The documentation's
+  `requireServiceS3Endpoint` hint and its VPC prerequisites (NAT or interface endpoints for
+  ECR, S3, CloudWatch and the AgentCore services) point the same way. Not verified: the
+  experiment did not add a NAT gateway or endpoints (cost, and out of the study's shape), so
+  the latency question for VPC mode stays open and the finding for AWS is the opaque error.
+- Both runtimes were deleted (02:04 UTC).

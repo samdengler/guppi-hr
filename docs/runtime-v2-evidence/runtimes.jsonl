@@ -48,3 +48,10 @@
 {"op": "delete", "name": "hr_v2_proto_mcp_v2", "id": "hr_v2_proto_mcp_v2-0Tqkzs8gHR", "at": 1791163379.9252632}
 {"op": "delete", "name": "hr_v2_proto_mcp_v1", "id": "hr_v2_proto_mcp_v1-mCaEWr7Ip5", "at": 1791163379.938695}
 {"op": "create", "name": "hr_v2_cred_v2", "id": "hr_v2_cred_v2-4lRWGjHFV9", "arn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:runtime/hr_v2_cred_v2-4lRWGjHFV9", "version": "1", "platform": "V2", "protocol": "HTTP", "image": "py", "env": {"MODE": "http", "IMPORTS": "heavy", "PRIME": "clients", "OUTBOUND": "1", "VARIANT": "hr_v2_cred_v2"}, "idle": 900, "network": "PUBLIC", "auth": "sigv4", "experiment": "E15", "created_at": 1791163430.317898, "ready_at": 1791163616.092747, "build_s": 185.8}
+{"op": "delete", "name": "hr_v2_idle_900", "id": "hr_v2_idle_900-nlHmoN61QS", "at": 1791164720.7031171}
+{"op": "delete", "name": "hr_v2_idle_60", "id": "hr_v2_idle_60-FrtEc49DAQ", "at": 1791164859.103565}
+{"op": "delete", "name": "hr_v2_auth_jwt", "id": "hr_v2_auth_jwt-XhGIQ0HHWE", "at": 1791164859.13303}
+{"op": "delete", "name": "hr_v2_net_vpc", "id": "hr_v2_net_vpc-0UJ9BB4VVB", "at": 1791164859.143177}
+{"op": "create", "name": "hr_v2_net_vpc_v1", "id": "hr_v2_net_vpc_v1-bdQbduE2Bg", "arn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:runtime/hr_v2_net_vpc_v1-bdQbduE2Bg", "version": "1", "platform": "V1", "protocol": "HTTP", "image": "py", "env": {"MODE": "http", "VARIANT": "hr_v2_net_vpc_v1"}, "idle": 900, "network": "VPC", "auth": "sigv4", "experiment": "E10", "created_at": 1791164936.3500988, "ready_at": 1791165194.941026, "build_s": 258.6}
+{"op": "delete", "name": "hr_v2_net_vpc_v2b", "id": "hr_v2_net_vpc_v2b-2CTvvl3e8W", "at": 1791165727.4575841}
+{"op": "delete", "name": "hr_v2_net_vpc_v1", "id": "hr_v2_net_vpc_v1-bdQbduE2Bg", "at": 1791165787.909493}
