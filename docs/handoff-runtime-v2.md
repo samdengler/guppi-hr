@@ -27,14 +27,13 @@ file covers only the Runtime V2 work and what Sam asked for next.
 
 ## Status of the research step
 
-On 4 Oct the first Fable research sub-agent stalled while loading its web tools. Two
-narrower Fable sub-agents were started from the laptop: one on Lambda SnapStart, Firecracker
-snapshot restore and language effects, one on AgentCore Runtime V2, gateway MCP sessions and
-per-request Identity calls. When their reports land they are saved as
-`docs/runtime-v2-research.md` and pushed. If that file is missing on the Mac mini, run the
-research again there: a Fable sub-agent per topic, each told to load WebSearch and WebFetch
-with ToolSearch (`select:WebSearch,WebFetch`) first, and each returning its report as its
-final message for the main session to save (sub-agents could not write files).
+Done on 4 Oct: two Fable sub-agents researched snapshot restore (Lambda SnapStart,
+Firecracker, language effects) and AgentCore Runtime V2 (mechanics, knobs, practitioner
+reports, gateway MCP sessions, token caching). Their reports are in
+`docs/runtime-v2-research.md`, with a list of measurements that separate the restore's
+components and open questions for AWS. Skip the research step and start at the experiment
+plan. (The first single Fable attempt stalled while loading its web tools; if research is
+ever rerun, tell each sub-agent to load WebSearch and WebFetch with ToolSearch first.)
 
 ## Isolation for the experiments
 
