@@ -145,3 +145,28 @@ $PY scripts/v2study/collect.py docs/runtime-v2-evidence/E11/*.jsonl --md docs/ru
 # container logs: /aws/bedrock-agentcore/runtimes/hr_v2_idle_60-FrtEc49DAQ-DEFAULT, stream runtime-logs-<session id>
 $PY scripts/v2study/create.py delete hr_v2_idle_60 --wait
 ```
+
+## Addendum by the main session: the baseline (idle 900 s), 01:47 to 02:06 UTC
+
+Run from the main session on `hr_v2_proto_http_v2` (idle timeout 900 s), one new session per
+process in parallel; lines in `hr_v2_proto_http_v2.waits.*.jsonl`, `.idle-920s.*.jsonl` and
+`.idle-16min.*.jsonl`, tables in `results-baseline.md` (30 requests, 30 joined).
+
+| idle before the follow-up | n | same process | client_ms | receipt_to_handler_ms | to_receipt_ms |
+| --- | --- | --- | --- | --- | --- |
+| 30 s | 5 | 5 of 5 | 181 (175 to 195) | 74 | 73 |
+| 75 s | 5 | 5 of 5 | 177 (164 to 201) | 83 | 64 |
+| 130 s | 5 | 5 of 5 | 174 (164 to 180) | 70 | 62 |
+| 920 s (20 s past the timeout) | 2 | 0 of 2 | 2867 and 7552 | 2420 and 6258 | 750 and 876 |
+| 960 s (60 s past the timeout) | 3 | 0 of 3 | 2381, 2408, 2975 | 1866 to 2018 | 382 to 839 |
+
+- Within the 900 s timeout a follow-up costs the same at 30, 75 and 130 s idle. The 120 s
+  memory reclaim the pricing page describes has no visible cost: the 130 s follow-up is 70 ms
+  receipt to handler and 2 minor faults, the same as at 30 s.
+- Past the timeout the same session id restores a fresh process, as on the 60 s runtime. 20 s
+  past the timeout one of two follow-ups took 7.6 s (the window the 60 s runtime showed) and
+  one 2.9 s; 60 s past the timeout all three took 2.4 to 3.0 s, which is a plain restore plus
+  0.4 to 0.8 s more between the client's send and the runtime's receipt stamp (`to_receipt_ms`
+  382 to 876 ms against about 60 for a new session id). So the HR runtimes' setting has the same
+  shape: a user whose session idled past 15 minutes pays at least a restore and, in the first
+  minute after the timeout, sometimes 7 s or more.
