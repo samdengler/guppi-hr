@@ -170,6 +170,32 @@ Medians of first words, same harness and questions (`docs/latency-timelines-2026
   (`AgentCore-MicroVM-<id>`), not from log streams.
 - Use wall clock times in the container on V2; monotonic time is frozen across a restore.
 
+## Where the restores sit in a chat
+
+The study measured the restore on its own; what decides how much of it an employee waits
+for is when the runtime sessions are opened. On today's default path (the D57 chat start)
+nothing is opened before the first question, so a new chat's first Profile question waits
+for two restores in series, the Profile agent's and the tools runtime's, and a Pay question
+for three. Three facts behind that:
+
+- The warm-ups never went through Connect. The bridge (`connect/agent/src/connect_bridge/turn.py`,
+  `warm_sub_agent`) sent one A2A `message/send` with `metadata.warm` to each sub-agent through
+  the agents gateway, on session id `<contact id>-<domain>`, the same id the designer puts on
+  its own calls (`connect/acxd/hr.js`, `authHeaders`), so the first real question landed on a
+  restored session. The D57 chat start sends no warm-up; the bridge path is behind
+  `?ff=connect-bridge`. This is W3 in the experiment plan and the tip in AWS's launch post.
+- A runtime session is per contact and a contact is per page view, because the designer
+  derives the session id from the contact id. A session id per employee and domain with a
+  long idle timeout (free, E11) would let a second chat find warm sessions without any
+  warm-up; a session id reused after its timeout must be replaced (A36).
+- The tools runtime cannot be warmed per contact: the tools gateway opens a new runtime
+  session on every tool call (A23), so a warm Profile agent still pays a tools restore on
+  its first tool call. Only gateway MCP sessions (D59) change that, and the warm-up then has
+  to open the Profile agent's gateway session as well (L1 keeps it per thread).
+
+The review document for Sam (Claude Docs, "AgentCore Runtime V2 cold start study") draws
+this as a sequence diagram, today against W3 plus D59.
+
 ## Work waiting after the cold start study
 
 - MCP sessions on the tools gateway (`protocolConfiguration.mcp.sessionConfiguration`,
