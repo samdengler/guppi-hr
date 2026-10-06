@@ -142,6 +142,37 @@ def grant_secret(role: iam.IRole, secret_arn: str) -> None:
     )
 
 
+def runtime_workload_identity_arn(scope: Construct, runtime_name: str) -> str:
+    """The workload identity AgentCore Runtime creates for a runtime, named after it with a
+    generated suffix (hr_super_agent_profile-7IkHmEG40H). CloudFormation lists only the whole
+    WorkloadIdentityDetails object as a read-only attribute, not its ARN, so the grant names
+    the identity by the pattern the role's GetWorkloadAccessToken* grant already uses."""
+    stack = Stack.of(scope)
+    return (
+        f"arn:aws:bedrock-agentcore:{stack.region}:{stack.account}:workload-identity-directory/default"
+        f"/workload-identity/{runtime_name}-*"
+    )
+
+
+def grant_runtime_exchange(role: iam.Role, provider_arn: str, runtime_name: str) -> None:
+    """Lets a runtime exchange through its provider with the workload token AgentCore Runtime
+    fetched for the request (D60), which names the runtime's own workload identity. The
+    statement goes in the role's default policy, which the runtime already depends on, so the
+    grant is in place before the code that uses it starts."""
+    stack = Stack.of(role)
+    role.add_to_policy(
+        iam.PolicyStatement(
+            actions=["bedrock-agentcore:GetResourceOauth2Token"],
+            resources=[
+                provider_arn,
+                f"arn:aws:bedrock-agentcore:{stack.region}:{stack.account}:token-vault/default",
+                f"arn:aws:bedrock-agentcore:{stack.region}:{stack.account}:workload-identity-directory/default",
+                runtime_workload_identity_arn(role, runtime_name),
+            ],
+        )
+    )
+
+
 def grant_exchange(
     role: iam.Role, provider_arn: str, secret_arn: str, workload: agentcore.CfnWorkloadIdentity
 ) -> None:

@@ -1186,6 +1186,29 @@ def test_each_exchanging_runtime_names_its_provider_workload_and_scopes(template
                      "hr_super_agent_travel-obo", "hr-obo-checks"}
 
 
+def test_each_sub_agent_exchanges_under_its_runtime_workload_identity(template):
+    """D60: a sub-agent exchanges with the workload token the Runtime fetched, which names the
+    runtime's own workload identity (hr_super_agent_<name>-<id>); its role may use it with its
+    own provider, and with no other runtime's identity."""
+    roles = {name: props for name, props in template.find_resources("AWS::IAM::Role").items()}
+    for domain in ("profile", "pay", "travel"):
+        role_id = next(n for n in roles if n.startswith(f"SubAgents{domain.capitalize()}Role"))
+        statements = [
+            s
+            for policy in template.find_resources("AWS::IAM::Policy").values()
+            if {"Ref": role_id} in policy["Properties"]["Roles"]
+            for s in policy["Properties"]["PolicyDocument"]["Statement"]
+            if s["Action"] == "bedrock-agentcore:GetResourceOauth2Token"
+        ]
+        resources = json.dumps(statements)
+        assert f"workload-identity/hr_super_agent_{domain}-*" in resources
+        others = {d for d in ("profile", "pay", "travel") if d != domain}
+        assert not any(f"workload-identity/hr_super_agent_{o}-" in resources for o in others)
+        assert _ssm_parameter_ref(template, f"/guppi/obo/hr-agent-{domain}/provider-arn") in [
+            r for s in statements for r in (s["Resource"] if isinstance(s["Resource"], list) else [s["Resource"]])
+        ]
+
+
 def test_each_caller_reads_only_its_own_clients_secret(template):
     # A16: Identity reads an EXTERNAL client secret as the caller of GetResourceOauth2Token.
     granted = {}

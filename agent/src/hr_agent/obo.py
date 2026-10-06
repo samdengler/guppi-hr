@@ -9,6 +9,9 @@ Each hop trades the token it received for the next hop's, still naming the emplo
 
 A caller names its credential provider and workload identity in the environment
 (OBO_PROVIDER, OBO_WORKLOAD); Identity holds the client secret and calls the issuer. A
+caller on AgentCore Runtime may pass the workload token the Runtime already fetched for the
+request (the WorkloadAccessToken header, D60) instead: the exchange then skips its own
+GetWorkloadAccessTokenForJWT call, as AWS's `requires_access_token` does. A
 token is cached per subject token until a minute before it expires, so a conversation's
 turns reuse it; AgentCore Identity does not cache exchanged tokens itself (aws-feedback A14).
 Without OBO_PROVIDER an exchange fails, so a missing setting can never pass the Okta token
@@ -103,21 +106,31 @@ class TokenExchanger:
                 return entry[0]
             return None
 
-    def exchange(self, subject: str) -> str:
-        """The next hop's token for `subject`, from the cache or from Identity."""
+    def exchange(self, subject: str, workload_token: str | None = None) -> str:
+        """The next hop's token for `subject`, from the cache or from Identity.
+
+        `workload_token` is the one AgentCore Runtime fetched for this request and bound to
+        `subject` (D60); without it the exchanger asks for its own under OBO_WORKLOAD. Neither
+        token is ever logged."""
         if not self.enabled:
             return subject
         key = self._key(subject)
         cached = self._cached(key)
         if cached:
             return cached
-        if not self.provider or not self.workload:
-            raise ExchangeError("OBO_PROVIDER or OBO_WORKLOAD is not set")
+        if not self.provider:
+            raise ExchangeError("OBO_PROVIDER is not set")
+        if not workload_token and not self.workload:
+            raise ExchangeError("no Runtime workload token and OBO_WORKLOAD is not set")
         try:
             client = self._client_factory()
-            workload_token = client.get_workload_access_token_for_jwt(
-                workloadName=self.workload, userToken=subject
-            )["workloadAccessToken"]
+            if workload_token:
+                log.info("token exchange through %s with the Runtime workload token", self.provider)
+            else:
+                log.info("token exchange through %s with its own workload token (%s)", self.provider, self.workload)
+                workload_token = client.get_workload_access_token_for_jwt(
+                    workloadName=self.workload, userToken=subject
+                )["workloadAccessToken"]
             token = client.get_resource_oauth2_token(
                 workloadIdentityToken=workload_token,
                 resourceCredentialProviderName=self.provider,
@@ -138,8 +151,8 @@ class TokenExchanger:
             self._cache[key] = (token, expires_at(token))
         return token
 
-    async def aexchange(self, subject: str) -> str:
+    async def aexchange(self, subject: str, workload_token: str | None = None) -> str:
         if not self.enabled:
             return subject
         key = self._key(subject)
-        return self._cached(key) or await asyncio.to_thread(self.exchange, subject)
+        return self._cached(key) or await asyncio.to_thread(self.exchange, subject, workload_token)

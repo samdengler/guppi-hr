@@ -217,13 +217,15 @@ async def run_domain(
     text: str,
     pending: dict[str, str] | None,
     settings: Settings | None = None,
+    workload_token: str | None = None,
 ) -> DomainResult:
-    """One sub-agent run against Bedrock and the tools gateway. Tests replace this."""
+    """One sub-agent run against Bedrock and the tools gateway. Tests replace this.
+    `workload_token` is the one the Runtime fetched for this request (D60)."""
     from strands import Agent
     from strands.models import BedrockModel
 
     settings = settings or Settings()
-    tools_token = await TOOLS_TOKENS.aexchange(token)
+    tools_token = await TOOLS_TOKENS.aexchange(token, workload_token)
     async with SESSIONS.lease((tools_token, thread_id), token_expires_at=token_expires_at(tools_token)) as (
         client,
         listed,
@@ -276,12 +278,18 @@ async def run_domain(
         )
 
 
-async def warm_domain(token: str, thread_id: str, domain: str = "", settings: Settings | None = None) -> None:
+async def warm_domain(
+    token: str,
+    thread_id: str,
+    domain: str = "",
+    settings: Settings | None = None,
+    workload_token: str | None = None,
+) -> None:
     """A warm start (D41): open this caller's MCP session for the thread and list its tools,
     and read what is on file for the domain, so the thread's first real request finds all
-    of it ready. No model call."""
+    of it ready. No model call. The exchange takes the Runtime's workload token (D60)."""
     settings = settings or Settings()
-    tools_token = await TOOLS_TOKENS.aexchange(token)
+    tools_token = await TOOLS_TOKENS.aexchange(token, workload_token)
     async with SESSIONS.lease((tools_token, thread_id), token_expires_at=token_expires_at(tools_token)) as (
         client,
         _tools,
@@ -317,7 +325,8 @@ def mark_span(record: dict[str, Any], domain: str, thread_id: str) -> None:
 
 
 Runner = Callable[..., Awaitable[DomainResult]]
-Warmer = Callable[[str, str, str], Awaitable[None]]
+# token, thread id, domain, and the keyword workload_token (D60)
+Warmer = Callable[..., Awaitable[None]]
 
 
 class DomainExecutor(AgentExecutor):
@@ -334,13 +343,17 @@ class DomainExecutor(AgentExecutor):
         record: dict[str, Any] = {"domain": self.domain.name, "context": context.context_id}
         mark_span(record, self.domain.name, context.context_id or "")
         token = bearer_token(headers)
+        # The workload token AgentCore Runtime fetched for this request and bound to the
+        # bearer token (its WorkloadAccessToken header, which the SDK's A2A app copies into
+        # the call state); the exchange uses it rather than ask Identity for another (D60).
+        workload_token = state.get("workload_access_token") or None
         try:
             if token is None:
                 raise PermissionError("no bearer token on the request")
             if metadata.get("warm") is True:
                 # The Connect bridge's warm start: the runtime session for this thread
                 # exists from now on, and so does the caller's MCP session.
-                await self._warm(token, context.context_id or "", self.domain.name)
+                await self._warm(token, context.context_id or "", self.domain.name, workload_token=workload_token)
                 record.update(outcome="warm", tool_calls=0)
                 warmed = [Part(root=DataPart(data={"domain": self.domain.name, "warm": True}))]
                 await self._reply(context, event_queue, warmed, record, started)
@@ -352,6 +365,7 @@ class DomainExecutor(AgentExecutor):
                 history_messages(metadata.get("history")),
                 context.get_user_input(),
                 parse_pending(metadata.get(PENDING_KEY)),
+                workload_token=workload_token,
             )
             record.update(outcome="finished", tool_calls=result.tool_calls)
             parts = [

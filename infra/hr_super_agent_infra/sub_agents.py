@@ -27,6 +27,7 @@ from hr_super_agent_infra.obo import (
     agents_audience,
     agents_scope,
     grant_exchange,
+    grant_runtime_exchange,
     workload_identity,
 )
 from hr_super_agent_infra.runtime_role import runtime_execution_role
@@ -108,6 +109,10 @@ class SubAgents(Construct):
             grant_image(role)
             workload = workload_identity(self, f"{title}Workload", runtime_name)
             grant_exchange(role, provider_arns[name], secret_arns[name], workload)
+            # D60, commit A: the exchange takes the workload token the Runtime fetched for the
+            # request, under the runtime's own identity; the -obo identity above stays as the
+            # fallback until the live check shows every sub-agent on the Runtime's token.
+            grant_runtime_exchange(role, provider_arns[name], runtime_name)
 
             runtime = agentcore.CfnRuntime(
                 self,

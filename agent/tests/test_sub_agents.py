@@ -24,7 +24,7 @@ class FakeRunner:
         self.result = result or server.DomainResult(reply="Done.", pending=None, tool_calls=1)
         self.error = error
 
-    async def __call__(self, domain, token, thread_id, history, text, pending):
+    async def __call__(self, domain, token, thread_id, history, text, pending, workload_token=None):
         self.calls.append(
             {
                 "domain": domain.name,
@@ -33,6 +33,7 @@ class FakeRunner:
                 "history": history,
                 "text": text,
                 "pending": pending,
+                "workload_token": workload_token,
             }
         )
         if self.error:
@@ -234,15 +235,15 @@ class FakeWarmer:
     def __init__(self):
         self.calls = []
 
-    async def __call__(self, token, thread_id, domain):
-        self.calls.append((token, thread_id, domain))
+    async def __call__(self, token, thread_id, domain, workload_token=None):
+        self.calls.append((token, thread_id, domain, workload_token))
 
 
 def test_a_warm_message_opens_the_session_without_a_model_run(runner):
     warmer = FakeWarmer()
     with TestClient(server.build_app("profile", runner, warmer)) as client:
         result = send(client, "warm", metadata={"warm": True}, context="contact-1")
-    assert warmer.calls == [("user-token", "contact-1", "profile")]
+    assert warmer.calls == [("user-token", "contact-1", "profile", None)]
     assert runner.calls == []
     assert [p["kind"] for p in result["parts"]] == ["data"]
     assert result["parts"][0]["data"] == {"domain": "profile", "warm": True}
@@ -333,3 +334,59 @@ async def test_the_warm_start_caches_a_broad_travel_search(monkeypatch):
     await server.warm_domain("tok", "contact-1", "travel")
     assert [name for name, _ in client.calls] == ["docs___Retrieve"]
     assert "8 per calendar year" in server.SNAPSHOTS.get(("tok", "contact-1", "travel"))
+
+
+# D60: the sub-agent exchanges on the workload token the Runtime fetched for the request,
+# which the SDK's A2A app copies from the WorkloadAccessToken header into the call state.
+RUNTIME_TOKEN = "runtime-workload-token-7f3a"
+WITH_RUNTIME_TOKEN = {"authorization": "Bearer user-token", "WorkloadAccessToken": RUNTIME_TOKEN}
+
+
+def test_the_executor_passes_the_runtime_workload_token_to_the_runner(client, runner):
+    # R1
+    send(client, headers=WITH_RUNTIME_TOKEN)
+    (call,) = runner.calls
+    assert call["token"] == "user-token" and call["workload_token"] == RUNTIME_TOKEN
+
+
+def test_the_warm_up_passes_the_runtime_workload_token(runner):
+    # R2
+    warmer = FakeWarmer()
+    with TestClient(server.build_app("profile", runner, warmer)) as client:
+        send(client, "warm", metadata={"warm": True}, headers=WITH_RUNTIME_TOKEN, context="contact-1")
+    assert warmer.calls == [("user-token", "contact-1", "profile", RUNTIME_TOKEN)]
+
+
+class NoIdentity:
+    def __call__(self):
+        raise AssertionError("Identity must not be called")
+
+
+def test_no_workload_token_replies_exchange_failed(monkeypatch, caplog):
+    # R5, R7: no Runtime token and no OBO_WORKLOAD: refused before any tools gateway call.
+    from hr_agent.obo import TokenExchanger
+
+    monkeypatch.setattr(server, "TOOLS_TOKENS", TokenExchanger(
+        ["hr.tools.policy"], provider="guppi-obo-hr-agent-profile", workload="", client_factory=NoIdentity()))
+    monkeypatch.setattr(server, "SESSIONS", server.McpSessions(lambda key: pytest.fail("no tools gateway call")))
+    with TestClient(server.build_app("profile")) as client:
+        result = send(client)
+    text, data = parts(result)
+    assert data["error"] == "exchange_failed" and "could not complete" in text
+
+
+def test_a_failed_runtime_exchange_replies_exchange_failed_without_the_token(monkeypatch, caplog):
+    # R6, R7: Identity refuses; the reply and the logs name neither token.
+    from hr_agent.obo import TokenExchanger
+
+    class Refusing:
+        def get_resource_oauth2_token(self, **kwargs):
+            raise RuntimeError(f"AccessDeniedException: {kwargs['workloadIdentityToken']}")
+
+    monkeypatch.setattr(server, "TOOLS_TOKENS", TokenExchanger(
+        ["hr.tools.policy"], provider="guppi-obo-hr-agent-profile", workload="", client_factory=Refusing))
+    monkeypatch.setattr(server, "SESSIONS", server.McpSessions(lambda key: pytest.fail("no tools gateway call")))
+    with caplog.at_level("DEBUG"), TestClient(server.build_app("profile")) as client:
+        result = send(client, headers=WITH_RUNTIME_TOKEN)
+    assert parts(result)[1]["error"] == "exchange_failed"
+    assert RUNTIME_TOKEN not in str(result) and RUNTIME_TOKEN not in caplog.text

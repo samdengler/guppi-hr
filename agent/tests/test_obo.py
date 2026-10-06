@@ -15,16 +15,19 @@ def fake_token(exp: float, n: int = 0) -> str:
 
 
 class FakeIdentity:
-    def __init__(self, clock, lifetime: float = 3600, fail: bool = False) -> None:
+    def __init__(self, clock, lifetime: float = 3600, fail: bool = False, message: str = "") -> None:
         self.calls: list[dict] = []
+        self.jwt_calls: list[str] = []
         self.clock, self.lifetime, self.fail = clock, lifetime, fail
+        self.message = message or "ValidationException: Token exchange failed with HTTP 400"
 
     def get_workload_access_token_for_jwt(self, workloadName, userToken):  # noqa: N803 - boto3's names
+        self.jwt_calls.append(workloadName)
         return {"workloadAccessToken": f"wat-for-{workloadName}"}
 
     def get_resource_oauth2_token(self, **kwargs):
         if self.fail:
-            raise RuntimeError("ValidationException: Token exchange failed with HTTP 400")
+            raise RuntimeError(self.message)
         self.calls.append(kwargs)
         return {"accessToken": fake_token(self.clock[0] + self.lifetime, len(self.calls))}
 
@@ -95,6 +98,88 @@ def test_a_provider_without_a_workload_is_a_configuration_error(clock):
                          client_factory=lambda: FakeIdentity(clock))
     with pytest.raises(ExchangeError):
         obo.exchange("okta-token")
+
+
+RUNTIME_TOKEN = "runtime-workload-token-7f3a"
+
+
+def test_a_runtime_workload_token_skips_the_jwt_call(clock):
+    # R1 (D60): the Runtime already called GetWorkloadAccessTokenForJWT for this request.
+    identity = FakeIdentity(clock)
+    exchanger(clock, identity).exchange("agents-token", workload_token=RUNTIME_TOKEN)
+    (call,) = identity.calls
+    assert call["workloadIdentityToken"] == RUNTIME_TOKEN
+    assert identity.jwt_calls == []
+
+
+def test_the_runtime_token_needs_no_obo_workload(clock):
+    # R1, R5: a sub-agent without OBO_WORKLOAD still exchanges when the Runtime gave a token.
+    identity = FakeIdentity(clock)
+    obo = TokenExchanger(["hr.tools.policy"], provider="guppi-obo-hr-agent-travel", workload="",
+                         client_factory=lambda: identity, clock=lambda: clock[0])
+    assert obo.exchange("agents-token", workload_token=RUNTIME_TOKEN).startswith("eyJ")
+    assert identity.jwt_calls == [] and identity.calls[0]["workloadIdentityToken"] == RUNTIME_TOKEN
+
+
+def test_without_a_runtime_token_the_own_workload_is_used(clock):
+    # R4: commit A keeps today's path when the request brings no workload token.
+    identity = FakeIdentity(clock)
+    exchanger(clock, identity).exchange("agents-token")
+    assert identity.jwt_calls == ["hr_super_agent_pay-obo"]
+    assert identity.calls[0]["workloadIdentityToken"] == "wat-for-hr_super_agent_pay-obo"
+
+
+def test_without_either_workload_the_exchange_fails_closed(clock):
+    # R5: no Runtime token and no OBO_WORKLOAD: refuse, and call nothing.
+    obo = TokenExchanger(["hr.tools.policy"], provider="guppi-obo-hr-agent-travel", workload="",
+                         client_factory=lambda: pytest.fail("no call expected"), clock=lambda: clock[0])
+    with pytest.raises(ExchangeError):
+        obo.exchange("agents-token", workload_token=None)
+
+
+def test_a_cached_token_ignores_the_workload_token(clock):
+    # R3: the cache is keyed on the subject; the workload token neither busts nor bypasses it.
+    identity = FakeIdentity(clock)
+    obo = TokenExchanger(["hr.tools.policy"], provider="guppi-obo-hr-agent-travel", workload="",
+                         client_factory=lambda: identity, clock=lambda: clock[0])
+    first = obo.exchange("agents-token", workload_token=RUNTIME_TOKEN)
+    assert obo.exchange("agents-token", workload_token="another-runtime-token") == first
+    assert obo.exchange("agents-token") == first  # no token and no OBO_WORKLOAD, but cached
+    assert len(identity.calls) == 1
+
+
+def test_a_failed_exchange_logs_neither_claim_nor_workload_token(clock, caplog):
+    # R6, R7: the error class only, whatever Identity's message quotes.
+    identity = FakeIdentity(clock, fail=True, message=f"ValidationException: bad token {RUNTIME_TOKEN} sub=emp-42")
+    with caplog.at_level("DEBUG", logger="hr_agent.obo"), pytest.raises(ExchangeError) as raised:
+        exchanger(clock, identity).exchange("agents-token", workload_token=RUNTIME_TOKEN)
+    assert str(raised.value) == "RuntimeError"
+    assert raised.value.__suppress_context__  # a logged traceback cannot chain Identity's message
+    for text in (caplog.text, str(raised.value)):
+        assert RUNTIME_TOKEN not in text and "emp-42" not in text and "agents-token" not in text
+
+
+def test_each_identity_exchange_logs_which_workload_token_it_used(clock, caplog):
+    # The rollout (d60.sh) counts these lines per sub-agent; neither names a token.
+    identity = FakeIdentity(clock)
+    obo = exchanger(clock, identity)
+    with caplog.at_level("INFO", logger="hr_agent.obo"):
+        obo.exchange("employee-a", workload_token=RUNTIME_TOKEN)
+        obo.exchange("employee-b")
+        obo.exchange("employee-a", workload_token=RUNTIME_TOKEN)  # cached: no line
+    lines = [r.getMessage() for r in caplog.records if "workload token" in r.getMessage()]
+    assert lines == [
+        "token exchange through guppi-obo-hr-agent-pay with the Runtime workload token",
+        "token exchange through guppi-obo-hr-agent-pay with its own workload token (hr_super_agent_pay-obo)",
+    ]
+    assert RUNTIME_TOKEN not in caplog.text and "wat-for" not in caplog.text
+
+
+async def test_the_async_path_passes_the_runtime_token(clock):
+    identity = FakeIdentity(clock)
+    obo = exchanger(clock, identity)
+    await obo.aexchange("agents-token", RUNTIME_TOKEN)
+    assert identity.jwt_calls == [] and identity.calls[0]["workloadIdentityToken"] == RUNTIME_TOKEN
 
 
 async def test_the_async_path_uses_the_cache(clock):
