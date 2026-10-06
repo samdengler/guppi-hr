@@ -9,7 +9,7 @@ only after the employee says yes. All employee data and policies are synthetic.
 
 It began as an iteration of guppi-gpt, merged in with its history and renamed (D9). Since
 phase 8 it is an agent project on the chat.dengler.io platform that guppi-gpt became
-([guppi-gpt `docs/proposals/platform.md`](https://github.com/samdengler/guppi-gpt/blob/main/docs/proposals/platform.md)): the platform owns the page, Google sign-in,
+([guppi-gpt `docs/proposals/platform.md`](https://github.com/samdengler/guppi-gpt/blob/main/docs/proposals/platform.md)): the platform owns the page, Okta sign-in (D46),
 CloudFront, WAF, the edge gateway and its per-user limits, and this repository owns
 everything that is HR (D34). [`docs/design.md`](docs/design.md) describes the system as
 built; [`docs/demo.md`](docs/demo.md) walks the four scenarios.
@@ -21,6 +21,67 @@ Connect's Agentic CX designer in the orchestrator's place and serves the main pa
 both pages. Until 3 October 2026 the Strands page was `/p/hr/` and the Connect page
 `/p/hr-connect/` (D37). The repository was named hr-super-agent until 2 October 2026, when
 guppi-connect moved in as `connect/`.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    browser(["Employee's browser"])
+    okta["Okta<br>sign-in"]
+
+    subgraph platform["chat.dengler.io platform (guppi-gpt)"]
+        cf["CloudFront and AWS WAF"]
+        edge["Edge gateway<br>AgentCore Gateway, per-user limits"]
+    end
+
+    subgraph connectside["/p/hr/, the main page: Amazon Connect (connect/)"]
+        chatstart["Chat start<br>API Gateway and Lambda"]
+        connect["Connect chat<br>contact flow"]
+        canvas["Agentic CX designer canvas<br>routes on Haiku 4.5"]
+    end
+
+    subgraph diyside["/p/hr-diy/: Strands (agent/)"]
+        orch["Orchestrator<br>AgentCore Runtime, Sonnet 4.6"]
+    end
+
+    subgraph hrstack["HrSuperAgent stack, shared by both pages (infra/)"]
+        agentsgw["Agents gateway<br>AgentCore Gateway"]
+        subs["Profile, Pay, Travel sub-agents<br>A2A on AgentCore Runtime V2, Haiku 4.5"]
+        toolsgw["Tools gateway<br>AgentCore Gateway, Cedar policy"]
+        kb[("Bedrock Knowledge Base<br>HR policies")]
+        tools["HR tools MCP server<br>AgentCore Runtime V2"]
+        ddb[("DynamoDB<br>employees, proposals, tickets, audit")]
+    end
+
+    browser -->|"sign in"| okta
+    browser -->|"Okta token"| cf
+    cf -->|"start a chat"| chatstart
+    chatstart -->|"StartChatContact"| connect
+    browser -->|"questions, chatjs"| connect
+    connect --> canvas
+    cf --> edge
+    edge -->|"AG-UI"| orch
+    canvas -->|"A2A"| agentsgw
+    orch -->|"A2A"| agentsgw
+    canvas -->|"MCP, policy search"| toolsgw
+    orch -->|"MCP, policy search"| toolsgw
+    agentsgw --> subs
+    subs -->|"MCP"| toolsgw
+    toolsgw --> kb
+    toolsgw --> tools
+    tools --> ddb
+```
+
+Both pages run the same four scenarios over the same sub-agents, gateways and tools, so the
+two super-agents can be compared turn by turn. Every hop carries a token that names the
+employee: AgentCore Identity exchanges the Okta token for a hop token at each step (RFC 8693,
+D47), and the tools gateway's Cedar policy decides each tool call on the token's scopes. On
+`/p/hr/` the chat start function makes the first exchanges and starts the Connect contact;
+the page then sends each question to Connect itself. An AG-UI bridge runtime on the edge
+gateway (`?ff=connect-bridge`) is the fallback path. The sign-in to first answer sequence is
+in [`docs/hr-page-sequence.md`](docs/hr-page-sequence.md). The sub-agent and tools runtimes
+run on AgentCore Runtime V2; [`docs/handoff-runtime-v2.md`](docs/handoff-runtime-v2.md) has
+the V1 and V2 measurements.
 
 ## What it does
 
@@ -54,13 +115,38 @@ accepts the platform user pool's token. The stack reads the platform's identifie
 | Document | Contents |
 | --- | --- |
 | [`docs/design.md`](docs/design.md) | Components, one turn end to end through the platform, routing policy, confirmation, identity per hop, tools, observability, limits |
+| [`docs/hr-page-sequence.md`](docs/hr-page-sequence.md) | `/p/hr/` from sign-in through the warm start to an answer, as sequence diagrams, with one turn's timeline from the logs |
 | [`docs/demo.md`](docs/demo.md) | The four scenarios, what to type and what to expect, and how to check the logs and audit entries |
 | [`docs/decision-log.md`](docs/decision-log.md) | Every decision, D1 on, with status |
 | [`docs/aws-feedback.md`](docs/aws-feedback.md) | What the POC learned about AWS services (trace context first), with evidence and asks, for the AWS teams |
+| [`docs/latency-log.md`](docs/latency-log.md) | Every latency measurement, L1 on, with what changed and the result |
+| [`docs/handoff-runtime-v2.md`](docs/handoff-runtime-v2.md) | AgentCore Runtime V2 against V1: first-answer times, the cold start study's results, what is deployed |
+| [`docs/runtime-v2-research.md`](docs/runtime-v2-research.md), [`docs/runtime-v2-experiments.md`](docs/runtime-v2-experiments.md) | The Runtime V2 cold start research and the experiment plan (E1 to E15); evidence in [`docs/runtime-v2-evidence/`](docs/runtime-v2-evidence/) |
 | [`docs/plan.md`](docs/plan.md) | The phases (all done), the four scenarios, the first-cut routing policy |
 | [`docs/phase-8.md`](docs/phase-8.md), [`docs/phase-8-report.md`](docs/phase-8-report.md) | The move onto the platform and its report |
 | [`docs/handoff.md`](docs/handoff.md) | The brief this repository started from, and its sources |
-| `docs/guppigpt-*.html`, `docs/proposals/` | guppi-gpt's design, decision log, diagrams, and proposals as they were at the fork; the live platform's documents are in guppi-gpt |
+| [`docs/proposals/`](docs/proposals/) | Proposals: on-behalf-of token exchange, conversation logging, traceability, Dynatrace, Touchpoint alignment, Connect chatjs, and others |
+
+The Amazon Connect super-agent's documents, in [`connect/`](connect/README.md):
+
+| Document | Contents |
+| --- | --- |
+| [`connect/docs/connect-super-agent.md`](connect/docs/connect-super-agent.md) | The first analysis: Connect's options for an orchestrating agent, four ways to put Connect in front, a comparison with the custom super-agent and ASAPP, gaps, pricing |
+| [`connect/docs/acxd-super-agent.md`](connect/docs/acxd-super-agent.md) | The design `connect/` built: the designer canvas as the super-agent over the existing sub-agents and tools, with the spike's results |
+| [`connect/docs/spike-report.md`](connect/docs/spike-report.md) | What the spike proved over Connect chat, with real and mock sub-agents |
+| [`connect/docs/platform-plan.md`](connect/docs/platform-plan.md), [`connect/docs/platform-report.md`](connect/docs/platform-report.md) | How the Connect project joined chat.dengler.io, and its report |
+| [`connect/docs/latency-plan.md`](connect/docs/latency-plan.md) | Where a `/p/hr/` turn's time goes, hop by hop, and the changes that cut it |
+
+guppi-gpt's documents as they were at the fork, for the platform underneath:
+
+| Document | Contents |
+| --- | --- |
+| [`docs/guppigpt-design.md`](docs/guppigpt-design.md) | The single page chat's design: requirements, architecture, wire format, agent, security, observability |
+| [`docs/guppigpt-architecture.md`](docs/guppigpt-architecture.md) | The runtime and content flow diagrams |
+| [`docs/guppigpt-decision-log.md`](docs/guppigpt-decision-log.md) | How that design reached its shape: revisions and reversed decisions |
+
+The `.html` files beside the Markdown copies are the originals, for a browser; the live
+platform's documents are in guppi-gpt.
 
 ## Layout
 
