@@ -155,6 +155,8 @@ def cmd_create(a: argparse.Namespace) -> None:
             "networkMode": "VPC",
             "networkModeConfig": {"subnets": a.vpc.split(","), "securityGroups": a.sg.split(",")},
         }
+    if a.headers:
+        spec["requestHeaderConfiguration"] = {"requestHeaderAllowlist": a.headers.split(",")}
     if a.jwt_discovery:
         auth: dict = {"discoveryUrl": a.jwt_discovery}
         if a.jwt_client:
@@ -269,6 +271,7 @@ def main() -> None:
     c.add_argument("--jwt-discovery")
     c.add_argument("--jwt-client")
     c.add_argument("--jwt-audience")
+    c.add_argument("--headers", help="comma separated request header allowlist, e.g. Authorization")
     c.add_argument("--vpc", help="comma separated subnet ids")
     c.add_argument("--sg", help="comma separated security group ids")
     c.add_argument("--experiment", required=True)

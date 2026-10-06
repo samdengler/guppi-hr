@@ -60,3 +60,5 @@
 {"op": "delete", "name": "hr_v2_cred_v2", "id": "hr_v2_cred_v2-4lRWGjHFV9", "at": 1791167681.320579}
 {"op": "update", "name": "hr_v2_cache_v2", "id": "hr_v2_cache_v2-M5sHrk6eJD", "arn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:runtime/hr_v2_cache_v2-M5sHrk6eJD", "version": "2", "platform": "V2", "env": {"MODE": "http", "VARIANT": "hr_v2_cache_v2", "BUMP": "1"}, "updated_at": 1791169234.516321, "ready_at": 1791169423.736782, "build_s": 189.2}
 {"op": "delete", "name": "hr_v2_cache_v2", "id": "hr_v2_cache_v2-M5sHrk6eJD", "at": 1791169688.3079948}
+{"op": "create", "name": "hr_v2_obo_a2a", "id": "hr_v2_obo_a2a-azQhJhHkL6", "arn": "arn:aws:bedrock-agentcore:us-east-1:009080466601:runtime/hr_v2_obo_a2a-azQhJhHkL6", "version": "1", "platform": "V2", "protocol": "A2A", "image": "py-obo", "env": {"MODE": "a2a", "OBO_PROBE_PROVIDER": "hr-v2-obo-probe", "VARIANT": "hr_v2_obo_a2a"}, "idle": 900, "network": "PUBLIC", "auth": "jwt", "experiment": "D60", "created_at": 1791289431.721024, "ready_at": 1791289619.089516, "build_s": 187.4}
+{"op": "delete", "name": "hr_v2_obo_a2a", "id": "hr_v2_obo_a2a-azQhJhHkL6", "at": 1791289976.027932}

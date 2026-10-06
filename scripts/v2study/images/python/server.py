@@ -189,6 +189,39 @@ def probe(request_headers: dict | None = None) -> dict:
     }
 
 
+def workload_report(state: dict) -> dict:
+    """D60 check: is the Runtime's workload token in the A2A call state, and does Identity
+    accept it for an on-behalf-of exchange from this runtime's role (OBO_PROBE_PROVIDER)?
+    Reports presence, length and Identity's answer; never the token."""
+    token = state.get("workload_access_token")
+    report: dict = {"in_state": bool(token), "length": len(token or ""), "header_names": sorted(
+        k for k in (state.get("headers") or {}) if k.lower() in ("workloadaccesstoken", "authorization"))}
+    try:
+        from bedrock_agentcore.runtime.context import BedrockAgentCoreContext
+
+        report["in_context_var"] = bool(BedrockAgentCoreContext.get_workload_access_token())
+    except Exception as exc:  # noqa: BLE001
+        report["in_context_var"] = f"{type(exc).__name__}"
+    provider = os.environ.get("OBO_PROBE_PROVIDER")
+    if token and provider:
+        import boto3
+
+        start = time.perf_counter()
+        try:
+            client = boto3.client("bedrock-agentcore", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+            client.get_resource_oauth2_token(
+                workloadIdentityToken=token, resourceCredentialProviderName=provider,
+                oauth2Flow="ON_BEHALF_OF_TOKEN_EXCHANGE", scopes=["hr-v2-obo/probe"],
+                customParameters={"subject_token_type": "urn:ietf:params:oauth:token-type:access_token"})
+            report["exchange"] = "token returned"
+        except Exception as exc:  # noqa: BLE001
+            code = getattr(exc, "response", {}).get("Error", {}).get("Code", type(exc).__name__)
+            message = str(getattr(exc, "response", {}).get("Error", {}).get("Message", exc)).replace(token, "<token>")
+            report["exchange"] = f"{code}: {message[:300]}"
+        report["exchange_ms"] = round((time.perf_counter() - start) * 1000, 1)
+    return report
+
+
 def main() -> None:
     import uvicorn
 
@@ -261,11 +294,15 @@ def main() -> None:
         class ProbeExecutor(AgentExecutor):
             async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
                 headers = None
+                state = {}
                 try:
-                    headers = dict(context.call_context.state.get("headers", {})) if context.call_context else None
+                    state = dict(context.call_context.state) if context.call_context else {}
+                    headers = dict(state.get("headers", {}))
                 except Exception:  # noqa: BLE001
                     headers = None
-                await event_queue.enqueue_event(new_agent_text_message(json.dumps(probe(headers))))
+                answer = probe(headers)
+                answer["workload"] = workload_report(state)
+                await event_queue.enqueue_event(new_agent_text_message(json.dumps(answer)))
 
             async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
                 raise NotImplementedError
