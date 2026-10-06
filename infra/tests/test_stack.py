@@ -1177,13 +1177,22 @@ def test_each_exchanging_runtime_names_its_provider_workload_and_scopes(template
         env = runtimes[f"hr_super_agent_{domain}"]["EnvironmentVariables"]
         assert env["OBO_PROVIDER"] == _ssm_parameter_ref(template, f"/guppi/obo/hr-agent-{domain}/provider-name")
         assert env["OBO_SCOPES"] == scopes
-        assert env["OBO_WORKLOAD"] == f"hr_super_agent_{domain}-obo"
     orchestrator = runtimes["hr_super_agent"]["EnvironmentVariables"]
     assert orchestrator["OBO_PROVIDER"] == _ssm_parameter_ref(template, "/guppi/obo/hr-bridge/provider-name")
     assert orchestrator["OBO_WORKLOAD"] == "hr_super_agent-obo"
+
+
+def test_sub_agents_have_no_obo_workload_identity(template):
+    """D60, commit B: a sub-agent exchanges only on the Runtime's workload token, so it has no
+    -obo identity, no grant on one and no OBO_WORKLOAD; the orchestrator keeps its own."""
+    runtimes = {r["Properties"]["AgentRuntimeName"]: r["Properties"]
+                for r in template.find_resources("AWS::BedrockAgentCore::Runtime").values()}
+    for domain in ("profile", "pay", "travel"):
+        assert "OBO_WORKLOAD" not in runtimes[f"hr_super_agent_{domain}"]["EnvironmentVariables"]
     names = {w["Properties"]["Name"] for w in template.find_resources("AWS::BedrockAgentCore::WorkloadIdentity").values()}
-    assert names == {"hr_super_agent-obo", "hr_super_agent_profile-obo", "hr_super_agent_pay-obo",
-                     "hr_super_agent_travel-obo", "hr-obo-checks"}
+    assert names == {"hr_super_agent-obo", "hr-obo-checks"}
+    granted = json.dumps(template.find_resources("AWS::IAM::Policy"))
+    assert not any(f"SubAgents{d}Workload" in granted for d in ("Profile", "Pay", "Travel"))
 
 
 def test_each_sub_agent_exchanges_under_its_runtime_workload_identity(template):

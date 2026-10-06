@@ -7,7 +7,8 @@ client gets from the on-behalf-of issuer (D47: client `hr-bridge`, one audience 
 per sub-agent, `api://hr-agents/<name>` and `hr.agents.<name>`, so a token for one sub-agent
 cannot drive another); the gateway passes it through, since runtime targets cannot
 exchange (aws-feedback A13). Each runtime lets Authorization through to the container,
-which trades it through AgentCore Identity for its own domain's tools token. Each
+which trades it through AgentCore Identity for its own domain's tools token, on the workload
+token the Runtime fetched for the request (D60), so it has no workload identity of its own. Each
 runtime's agent card advertises its gateway path (AGENTCORE_RUNTIME_URL), so an A2A client
 that follows the card stays on the gateway.
 """
@@ -26,9 +27,8 @@ from hr_super_agent_infra.obo import (
     DOMAIN_SCOPES,
     agents_audience,
     agents_scope,
-    grant_exchange,
     grant_runtime_exchange,
-    workload_identity,
+    grant_secret,
 )
 from hr_super_agent_infra.runtime_role import runtime_execution_role
 
@@ -107,12 +107,11 @@ class SubAgents(Construct):
                 )
             )
             grant_image(role)
-            workload = workload_identity(self, f"{title}Workload", runtime_name)
-            grant_exchange(role, provider_arns[name], secret_arns[name], workload)
-            # D60, commit A: the exchange takes the workload token the Runtime fetched for the
-            # request, under the runtime's own identity; the -obo identity above stays as the
-            # fallback until the live check shows every sub-agent on the Runtime's token.
+            # D60: the exchange takes the workload token the Runtime fetched for the request,
+            # under the runtime's own identity. Identity still reads the provider's client
+            # secret as the caller (A16).
             grant_runtime_exchange(role, provider_arns[name], runtime_name)
+            grant_secret(role, secret_arns[name])
 
             runtime = agentcore.CfnRuntime(
                 self,
@@ -149,7 +148,6 @@ class SubAgents(Construct):
                     "MODEL_ID": model_id,
                     "HR_TOOL_PREFIX": hr_tool_prefix,
                     "OBO_PROVIDER": provider_names[name],
-                    "OBO_WORKLOAD": workload.name,
                     "OBO_SCOPES": " ".join(DOMAIN_SCOPES[name]),
                     "AGENTCORE_RUNTIME_URL": cdk.Fn.join(
                         "", [self.gateway.attr_gateway_url, f"/{name}/invocations/"]
