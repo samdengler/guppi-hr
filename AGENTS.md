@@ -3,7 +3,8 @@
 ## Project Overview
 
 HR Super Agent is an MVP of an HR employee assistant, branded "HR Assistant" on the page,
-at `https://chat.dengler.io/p/hr-diy/` (the Connect version in `connect/` is `/p/hr/`, D37). It began as an iteration of guppi-gpt
+at `https://chat.dengler.io/p/hr-diy/` (the Connect version in `connect/` is `/p/hr/`, D37, and
+AWS's Touchpoint widget over the same Connect agent is `/p/hr-widget/`, D62). It began as an iteration of guppi-gpt
 (`~/src/github.com/samdengler/guppi-gpt`), merged in with its history at commit 8baf911
 and renamed (D9). Since phase 8 it is an agent project on the chat.dengler.io platform
 that guppi-gpt became (`../guppi-gpt/docs/proposals/platform.md`): the platform's
@@ -126,6 +127,9 @@ touches the HR stack, and reads the HR stack's gateway URLs from the root
 - Prose in docs and comments: no em-dashes or en-dashes, no second person.
 - The page renders plain text only, and the extension writes only plain text (status
   lines and the label); no Markdown parser, no `innerHTML` with model or user text.
+  The one exception is `/p/hr-widget/` (D62, approved by Sam on 7 Oct 2026): AWS's Touchpoint
+  widget renders the canvas's replies as Markdown through DOMPurify; the portal page around it
+  stays plain text.
 - Tests replace the seams that reach Bedrock or a gateway: `hr_agent.agent.build_strands_agent`
   (the whole orchestrator, in the app tests), the orchestrator's `router`, `sender`, and
   `general_factory`, the sub-agent executor's `runner`, and the tools server's store and

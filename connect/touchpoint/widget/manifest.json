@@ -1,0 +1,8 @@
+{
+  "name": "hr-widget",
+  "label": "HR Assistant (Widget)",
+  "description": "AWS's Touchpoint chat widget on an HR portal page, over the same Amazon Connect agent as HR Assistant.",
+  "assistant": "HR Assistant",
+  "surface": "extension",
+  "extension": "/projects/hr-widget/ext.js"
+}

@@ -1,0 +1,64 @@
+/* The stand-in HR portal at /p/hr-widget/ (src/portal.js), in the platform page's colors. */
+.hrw-portal {
+  padding: 1.5rem 0 6rem;
+}
+
+.hrw-title {
+  font-size: 1.5rem;
+  margin: 0 0 0.4rem;
+}
+
+.hrw-lead {
+  color: var(--muted);
+  margin: 0 0 1.5rem;
+}
+
+.hrw-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+
+.hrw-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.9rem 1rem;
+}
+
+.hrw-tile-title {
+  font-size: 1rem;
+  margin: 0 0 0.25rem;
+}
+
+.hrw-tile-text {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.hrw-section {
+  font-size: 1rem;
+  margin: 1.75rem 0 0.6rem;
+}
+
+.hrw-asks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.hrw-ask {
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+
+.hrw-ask:hover {
+  border-color: var(--accent);
+}

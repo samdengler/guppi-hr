@@ -10,6 +10,9 @@ stack's, unchanged. It is a project on the chat.dengler.io platform
 super-agents can be compared turn by turn. Until 3 October 2026 this page was
 `/p/hr-connect/` and the orchestrator's was `/p/hr/` (guppi-hr D37).
 
+The same Connect agent also answers at `https://chat.dengler.io/p/hr-widget/` through AWS's
+Touchpoint chat widget, on a stand-in HR portal page (`touchpoint/`, guppi-hr D62).
+
 This folder was the guppi-connect repository until 2 October 2026; its history came with
 it. It keeps its own projects, lockfiles and stack (`GuppiConnect`), and the Connect instance
 and `~/.config/guppi-connect/` keep the old name. Commands below run from this folder.
@@ -35,6 +38,7 @@ without an employee token.
 | [`docs/platform-plan.md`](docs/platform-plan.md) | How the project joined chat.dengler.io: the token gate, the bridge design, the phases |
 | [`docs/latency-plan.md`](docs/latency-plan.md) | Where a `/p/hr/` turn's time goes, measured hop by hop, and the changes that cut it, in order |
 | [`docs/platform-report.md`](docs/platform-report.md) | The project on `/p/hr-connect/` (now `/p/hr/`): the scenarios on the platform token, the routing eval, the decisions and what is open |
+| [`docs/touchpoint-experiment.md`](docs/touchpoint-experiment.md) | AWS's Touchpoint widget in front of the same backend: T1 (the chat widget on a local page) and T4 (`/p/hr-widget/`), both in `touchpoint/`; Live Sync and voice planned |
 
 The first two are Markdown copies of self-contained HTML documents beside them
 (`docs/*.html`), which were copies of two Claude Docs; open the HTML in a browser.
@@ -58,6 +62,7 @@ infra/      CDK app: the mock and echo Lambda, the bridge Runtime, table and edg
 mock/       the Lambda handler
 web/        the hr project manifest for chat.dengler.io
 scripts/    contact flow, chat harness, routing eval, HR token minting, deploy, bridge check
+touchpoint/ AWS's Touchpoint widget: the /p/hr-widget/ extension and the local experiment page
 docs/       spike report, platform plan
 ```
 
@@ -69,4 +74,6 @@ uv run scripts/contact_flow.py --env production            # the contact flow bo
 scripts/deploy.sh --require-approval never                 # the stack, then publish web/
 scripts/deploy.sh --site-only                              # publish web/ only
 (cd agent && uv run -- pytest)                             # the bridge's tests
+(cd touchpoint && npm ci && npm test && npm run dev)       # the Touchpoint experiment page
+scripts/deploy.sh --site-only                              # also builds and publishes /p/hr-widget/
 ```

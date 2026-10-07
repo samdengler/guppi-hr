@@ -6,9 +6,10 @@
 # for guppi-gpt's CloudFront, D57), then publish web/ to the
 # platform's site bucket under projects/hr/ and invalidate that prefix. The bridge
 # reads the production contact flow id from SSM (/guppi-hr/connect/contact-flow-id),
-# which scripts/contact_flow.py --env production publishes. Extra arguments go to
+# which scripts/contact_flow.py --env production publishes. Then build the /p/hr-widget/
+# extension (touchpoint/, D62) and publish it under projects/hr-widget/. Extra arguments go to
 # `cdk deploy`; GUPPI_ALARM_EMAIL, when set, subscribes that address to the alarms.
-# `--site-only` skips cdk deploy and only publishes web/.
+# `--site-only` skips cdk deploy and only publishes web/ and the widget.
 set -euo pipefail
 
 SITE_ONLY=0
@@ -19,6 +20,7 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT="hr"
+WIDGET_PROJECT="hr-widget"
 OUTPUTS="$ROOT/cdk-outputs.json"
 
 # The run is also written to .deploy/deploy-<timestamp>.log, with .deploy/latest.log
@@ -31,7 +33,7 @@ exec > >(tee -a "$LOG") 2>&1
 trap 'code=$?; echo "deploy exit=$code"; exit $code' EXIT
 echo "deploy log: $LOG"
 
-tools=(aws)
+tools=(aws npm)
 [[ "$SITE_ONLY" == 0 ]] && tools+=(uv docker)
 for tool in "${tools[@]}"; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
@@ -78,3 +80,12 @@ aws s3 sync web "s3://$bucket/projects/$PROJECT/" --delete --exclude '.*' \
 aws cloudfront create-invalidation --distribution-id "$distribution" \
   --paths "/projects/$PROJECT/*" >/dev/null
 echo "published $(platform_parameter site-url)p/$PROJECT/"
+
+# The widget's bundle is about 3 MB, so browsers revalidate it (no-cache) rather than
+# fetching it again on every page view.
+(cd "$ROOT/touchpoint" && npm ci --silent --no-audit --no-fund && npm test && npm run build)
+aws s3 sync touchpoint/dist/widget "s3://$bucket/projects/$WIDGET_PROJECT/" --delete --exclude '.*' \
+  --cache-control no-cache
+aws cloudfront create-invalidation --distribution-id "$distribution" \
+  --paths "/projects/$WIDGET_PROJECT/*" >/dev/null
+echo "published $(platform_parameter site-url)p/$WIDGET_PROJECT/"

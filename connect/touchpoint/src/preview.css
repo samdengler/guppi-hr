@@ -1,0 +1,38 @@
+/* widget.html: the platform page's colors and column, enough to judge the portal's look. */
+:root {
+  --fg: #12263f;
+  --muted: #587089;
+  --border: #cfe0f5;
+  --surface: #e9f1fc;
+  --accent: #2d7ff9;
+  --bg: #f7faff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e8f0fb;
+    --muted: #9db3cc;
+    --border: #233a58;
+    --surface: #10223a;
+    --bg: #0b1626;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 system-ui, sans-serif;
+}
+
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 1rem 1.25rem;
+}
+
+.app-header {
+  padding: 1rem 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HR Assistant on Touchpoint</title>
+    <link rel="stylesheet" href="/src/page.css" />
+  </head>
+  <body>
+    <main>
+      <h1>HR Assistant on Touchpoint</h1>
+      <p>
+        Experiment T1 (connect/docs/touchpoint-experiment.md). AWS's Touchpoint widget, on the right,
+        talks to the live /p/hr/ backend: the chat start on chat.dengler.io, the HR contact flow, the
+        Agentic CX canvas and the HR sub-agents. Every message is a real Connect message on the
+        employee in the Okta test session.
+      </p>
+      <h2>The /p/hr/ suggestions</h2>
+      <div id="suggestions" class="buttons"></div>
+      <div class="buttons"><button id="new-chat" type="button">New chat</button></div>
+      <h2>Run log</h2>
+      <ol id="log"></ol>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

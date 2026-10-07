@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- guppi-gpt's CSP for /p/hr-widget/ (WIDGET_PAGE_PATTERNS), less frame-ancestors, which a meta tag cannot set. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src 'self' https://integrator-8871908.okta.com https://participant.connect.us-east-1.amazonaws.com wss://*.transport.connect.us-east-1.amazonaws.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self'; base-uri 'self'; form-action 'self'"
+    />
+    <title>HR Assistant (Widget) preview</title>
+    <link rel="stylesheet" href="/src/preview.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="app-header">HR Assistant (Widget), local preview of /p/hr-widget/</header>
+      <section id="surface-screen" class="surface-screen"></section>
+    </div>
+    <script type="module" src="/src/widget-preview.js"></script>
+  </body>
+</html>

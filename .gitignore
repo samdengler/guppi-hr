@@ -18,3 +18,6 @@ node_modules/
 
 # The chat start function's Rust build output.
 connect/chat_start/target/
+
+# The Touchpoint widget build (connect/touchpoint, D62).
+connect/touchpoint/dist/
