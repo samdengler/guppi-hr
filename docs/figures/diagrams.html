@@ -14,38 +14,43 @@ body { margin: 0; padding: 24px; background: #fff; color: #26313c;
 <body>
 
 <figure class="figure" id="architecture">
-<svg viewBox="0 0 1120 930" width="1120" role="img" aria-label="The page signs in with Okta and reaches either the Strands orchestrator on /p/hr-diy/ or the Connect designer canvas on /p/hr/; both call the same agents gateway and tools gateway in the HrSuperAgent stack" font-size="13" font-family="-apple-system, &quot;Segoe UI&quot;, Inter, system-ui, Helvetica, Arial, sans-serif">
+<svg viewBox="0 0 1120 930" width="1120" role="img" aria-label="The page signs in with Okta and reaches either the Strands orchestrator on /p/hr-diy/ or the Connect designer canvas on /p/hr/ and /p/hr-widget/; both call the same agents gateway and tools gateway in the HrSuperAgent stack" font-size="13" font-family="-apple-system, &quot;Segoe UI&quot;, Inter, system-ui, Helvetica, Arial, sans-serif">
   <defs><marker id="architecture-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a97a5"/></marker></defs>
   <text x="24" y="34" font-size="15" font-weight="600" fill="#26313c">Two super-agents over one set of sub-agents, gateways and tools</text>
-  <rect x="50" y="60" width="200" height="56" rx="8" fill="none" stroke="#8a97a5" stroke-width="1.25"/>
-  <text x="150.0" y="84" text-anchor="middle" font-weight="600" fill="#26313c">Okta</text>
-  <text x="150.0" y="104" text-anchor="middle" font-size="11.5" fill="#5b6a7a">sign-in, audience <tspan font-family="ui-monospace, &quot;SF Mono&quot;, Consolas, monospace">api://guppi</tspan></text>
-  <rect x="450" y="56" width="200" height="64" rx="8" fill="none" stroke="#8a97a5" stroke-width="1.25"/>
-  <text x="550.0" y="84" text-anchor="middle" font-weight="600" fill="#26313c">Employee's browser</text>
-  <text x="550.0" y="104" text-anchor="middle" font-size="11.5" fill="#5b6a7a">the chat.dengler.io page</text>
-  <path d="M450 88 L250 88" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
-  <text x="350" y="80" text-anchor="middle" font-size="11.5" fill="#5b6a7a">sign in</text>
-  <rect x="450" y="170" width="200" height="56" rx="8" fill="#eef0f3" stroke="#8a97a5" stroke-width="1.25"/>
-  <text x="550.0" y="194" text-anchor="middle" font-weight="600" fill="#26313c">CloudFront and AWS WAF</text>
-  <text x="550.0" y="214" text-anchor="middle" font-size="11.5" fill="#5b6a7a">chat.dengler.io</text>
-  <path d="M550 120 L550 170" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
-  <text x="560" y="149" text-anchor="start" font-size="11.5" fill="#5b6a7a">the Okta token</text>
+  <rect x="50" y="80" width="200" height="56" rx="8" fill="none" stroke="#8a97a5" stroke-width="1.25"/>
+  <text x="150.0" y="104" text-anchor="middle" font-weight="600" fill="#26313c">Okta</text>
+  <text x="150.0" y="124" text-anchor="middle" font-size="11.5" fill="#5b6a7a">sign-in, audience <tspan font-family="ui-monospace, &quot;SF Mono&quot;, Consolas, monospace">api://guppi</tspan></text>
+  <rect x="430" y="46" width="540" height="104" rx="10" fill="none" stroke="#8a97a5" stroke-width="1.25" stroke-dasharray="5 4"/>
+  <text x="446" y="70" text-anchor="start" font-weight="600" fill="#26313c">Employee's browser</text>
+  <rect x="450" y="80" width="220" height="56" rx="8" fill="#eef0f3" stroke="#8a97a5" stroke-width="1.25"/>
+  <text x="560.0" y="104" text-anchor="middle" font-weight="600" fill="#26313c">The platform page</text>
+  <text x="560.0" y="124" text-anchor="middle" font-size="11.5" fill="#5b6a7a">/p/hr/ and /p/hr-diy/</text>
+  <rect x="700" y="80" width="250" height="56" rx="8" fill="#2f6fdb" fill-opacity="0.1" stroke="#2f6fdb" stroke-width="2"/>
+  <text x="825.0" y="104" text-anchor="middle" font-weight="600" fill="#26313c">Touchpoint widget</text>
+  <text x="825.0" y="124" text-anchor="middle" font-size="11.5" fill="#5b6a7a">/p/hr-widget/, an extension on the page</text>
+  <path d="M450 108 L250 108" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
+  <text x="350" y="100" text-anchor="middle" font-size="11.5" fill="#5b6a7a">sign in</text>
+  <rect x="450" y="182" width="200" height="52" rx="8" fill="#eef0f3" stroke="#8a97a5" stroke-width="1.25"/>
+  <text x="550.0" y="204" text-anchor="middle" font-weight="600" fill="#26313c">CloudFront and AWS WAF</text>
+  <text x="550.0" y="224" text-anchor="middle" font-size="11.5" fill="#5b6a7a">chat.dengler.io</text>
+  <path d="M550 136 L550 182" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
+  <text x="560" y="172" text-anchor="start" font-size="11.5" fill="#5b6a7a">the Okta token</text>
   <rect x="160" y="300" width="240" height="62" rx="8" fill="#eef0f3" stroke="#8a97a5" stroke-width="1.25"/>
   <text x="280.0" y="328" text-anchor="middle" font-weight="600" fill="#26313c">Edge gateway</text>
   <text x="280.0" y="346" text-anchor="middle" font-size="11.5" fill="#5b6a7a">AgentCore Gateway, per-user limits</text>
   <rect x="700" y="300" width="240" height="62" rx="8" fill="#2f6fdb" fill-opacity="0.1" stroke="#2f6fdb" stroke-width="2"/>
   <text x="820.0" y="328" text-anchor="middle" font-weight="600" fill="#26313c">Chat start</text>
   <text x="820.0" y="346" text-anchor="middle" font-size="11.5" fill="#5b6a7a">API Gateway and a Rust Lambda</text>
-  <path d="M510 226 L510 250 L280 250 L280 300" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
+  <path d="M510 234 L510 250 L280 250 L280 300" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
   <text x="395" y="243" text-anchor="middle" font-size="11.5" fill="#5b6a7a">AG-UI runs</text>
-  <path d="M590 226 L590 250 L820 250 L820 300" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
+  <path d="M590 234 L590 250 L820 250 L820 300" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
   <text x="705" y="243" text-anchor="middle" font-size="11.5" fill="#5b6a7a">start a chat, once</text>
   <rect x="700" y="410" width="240" height="62" rx="8" fill="none" stroke="#8a97a5" stroke-width="1.25"/>
   <text x="820.0" y="438" text-anchor="middle" font-weight="600" fill="#26313c">Amazon Connect chat</text>
   <text x="820.0" y="456" text-anchor="middle" font-size="11.5" fill="#5b6a7a">one contact per chat</text>
   <path d="M820 362 L820 410" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
   <text x="830" y="391" text-anchor="start" font-size="11.5" fill="#5b6a7a">StartChatContact</text>
-  <path d="M650 88 L1010 88 L1010 441 L940 441" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
+  <path d="M970 98 L1010 98 L1010 441 L940 441" fill="none" stroke="#8a97a5" stroke-width="1.25" marker-end="url(#architecture-arrow)"/>
   <text x="1020" y="240" text-anchor="start" font-size="11.5" fill="#5b6a7a">each question</text>
   <text x="1020" y="257" text-anchor="start" font-size="11.5" fill="#5b6a7a">over chatjs</text>
   <rect x="160" y="520" width="240" height="62" rx="8" fill="#2f6fdb" fill-opacity="0.1" stroke="#2f6fdb" stroke-width="2"/>
@@ -65,7 +70,7 @@ body { margin: 0; padding: 24px; background: #fff; color: #26313c;
   <text x="200" y="656" text-anchor="start" font-size="11.5" fill="#5b6a7a">A2A</text>
   <text x="560" y="656" text-anchor="start" font-size="11.5" fill="#5b6a7a">MCP</text>
   <rect x="40" y="640" width="1040" height="240" rx="10" fill="none" stroke="#8a97a5" stroke-width="1.25" stroke-dasharray="5 4"/>
-  <text x="1064" y="664" text-anchor="end" font-weight="600" fill="#26313c">HrSuperAgent stack, shared by both pages · <tspan font-family="ui-monospace, &quot;SF Mono&quot;, Consolas, monospace">infra/</tspan></text>
+  <text x="1064" y="664" text-anchor="end" font-weight="600" fill="#26313c">HrSuperAgent stack, shared by every page · <tspan font-family="ui-monospace, &quot;SF Mono&quot;, Consolas, monospace">infra/</tspan></text>
   <rect x="80" y="680" width="220" height="62" rx="8" fill="none" stroke="#8a97a5" stroke-width="1.25"/>
   <text x="190.0" y="708" text-anchor="middle" font-weight="600" fill="#26313c">Agents gateway</text>
   <text x="190.0" y="726" text-anchor="middle" font-size="11.5" fill="#5b6a7a">AgentCore Gateway</text>
@@ -98,7 +103,7 @@ body { margin: 0; padding: 24px; background: #fff; color: #26313c;
   <rect x="566" y="900" width="16" height="16" rx="3" fill="none" stroke="#8a97a5" stroke-width="1.25"/>
   <text x="592" y="913" text-anchor="start" font-size="12.5" fill="#5b6a7a">AWS and Okta services</text>
   <text x="280" y="280" text-anchor="middle" font-size="12" font-weight="600" stroke="#fff" stroke-width="7" stroke-linejoin="round" paint-order="stroke" fill="#26313c">/p/hr-diy/ · Strands · <tspan font-family="ui-monospace, &quot;SF Mono&quot;, Consolas, monospace">agent/</tspan></text>
-  <text x="820" y="280" text-anchor="middle" font-size="12" font-weight="600" stroke="#fff" stroke-width="7" stroke-linejoin="round" paint-order="stroke" fill="#26313c">/p/hr/, the main page · Amazon Connect · <tspan font-family="ui-monospace, &quot;SF Mono&quot;, Consolas, monospace">connect/</tspan></text>
+  <text x="820" y="280" text-anchor="middle" font-size="12" font-weight="600" stroke="#fff" stroke-width="7" stroke-linejoin="round" paint-order="stroke" fill="#26313c">/p/hr/ and /p/hr-widget/ · Amazon Connect · <tspan font-family="ui-monospace, &quot;SF Mono&quot;, Consolas, monospace">connect/</tspan></text>
 </svg>
 </figure>
 
@@ -231,6 +236,8 @@ body { margin: 0; padding: 24px; background: #fff; color: #26313c;
   <path d="M100 300 L100 458 L230 458" fill="none" stroke="#8a97a5" stroke-width="1.25" stroke-dasharray="5 4" marker-end="url(#connect-arrow)"/>
   <path d="M440 458 L565 458 L565 306" fill="none" stroke="#8a97a5" stroke-width="1.25" stroke-dasharray="5 4" marker-end="url(#connect-arrow)"/>
   <text x="110" y="516" text-anchor="start" font-size="11.5" fill="#5b6a7a">the fallback, through the edge gateway with <tspan font-family="ui-monospace, &quot;SF Mono&quot;, Consolas, monospace">?ff=connect-bridge</tspan></text>
+  <text x="1180" y="470" text-anchor="end" font-size="11.5" fill="#5b6a7a">The Touchpoint widget on /p/hr-widget/ takes the same path:</text>
+  <text x="1180" y="487" text-anchor="end" font-size="11.5" fill="#5b6a7a">its <tspan font-family="ui-monospace, &quot;SF Mono&quot;, Consolas, monospace">details</tspan> option calls chat start with the Okta token.</text>
   <rect x="24" y="548" width="16" height="16" rx="3" fill="#2f6fdb" fill-opacity="0.1" stroke="#2f6fdb" stroke-width="2"/>
   <text x="50" y="561" text-anchor="start" font-size="12.5" fill="#5b6a7a">what this repository provides</text>
   <rect x="260" y="548" width="16" height="16" rx="3" fill="#eef0f3" stroke="#8a97a5" stroke-width="1.25"/>

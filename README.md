@@ -24,14 +24,15 @@ guppi-connect moved in as `connect/`.
 
 ## Architecture
 
-![The page signs in with Okta and reaches either the Strands orchestrator on /p/hr-diy/ or the Connect designer canvas on /p/hr/; both call the same agents gateway and tools gateway in the HrSuperAgent stack](docs/figures/hr-architecture.png)
+![The page signs in with Okta and reaches either the Strands orchestrator on /p/hr-diy/ or the Connect designer canvas on /p/hr/ and /p/hr-widget/; both call the same agents gateway and tools gateway in the HrSuperAgent stack](docs/figures/hr-architecture.png)
 
 Both pages run the same four scenarios over the same sub-agents, gateways and tools, so the
 two super-agents can be compared turn by turn. Every hop carries a token that names the
 employee: AgentCore Identity exchanges the Okta token for a hop token at each step (RFC 8693,
 D47), and the tools gateway's Cedar policy decides each tool call on the token's scopes. On
 `/p/hr/` the chat start function makes the first exchanges and starts the Connect contact;
-the page then sends each question to Connect itself. An AG-UI bridge runtime on the edge
+the page then sends each question to Connect itself. AWS's Touchpoint widget at `/p/hr-widget/`, on a stand-in HR
+portal page, takes the same path (D62). An AG-UI bridge runtime on the edge
 gateway (`?ff=connect-bridge`) is the fallback path. The sign-in to first answer sequence is
 in [`docs/hr-page-sequence.md`](docs/hr-page-sequence.md). The sub-agent and tools runtimes
 run on AgentCore Runtime V2; [`docs/handoff-runtime-v2.md`](docs/handoff-runtime-v2.md) has
