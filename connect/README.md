@@ -17,11 +17,9 @@ This folder was the guppi-connect repository until 2 October 2026; its history c
 it. It keeps its own projects, lockfiles and stack (`GuppiConnect`), and the Connect instance
 and `~/.config/guppi-connect/` keep the old name. Commands below run from this folder.
 
-How a turn travels: the page posts AG-UI to `/api/hr/invocations`; a bridge on
-the platform agent kit (`agent/`) turns each run into a Connect chat turn on a contact
-flow that holds the Agentic CX block; the canvas routes the turn and calls the
-sub-agents over A2A and the tools gateway over MCP with the employee's token; the bridge
-relays the canvas's replies back as AG-UI text messages.
+How a turn travels on `/p/hr/`: at page load the page posts `/api/hr/chat/start`; the chat start function (`chat_start/`) checks the Okta token, makes the token exchanges, starts the Connect contact with the hop tokens as contact attributes, and answers with the participant token (D55, D57). The page then sends each question to Connect itself with chatjs; the canvas routes the turn and calls the sub-agents over A2A and the tools gateway over MCP with the employee's tokens, and the reply comes back over the participant WebSocket. The AG-UI bridge on the platform agent kit (`agent/`), which turns one AG-UI run into one Connect chat turn, is the fallback behind `?ff=connect-bridge`.
+
+![The page asks chat start for a chat; chat start exchanges the Okta token, starts the Connect contact and returns the participant token; each question then goes to Connect over chatjs, and the canvas calls the sub-agents and the tools gateway](../docs/figures/hr-connect-page.png)
 
 The canvas is built from code with the designer SDK (`acxd/`), and can also be driven
 over Connect chat directly (`scripts/chat.py`, `scripts/route_eval.py`). A small Lambda

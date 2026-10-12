@@ -24,53 +24,7 @@ guppi-connect moved in as `connect/`.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    browser(["Employee's browser"])
-    okta["Okta<br>sign-in"]
-
-    subgraph platform["chat.dengler.io platform (guppi-gpt)"]
-        cf["CloudFront and AWS WAF"]
-        edge["Edge gateway<br>AgentCore Gateway, per-user limits"]
-    end
-
-    subgraph connectside["/p/hr/, the main page: Amazon Connect (connect/)"]
-        chatstart["Chat start<br>API Gateway and Lambda"]
-        connect["Connect chat<br>contact flow"]
-        canvas["Agentic CX designer canvas<br>routes on Haiku 4.5"]
-    end
-
-    subgraph diyside["/p/hr-diy/: Strands (agent/)"]
-        orch["Orchestrator<br>AgentCore Runtime, Sonnet 4.6"]
-    end
-
-    subgraph hrstack["HrSuperAgent stack, shared by both pages (infra/)"]
-        agentsgw["Agents gateway<br>AgentCore Gateway"]
-        subs["Profile, Pay, Travel sub-agents<br>A2A on AgentCore Runtime V2, Haiku 4.5"]
-        toolsgw["Tools gateway<br>AgentCore Gateway, Cedar policy"]
-        kb[("Bedrock Knowledge Base<br>HR policies")]
-        tools["HR tools MCP server<br>AgentCore Runtime V2"]
-        ddb[("DynamoDB<br>employees, proposals, tickets, audit")]
-    end
-
-    browser -->|"sign in"| okta
-    browser -->|"Okta token"| cf
-    cf -->|"start a chat"| chatstart
-    chatstart -->|"StartChatContact"| connect
-    browser -->|"questions, chatjs"| connect
-    connect --> canvas
-    cf --> edge
-    edge -->|"AG-UI"| orch
-    canvas -->|"A2A"| agentsgw
-    orch -->|"A2A"| agentsgw
-    canvas -->|"MCP, policy search"| toolsgw
-    orch -->|"MCP, policy search"| toolsgw
-    agentsgw --> subs
-    subs -->|"MCP"| toolsgw
-    toolsgw --> kb
-    toolsgw --> tools
-    tools --> ddb
-```
+![The page signs in with Okta and reaches either the Strands orchestrator on /p/hr-diy/ or the Connect designer canvas on /p/hr/; both call the same agents gateway and tools gateway in the HrSuperAgent stack](docs/figures/hr-architecture.png)
 
 Both pages run the same four scenarios over the same sub-agents, gateways and tools, so the
 two super-agents can be compared turn by turn. Every hop carries a token that names the
@@ -82,6 +36,10 @@ gateway (`?ff=connect-bridge`) is the fallback path. The sign-in to first answer
 in [`docs/hr-page-sequence.md`](docs/hr-page-sequence.md). The sub-agent and tools runtimes
 run on AgentCore Runtime V2; [`docs/handoff-runtime-v2.md`](docs/handoff-runtime-v2.md) has
 the V1 and V2 measurements.
+
+![The Okta token is exchanged through AgentCore Identity at each hop: for agents and tools tokens on the super-agent side, for a domain tools token by each sub-agent, and for a runtime token by the tools gateway on every call](docs/figures/hr-token-chain.png)
+
+The figures are drawn in [`docs/figures/diagrams.html`](docs/figures/diagrams.html) and rendered to PNG with `npx -y -p playwright-core@1.47.2 node docs/figures/render.js`.
 
 ## What it does
 
