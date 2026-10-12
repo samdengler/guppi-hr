@@ -25,7 +25,7 @@ from moto import mock_aws
 from starlette.testclient import TestClient
 
 REGION = "us-east-1"
-ISSUER = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TEST"
+ISSUER = "https://issuer.example.test/oauth2/default"
 CLIENT_ID = "test-client"
 TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
 TRACEPARENT = f"00-{TRACE_ID}-b7ad6b7169203331-01"

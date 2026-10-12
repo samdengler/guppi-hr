@@ -728,15 +728,15 @@ class HrSuperAgentStack(cdk.Stack):
         conversation_secret = secretsmanager.Secret(
             self,
             "ConversationLogKeySecret",
-            description="HMAC key that turns a Cognito sub into the pseudonym in thread records",
+            description="HMAC key that turns a subject into the pseudonym in thread records",
             generate_secret_string=secretsmanager.SecretStringGenerator(
                 password_length=32, exclude_punctuation=True
             ),
         )
 
         # The investigator role is the only principal outside the runtime that can read a
-        # thread record, and the only one that can read the key and list the user pool, which
-        # is what re-identification takes. Trust is the account root by default, so any
+        # thread record, and the only one that can read the key, which with a lookup in Okta
+        # is what re-identification takes (D46). Trust is the account root by default, so any
         # principal in the account holding sts:AssumeRole can assume it; a non-blank
         # InvestigatorPrincipalArn narrows it to that one ARN.
         investigator_role = iam.Role(
@@ -744,7 +744,7 @@ class HrSuperAgentStack(cdk.Stack):
             "ConversationInvestigatorRole",
             assumed_by=iam.AccountRootPrincipal(),
             max_session_duration=Duration.hours(1),
-            description="Reads conversation records and resolves a subject to a Cognito user",
+            description="Reads conversation records and resolves a subject to an Okta user",
         )
         cfn_investigator_role = investigator_role.node.default_child
         assert isinstance(cfn_investigator_role, iam.CfnRole)

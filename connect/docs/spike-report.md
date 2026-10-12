@@ -17,7 +17,7 @@ does the job instead.
 ## Real sub-agents, 2 October morning
 
 Production application (`hr-assistant-production`), Sam's hr-super-agent access token
-minted by `scripts/hr_token.py`, real Profile, Pay and Travel sub-agents, real tools
+minted by `scripts/hr_token.py` (removed on 6 Oct with the Cognito pool, D46), real Profile, Pay and Travel sub-agents, real tools
 gateway.
 
 | Scenario | Result | Sub-agent call |
@@ -33,7 +33,7 @@ commit at 10.3 s. The tools gateway accepted a bare JSON-RPC `tools/call` (no
 `initialize`) and answered with plain JSON. The designer's MCP data request still failed
 "could not be prepared" with the real token, so the token was never its problem.
 
-`scripts/hr_token.py` uses `GetTokensFromRefreshToken`: the HR pool rotates refresh
+At the time, `scripts/hr_token.py` used `GetTokensFromRefreshToken`: the HR pool rotated refresh
 tokens and `InitiateAuth` refuses them. Each run stores the new refresh token, and the
 browser session's copy stops working after Cognito's grace period.
 

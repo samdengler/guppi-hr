@@ -13,9 +13,11 @@ Predates guppi-hr D47: the production canvas now reads one agents token per sub-
 can mint; this script's `hrToken` reaches only the spike's development application.
 
     uv run scripts/chat.py "run the header probe"
+    ../../guppi-gpt/scripts/test-token.sh > ~/.config/guppi-connect/hr_access_token
     uv run scripts/chat.py --token-file ~/.config/guppi-connect/hr_access_token "..." "yes"
 
-Without --token-file the token is a dummy, `guppi-dummy-<random>`, which is enough to see
+A real token is an Okta access token from guppi-gpt's `scripts/test-token.sh` (D46); the
+Cognito minting script `hr_token.py` went with the pool. Without --token-file the token is a dummy, `guppi-dummy-<random>`, which is enough to see
 whether the value reaches a data request header. Tokens are never printed.
 """
 
