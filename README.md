@@ -1,11 +1,12 @@
 # guppi-hr
 
-An MVP of an HR employee assistant, shown on the page as "HR Assistant", live at
-`https://chat.dengler.io/p/hr-diy/`. An orchestrator on Amazon Bedrock AgentCore Runtime
-routes each turn to a Profile, Pay, or Travel sub-agent over A2A, or answers general
-questions from an HR policy knowledge base; sub-agents act on the employee's own records
-through an HR tools MCP server, and every change is proposed, read back, and committed
-only after the employee says yes. All employee data and policies are synthetic.
+An MVP of an HR employee assistant, shown on the page as "HR Assistant". An employee signs
+in with Okta and asks about their profile, pay, travel or HR policy. A super-agent routes
+each turn to a Profile, Pay, or Travel sub-agent over A2A, or answers general questions
+from an HR policy knowledge base; sub-agents run on Amazon Bedrock AgentCore Runtime and act
+on the employee's own records through an HR tools MCP server, and every change is proposed,
+read back, and committed only after the employee says yes. All employee data and policies
+are synthetic.
 
 It began as an iteration of guppi-gpt, merged in with its history and renamed (D9). Since
 phase 8 it is an agent project on the chat.dengler.io platform that guppi-gpt became
@@ -14,13 +15,11 @@ CloudFront, WAF, the edge gateway and its per-user limits, and this repository o
 everything that is HR (D34). [`docs/design.md`](docs/design.md) describes the system as
 built; [`docs/demo.md`](docs/demo.md) walks the four scenarios.
 
-The repository holds two super-agents over the same sub-agents, tools and gateways. The
-Strands orchestrator described here serves `/p/hr-diy/`. [`connect/`](connect/) puts Amazon
-Connect's Agentic CX designer in the orchestrator's place and serves the main page,
-`https://chat.dengler.io/p/hr/`; its README covers that side. The four scenarios run on
-both pages. Until 3 October 2026 the Strands page was `/p/hr/` and the Connect page
-`/p/hr-connect/` (D37). The repository was named hr-super-agent until 2 October 2026, when
-guppi-connect moved in as `connect/`.
+The repository holds two super-agents over the same sub-agents, tools and gateways. Amazon
+Connect's Agentic CX designer ([`connect/`](connect/)) serves the main page,
+`https://chat.dengler.io/p/hr/`, and AWS's Touchpoint widget at `/p/hr-widget/` (D62); its
+README covers that side. A Strands orchestrator on AgentCore Runtime serves `/p/hr-diy/`.
+The four scenarios run on all three pages.
 
 ## Architecture
 
